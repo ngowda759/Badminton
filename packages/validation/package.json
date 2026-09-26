@@ -1,0 +1,13 @@
+{
+  "name": "@badminton/validation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@badminton/domain": "*",
+    "zod": "4.6.5"
+  }
+}
