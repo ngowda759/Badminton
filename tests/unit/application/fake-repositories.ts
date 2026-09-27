@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/require-await -- the fake ports implement
    async signatures over synchronous in-memory maps; there is nothing to await. */
+import { createHash } from 'node:crypto';
+
 import type {
   CreateCategoryData,
   CreateEntryData,
@@ -68,9 +70,27 @@ interface State {
 }
 
 let sequence = 0;
+
+/**
+ * Deterministic UUID for a fake row.
+ *
+ * Real UUIDs - not readable strings - so that service-level behaviour matches
+ * production: the API route tests validate an `:id` path parameter as a UUID
+ * before calling a service, and the service must then find the same row. The
+ * value is derived from a counter through SHA-1 and shaped into a valid
+ * UUIDv5, so it is stable for a given creation order within a test.
+ */
 function nextId(prefix: string): string {
   sequence += 1;
-  return `${prefix}-${String(sequence).padStart(6, '0')}`;
+  const digest = createHash('sha1').update(`${prefix}:${sequence}`).digest('hex');
+  const variant = ((Number.parseInt(digest[16] as string, 16) & 0x3) | 0x8).toString(16);
+  return [
+    digest.slice(0, 8),
+    digest.slice(8, 12),
+    `5${digest.slice(13, 16)}`,
+    `${variant}${digest.slice(17, 20)}`,
+    digest.slice(20, 32),
+  ].join('-');
 }
 
 function now(): Date {

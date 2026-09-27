@@ -10,9 +10,11 @@
     "start": "node dist/server.js"
   },
   "dependencies": {
+    "@badminton/application": "*",
     "@badminton/config": "*",
     "@badminton/database": "*",
     "@badminton/domain": "*",
+    "@badminton/infrastructure": "*",
     "@badminton/validation": "*",
     "@fastify/cors": "11.3.0",
     "fastify": "5.12.5"

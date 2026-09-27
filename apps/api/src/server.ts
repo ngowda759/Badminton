@@ -1,7 +1,9 @@
 import { ConfigurationError, getServerEnv } from '@badminton/config';
 import { connectDatabase, type DatabaseConnection } from '@badminton/database';
+import { createPrismaUnitOfWork, createRepositoryClient } from '@badminton/infrastructure';
 
 import { buildApp } from './app.ts';
+import { createApiServices } from './composition/api-services.ts';
 import { createApiConfig, type ApiConfig } from './config/app-config.ts';
 import { createDatabaseHealthChecks } from './infrastructure/database.ts';
 
@@ -15,9 +17,19 @@ async function start(): Promise<void> {
   const config: ApiConfig = createApiConfig(getServerEnv());
 
   const database: DatabaseConnection = connectDatabase(config.databaseUrl);
+
+  // Compose the application services over the single Prisma client. Creating
+  // the repositories and unit of work here (not in a route) keeps Prisma out of
+  // the HTTP layer while giving every service the same connection pool.
+  const services = createApiServices(
+    createRepositoryClient(database.prisma),
+    createPrismaUnitOfWork(database.prisma),
+  );
+
   const app = buildApp({
     checks: createDatabaseHealthChecks(database),
     corsOrigins: config.corsOrigins,
+    services,
     logger: config.logger,
     trustProxy: config.trustProxy,
   });
