@@ -9,6 +9,8 @@ import {
   calculateRoundCount,
   calculateSequence,
   calculateTotalMatches,
+  isBracketFinalCompleted,
+  isBracketFinalMatch,
   isSupportedBracketSize,
   SUPPORTED_BRACKET_SIZES,
 } from '@badminton/domain';
@@ -179,5 +181,33 @@ describe('bracketRoundName', () => {
 
   it('rejects a round outside the bracket', () => {
     expect(() => bracketRoundName(8, 4)).toThrow(BusinessRuleViolationError);
+  });
+});
+
+describe('isBracketFinalMatch', () => {
+  it('is true only for the sole match of the last round', () => {
+    for (const size of SUPPORTED_BRACKET_SIZES) {
+      const finalRound = calculateRoundCount(size);
+      expect(isBracketFinalMatch(size, finalRound, 1)).toBe(true);
+      // Later rounds have no match 2; earlier rounds are not the final.
+      expect(isBracketFinalMatch(size, finalRound, 2)).toBe(false);
+      if (finalRound > 1) {
+        expect(isBracketFinalMatch(size, finalRound - 1, 1)).toBe(false);
+      }
+    }
+  });
+
+  it('rejects an unsupported size', () => {
+    expect(() => isBracketFinalMatch(6, 1, 1)).toThrow(BusinessRuleViolationError);
+  });
+});
+
+describe('isBracketFinalCompleted', () => {
+  it('is true only when the final match is completed', () => {
+    expect(isBracketFinalCompleted(4, 2, 1, 'COMPLETED')).toBe(true);
+    expect(isBracketFinalCompleted(4, 2, 1, 'IN_PROGRESS')).toBe(false);
+    expect(isBracketFinalCompleted(4, 2, 1, 'SCHEDULED')).toBe(false);
+    // A completed earlier-round match never completes the stage.
+    expect(isBracketFinalCompleted(4, 1, 1, 'COMPLETED')).toBe(false);
   });
 });

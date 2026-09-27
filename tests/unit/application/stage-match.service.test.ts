@@ -102,6 +102,118 @@ describe('TournamentStageService.transitionStatus', () => {
       InvalidStateTransitionError,
     );
   });
+
+  it('refuses to complete an ACTIVE knockout stage while the final is unresolved', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await repos.client.stages.create({
+      categoryId,
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      drawSize: 4,
+      status: 'ACTIVE',
+    });
+    await repos.client.matches.create({
+      stageId: stage.id,
+      sequence: 3,
+      roundNumber: 2,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+    });
+
+    await expect(stages.transitionStatus(stage.id, { status: 'COMPLETED' })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('refuses to complete a knockout stage that has no bracket', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await repos.client.stages.create({
+      categoryId,
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      drawSize: null,
+      status: 'ACTIVE',
+    });
+
+    await expect(stages.transitionStatus(stage.id, { status: 'COMPLETED' })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('completes a knockout stage once its final match is completed', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await repos.client.stages.create({
+      categoryId,
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      drawSize: 2,
+      status: 'ACTIVE',
+    });
+    await repos.client.matches.create({
+      stageId: stage.id,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'COMPLETED',
+    });
+
+    const completed = await stages.transitionStatus(stage.id, { status: 'COMPLETED' });
+    expect(completed.status).toBe('COMPLETED');
+  });
+});
+
+describe('TournamentStageService.drawSize immutability', () => {
+  async function knockoutStage(drawSize: number | null): Promise<string> {
+    const categoryId = await singlesCategory();
+    const stage = await repos.client.stages.create({
+      categoryId,
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      drawSize,
+      status: 'ACTIVE',
+    });
+    return stage.id;
+  }
+
+  it('allows changing the draw size before a bracket exists', async () => {
+    const stageId = await knockoutStage(null);
+    const updated = await stages.update(stageId, { drawSize: 8 });
+    expect(updated.drawSize).toBe(8);
+  });
+
+  it('refuses to change the draw size once a bracket has been generated', async () => {
+    const stageId = await knockoutStage(4);
+    await repos.client.matches.create({
+      stageId,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+    });
+
+    await expect(stages.update(stageId, { drawSize: 8 })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('allows re-sending the current draw size after generation', async () => {
+    const stageId = await knockoutStage(4);
+    await repos.client.matches.create({
+      stageId,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+    });
+
+    const updated = await stages.update(stageId, { drawSize: 4, name: 'Renamed' });
+    expect(updated.drawSize).toBe(4);
+    expect(updated.name).toBe('Renamed');
+  });
 });
 
 describe('MatchService.create', () => {

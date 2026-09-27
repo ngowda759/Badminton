@@ -101,6 +101,8 @@ export {
   calculateNextBracketPosition,
   calculateSequence,
   bracketRoundName,
+  isBracketFinalMatch,
+  isBracketFinalCompleted,
 } from './bracket.ts';
 export type { BracketSize, NextBracketPosition } from './bracket.ts';
 export {

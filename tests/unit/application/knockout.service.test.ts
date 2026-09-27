@@ -344,20 +344,27 @@ describe('KnockoutProgressionService.progress', () => {
     expect(slots.find((slot) => slot.slot === 1)?.entryId).toBe(result.winnerEntryId);
   });
 
-  it('rejects conflicting progression into an occupied slot', async () => {
+  it('rejects conflicting progression into an occupied slot without overwriting it', async () => {
     const { bracket, categoryId } = await generatedBracket(4);
     const semi1 = matchIdAt(bracket, 1, 1);
-    await start(semi1);
-    const result = await results.recordResult(semi1, { games: twoZero });
+    const participants = await repos.client.matchParticipants.listByMatch(semi1);
+    const winnerEntryId = participants.find((slot) => slot.slot === 1)?.entryId ?? '';
 
-    // Plant a different entry in the destination slot, then re-run progression.
+    // Complete the match directly so progression is invoked explicitly below.
+    await repos.client.matches.complete(semi1, winnerEntryId);
+
+    // Plant a different entry in the (empty) destination slot. `fillSlot` is
+    // fill-only, so the planted entry must survive the conflicting progression.
     const impostor = await entryIn(categoryId, 'Impostor');
     const finalMatchId = matchIdAt(bracket, 2, 1);
-    await repos.client.matchParticipants.upsertSlot(finalMatchId, 1, impostor);
+    await repos.client.matchParticipants.fillSlot(finalMatchId, 1, impostor);
 
-    await expect(progression.progress(repos.client, semi1, result.winnerEntryId)).rejects.toThrow(
+    await expect(progression.progress(repos.client, semi1, winnerEntryId)).rejects.toThrow(
       ConflictError,
     );
+
+    const slot = await repos.client.matchParticipants.findSlot(finalMatchId, 1);
+    expect(slot?.entryId).toBe(impostor);
   });
 
   it('rejects progression for an incomplete match', async () => {

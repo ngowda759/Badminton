@@ -457,15 +457,12 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
         return row ? toMatchParticipant(row) : undefined;
       });
     },
-    async upsertSlot(matchId, slot, entryId) {
+    async fillSlot(matchId, slot, entryId) {
+      // Create-only: the compound unique index on (matchId, slot) is the final
+      // guard, so a race that fills the slot first surfaces as a ConflictError
+      // instead of overwriting the winner already there.
       return translatePersistenceErrors(async () =>
-        toMatchParticipant(
-          await db.matchParticipant.upsert({
-            where: { matchId_slot: { matchId, slot } },
-            create: { matchId, slot, entryId },
-            update: { entryId },
-          }),
-        ),
+        toMatchParticipant(await db.matchParticipant.create({ data: { matchId, slot, entryId } })),
       );
     },
   };

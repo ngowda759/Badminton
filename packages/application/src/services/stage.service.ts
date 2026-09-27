@@ -1,11 +1,15 @@
 import {
+  BusinessRuleViolationError,
   ConflictError,
   InvalidStateTransitionError,
   isAllowedTransition,
+  isBracketFinalMatch,
+  isSupportedBracketSize,
   NotFoundError,
   normalizeWhitespace,
   STAGE_TRANSITIONS,
   ValidationError,
+  type Match,
   type StageStatus,
   type TournamentStage,
 } from '@badminton/domain';
@@ -93,6 +97,10 @@ export function createTournamentStageService(client: RepositoryClient): Tourname
         assertPositive(command.drawSize, 'drawSize');
       }
 
+      if (command.drawSize !== undefined) {
+        await assertDrawSizeMutable(client, current, command.drawSize);
+      }
+
       if (command.name !== undefined) {
         data.name = requireName(command.name);
       }
@@ -115,6 +123,14 @@ export function createTournamentStageService(client: RepositoryClient): Tourname
         throw new InvalidStateTransitionError('Stage', from, to);
       }
 
+      // A KNOCKOUT stage is complete only once its final match is decided. The
+      // bracket structure lives in the existing matches table, so completion is
+      // derived from the final rather than from any stored flag. GROUP stages
+      // keep their Phase 5 lifecycle unchanged.
+      if (to === 'COMPLETED' && current.type === 'KNOCKOUT') {
+        await assertKnockoutFinalDecided(client, current);
+      }
+
       return client.stages.updateStatus(id, to);
     },
 
@@ -134,6 +150,76 @@ async function requireStage(client: RepositoryClient, id: string): Promise<Tourn
     throw new NotFoundError('Stage', id);
   }
   return stage;
+}
+
+/**
+ * Guards `ACTIVE → COMPLETED` for a KNOCKOUT stage.
+ *
+ * The stage is complete only when the bracket's final match is `COMPLETED`.
+ * Completion is derived from the existing matches (round number, match number)
+ * rather than from a stored flag, so this cannot drift from the bracket. A
+ * stage with no generated bracket, or whose final is unresolved, is rejected
+ * with a business-rule error.
+ */
+async function assertKnockoutFinalDecided(
+  client: RepositoryClient,
+  stage: TournamentStage,
+): Promise<void> {
+  const matches = await client.matches.listByStage(stage.id);
+  const final = findFinalMatch(matches, stage.drawSize);
+
+  if (!final) {
+    throw new BusinessRuleViolationError(
+      'A knockout stage cannot be completed before its final match is decided.',
+    );
+  }
+  if (final.status !== 'COMPLETED') {
+    throw new BusinessRuleViolationError(
+      'A knockout stage cannot be completed until its final match is completed.',
+    );
+  }
+}
+
+/** The bracket final match, or `undefined` when there is no (supported) bracket. */
+function findFinalMatch(matches: readonly Match[], drawSize: number | null): Match | undefined {
+  if (drawSize === null || !isSupportedBracketSize(drawSize)) {
+    return undefined;
+  }
+  return matches.find(
+    (match) =>
+      match.roundNumber !== null &&
+      match.matchNumber !== null &&
+      isBracketFinalMatch(drawSize, match.roundNumber, match.matchNumber),
+  );
+}
+
+/**
+ * Keeps the authoritative bracket size immutable once a bracket exists.
+ *
+ * A generated bracket is detected from the stage's existing matches - there is
+ * deliberately no "generated" flag or extra table. Before generation `drawSize`
+ * may be configured as before; afterwards any *change* is rejected. Re-sending
+ * the current value (including `null` when there is no bracket) is a harmless
+ * no-op so an edit form that round-trips the field keeps working.
+ */
+async function assertDrawSizeMutable(
+  client: RepositoryClient,
+  stage: TournamentStage,
+  next: number | null,
+): Promise<void> {
+  if (stage.type !== 'KNOCKOUT') {
+    return;
+  }
+  if (next === stage.drawSize) {
+    return;
+  }
+
+  const matches = await client.matches.listByStage(stage.id);
+  if (matches.length > 0) {
+    throw new BusinessRuleViolationError(
+      'The bracket size cannot change once a knockout bracket has been generated.',
+    );
+  }
 }
 
 function requireName(value: string): string {

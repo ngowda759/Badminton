@@ -85,6 +85,12 @@ export function StageDetailPage() {
   // Matches are siblings of stages under the category route (see routes.tsx),
   // not nested beneath the stage, so the match link omits the stage segment.
   const categoryBase = `/tournaments/${tournament.id}/categories/${category.id}`;
+  // A bracket exists once its matches have been generated; the backend then
+  // rejects any change to the bracket size, so the field is locked here too.
+  const bracketGenerated =
+    stage.type === 'KNOCKOUT' &&
+    matchQuery.state.status === 'loaded' &&
+    matchQuery.state.data.length > 0;
 
   return (
     <div className="space-y-6">
@@ -135,6 +141,7 @@ export function StageDetailPage() {
         <CardContent>
           <EditStageForm
             stage={stage}
+            drawSizeLocked={bracketGenerated}
             onSaved={() => {
               stageQuery.refetch();
               matchQuery.refetch();
@@ -338,9 +345,11 @@ function MatchResultCell({
 
 function EditStageForm({
   stage,
+  drawSizeLocked,
   onSaved,
 }: {
   readonly stage: StageDto;
+  readonly drawSizeLocked: boolean;
   readonly onSaved: () => void;
 }) {
   const api = useApi();
@@ -354,7 +363,9 @@ function EditStageForm({
     event.preventDefault();
     const nextErrors = compactErrors({
       sequence: validatePositiveInteger(sequence, 'Sequence'),
-      drawSize: validateOptionalPositiveInteger(drawSize, 'Draw size'),
+      // The bracket size is fixed once the bracket exists, so it is not
+      // validated or sent at all in that state.
+      drawSize: drawSizeLocked ? undefined : validateOptionalPositiveInteger(drawSize, 'Draw size'),
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -365,7 +376,7 @@ function EditStageForm({
       await api.stages.update(stage.id, {
         name: name.trim(),
         sequence: Number(sequence),
-        drawSize: drawSize.trim() ? Number(drawSize) : null,
+        ...(drawSizeLocked ? {} : { drawSize: drawSize.trim() ? Number(drawSize) : null }),
       });
       onSaved();
     });
@@ -406,6 +417,7 @@ function EditStageForm({
             id={id}
             type="number"
             min={1}
+            disabled={drawSizeLocked}
             {...(describedBy ? { 'aria-describedby': describedBy } : {})}
             aria-invalid={errors.drawSize ? true : undefined}
             value={drawSize}
@@ -415,6 +427,11 @@ function EditStageForm({
           />
         )}
       </FormField>
+      {drawSizeLocked ? (
+        <p className="text-muted-foreground text-xs sm:col-span-3">
+          The bracket size is fixed once the bracket has been generated.
+        </p>
+      ) : null}
       <div className="sm:col-span-3">
         <Button type="submit" disabled={mutation.pending}>
           {mutation.pending ? 'Saving…' : 'Save changes'}

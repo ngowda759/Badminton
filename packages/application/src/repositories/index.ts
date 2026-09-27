@@ -161,11 +161,15 @@ export interface MatchParticipantRepository {
   findSlot(matchId: string, slot: number): Promise<MatchParticipant | undefined>;
   findEntry(matchId: string, entryId: string): Promise<MatchParticipant | undefined>;
   /**
-   * Fills the entry occupying a slot, creating the slot when it is still empty.
-   * Used by knockout progression to fill a later-round slot; the unique indexes
-   * remain the final consistency boundary.
+   * Fills an *empty* slot with an entry; creates the participant row.
+   *
+   * Deliberately not an upsert: knockout progression must never overwrite an
+   * occupied slot. `fillSlot` is create-only, so a taken slot raises a conflict
+   * (via the compound unique index) rather than silently replacing a different
+   * entry. Callers that need idempotency check the current slot first with
+   * `findSlot`.
    */
-  upsertSlot(matchId: string, slot: number, entryId: string): Promise<MatchParticipant>;
+  fillSlot(matchId: string, slot: number, entryId: string): Promise<MatchParticipant>;
 }
 
 export interface MatchGameRepository {

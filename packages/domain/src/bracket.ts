@@ -1,5 +1,5 @@
 import { BusinessRuleViolationError } from './errors.ts';
-import type { MatchSlot } from './tournament.ts';
+import type { MatchSlot, MatchStatus } from './tournament.ts';
 
 /**
  * Pure single-elimination bracket maths.
@@ -140,6 +140,33 @@ export function bracketRoundName(size: number, roundNumber: number): string {
     return 'Quarterfinals';
   }
   return `Round of ${calculateMatchesInRound(size, roundNumber) * 2}`;
+}
+
+/**
+ * True when a match position is the bracket final: the only match of the last
+ * round. Used to derive stage completion from the bracket rather than from any
+ * stored flag - a stage is complete only once the final itself is completed.
+ */
+export function isBracketFinalMatch(
+  size: number,
+  roundNumber: number,
+  matchNumber: number,
+): boolean {
+  requireSupportedSize(size);
+  return roundNumber === calculateRoundCount(size) && matchNumber === 1;
+}
+
+/**
+ * True once the bracket's final match has reached `status`. Any other match
+ * position - or a stage with no bracket - can never complete the stage.
+ */
+export function isBracketFinalCompleted(
+  size: number,
+  roundNumber: number,
+  matchNumber: number,
+  status: MatchStatus,
+): boolean {
+  return isBracketFinalMatch(size, roundNumber, matchNumber) && status === 'COMPLETED';
 }
 
 function requirePositiveInteger(value: number, field: string): void {

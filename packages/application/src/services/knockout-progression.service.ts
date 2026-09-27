@@ -85,7 +85,11 @@ export function createKnockoutProgressionService(): KnockoutProgressionService {
         throw new ConflictError('The destination slot is already occupied by a different entry.');
       }
 
-      await client.matchParticipants.upsertSlot(nextMatch.id, position.slot, winnerEntryId);
+      // Fill-only: the destination slot is empty, so create the participant.
+      // `fillSlot` cannot overwrite, so if another winner claims the same slot
+      // concurrently the unique index makes the loser fail as a conflict rather
+      // than replacing the entry already there.
+      await client.matchParticipants.fillSlot(nextMatch.id, position.slot, winnerEntryId);
       return true;
     },
   };

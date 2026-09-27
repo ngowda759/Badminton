@@ -646,25 +646,31 @@ function buildClient(state: State): RepositoryClient {
         (row) => row.matchId === matchId && row.entryId === entryId,
       );
     },
-    async upsertSlot(matchId, slot, entryId) {
-      const current = [...state.matchParticipants.values()].find(
-        (row) => row.matchId === matchId && row.slot === slot,
+    async fillSlot(matchId, slot, entryId) {
+      // Fill-only, mirroring the Prisma `create`: an occupied slot is a conflict
+      // and the existing entry is never overwritten.
+      assertUnique(
+        ![...state.matchParticipants.values()].some(
+          (row) => row.matchId === matchId && row.slot === slot,
+        ),
+        'match_participants_matchId_slot_key',
       );
-      if (!current) {
-        const created: MatchParticipant = {
-          id: nextId('participant'),
-          matchId,
-          slot: slot === 2 ? 2 : 1,
-          entryId,
-          createdAt: now(),
-          updatedAt: now(),
-        };
-        state.matchParticipants.set(created.id, created);
-        return created;
-      }
-      const updated: MatchParticipant = { ...current, entryId, updatedAt: now() };
-      state.matchParticipants.set(updated.id, updated);
-      return updated;
+      assertUnique(
+        ![...state.matchParticipants.values()].some(
+          (row) => row.matchId === matchId && row.entryId === entryId,
+        ),
+        'match_participants_matchId_entryId_key',
+      );
+      const created: MatchParticipant = {
+        id: nextId('participant'),
+        matchId,
+        slot: slot === 2 ? 2 : 1,
+        entryId,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      state.matchParticipants.set(created.id, created);
+      return created;
     },
   };
 

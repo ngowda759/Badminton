@@ -203,6 +203,10 @@ testable):
 - `calculateSequence(size, roundNumber, matchNumber)`
 - `bracketRoundName(size, roundNumber)` → `Final` / `Semifinals` /
   `Quarterfinals` / `Round of N`
+- `isBracketFinalMatch(size, roundNumber, matchNumber)` → true only for the
+  bracket's final (the sole match of the last round)
+- `isBracketFinalCompleted(size, roundNumber, matchNumber, status)` → true only
+  when that final is `COMPLETED`
 
 No Prisma/database access lives in the domain package.
 
@@ -236,9 +240,13 @@ bracket position, and the final all return `false` (nothing to advance).
 
 ### Repository port
 
-`MatchParticipantRepository.upsertSlot(matchId, slot, entryId)` was added (Prisma
-implementation + fake) to fill/replace a slot idempotently. `listByStageWithParticipants`
-already existed for batched bracket reads; no broad repository methods were added.
+`MatchParticipantRepository.fillSlot(matchId, slot, entryId)` was added (Prisma
+implementation + fake) to fill an **empty** slot. It is deliberately create-only,
+not an upsert: progression must never overwrite an occupied slot, so the compound
+unique index turns a second writer into a conflict instead of replacing the
+entry already there. Idempotency is provided by the service, which checks the
+current slot first. `listByStageWithParticipants` already existed for batched
+bracket reads; no broad repository methods were added.
 
 ## 10. Lifecycle behavior
 
@@ -255,8 +263,25 @@ PENDING → ACTIVE → COMPLETED
   when the final match is `COMPLETED`. Completion is derived from the final and
   persisted on read (`getBracket`) — there is no background job and no automatic
   completion at generation time.
+- The explicit `ACTIVE → COMPLETED` transition is also guarded for KNOCKOUT
+  stages: it is rejected with a business-rule error (422) unless the bracket's
+  final match is `COMPLETED`. A stage with no generated bracket cannot be
+  completed. GROUP stages keep their Phase 5 lifecycle unchanged.
 - `PENDING → ACTIVE` is the existing explicit transition, performed by the
   operator before matches can start.
+
+### Bracket immutability
+
+Once a bracket exists (detected from the stage's `matches`, not from a flag):
+
+- its size cannot change — a KNOCKOUT stage update that changes `drawSize` is
+  rejected with a business-rule error (422). Re-sending the current value is a
+  no-op, so an edit form that round-trips the field keeps working;
+- first-round pairing, `roundNumber`, `matchNumber` and `sequence` are fixed at
+  generation (the bracket is derived from them);
+- a completed match and its result are immutable (Phase 5 rule).
+
+There is no admin "reset bracket" feature.
 
 ### Match eligibility
 
@@ -382,8 +407,10 @@ Two operators completing the same knockout match at once:
 - The match is read inside the transaction; the first completion sets
   `COMPLETED`. The second sees `COMPLETED` and fails with a **conflict** (409).
 - `unique(matchId, gameNumber)` prevents duplicated games.
-- Idempotent `upsertSlot` means a replayed progression writes the same winner at
-  most once and never creates a duplicate slot row.
+- `fillSlot` is create-only, so a second writer into the same destination slot
+  fails on `unique(matchId, slot)` rather than overwriting the entry already
+  there; a replayed progression is a no-op because the service checks the slot
+  first and sees its own winner.
 - A destination slot holding a _different_ entry is a conflict, so two different
   winners can never be propagated into the same slot.
 
@@ -468,7 +495,9 @@ started.
   full HTTP → service → Prisma → PostgreSQL path including bracket generation,
   first-round start, result recording with progression, final champion and stage
   completion, invalid bracket size, withdrawn entry, duplicate generation,
-  progression conflict, cross-category entry, and concurrent double completion.
+  progression conflict, cross-category entry, concurrent double completion, the
+  fill-only slot guarantee and the knockout stage-completion / bracket-size
+  guards.
 - **Web tests** (`apps/web/src/lib/bracket.test.ts`, `apps/web/tests/flows.test.tsx`):
   bracket helpers, bracket setup with confirmation, bracket render with `TBD`
   slots and winners, no standings for a knockout stage.

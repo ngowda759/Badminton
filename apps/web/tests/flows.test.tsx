@@ -582,6 +582,37 @@ describe('knockout bracket flows', () => {
     // Setup is gone once a bracket exists.
     expect(screen.queryByRole('button', { name: 'Generate bracket' })).not.toBeInTheDocument();
   });
+
+  it('locks the bracket size once a knockout bracket has been generated', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(
+      makeStage({ id: 's1', type: 'KNOCKOUT', name: 'Knockout', drawSize: 2 }),
+    );
+    api.matches.listByStage.mockResolvedValue([
+      makeMatch({ id: 'm1', stageId: 's1', roundNumber: 1, matchNumber: 1 }),
+    ]);
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.stages.getBracket.mockResolvedValue(makeBracket({ bracketSize: 2 }));
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    expect(
+      await screen.findByText('The bracket size is fixed once the bracket has been generated.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Draw size')).toBeDisabled();
+
+    // Saving name/sequence must not send a drawSize that the API would reject.
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      expect(api.stages.update).toHaveBeenCalledWith('s1', { name: 'Knockout', sequence: 1 });
+    });
+  });
 });
 
 /** Keeps the stub type referenced for readers of this file. */

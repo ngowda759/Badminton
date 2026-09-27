@@ -6,6 +6,7 @@ import {
   calculateRoundCount,
   calculateSequence,
   ConflictError,
+  isBracketFinalCompleted,
   isSupportedBracketSize,
   NotFoundError,
   ValidationError,
@@ -231,11 +232,17 @@ function isStageComplete(
   if (!isSupportedBracketSize(bracketSize)) {
     return false;
   }
-  const roundCount = calculateRoundCount(bracketSize);
-  const final = matches.find(
-    (row) => row.match.roundNumber === roundCount && row.match.matchNumber === 1,
+  return matches.some(
+    (row) =>
+      row.match.roundNumber !== null &&
+      row.match.matchNumber !== null &&
+      isBracketFinalCompleted(
+        bracketSize,
+        row.match.roundNumber,
+        row.match.matchNumber,
+        row.match.status,
+      ),
   );
-  return final?.match.status === 'COMPLETED';
 }
 
 /** Best-effort bracket size when the stage has none (e.g. an unseeded stage). */
