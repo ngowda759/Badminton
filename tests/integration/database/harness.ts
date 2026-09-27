@@ -2,33 +2,43 @@ import { execFileSync } from 'node:child_process';
 
 import { loadEnvironmentFiles } from '@badminton/config';
 import { connectDatabase, type DatabaseConnection, type PrismaClient } from '@badminton/database';
+import { Pool } from 'pg';
 
 /**
  * Harness for the Phase 2 database integration tests.
  *
- * The suite runs against **real PostgreSQL** (no Prisma mocks). To avoid
- * touching a developer's normal `public` schema, every test operates inside a
- * dedicated `badminton_test` schema that is created and migrated by
- * `prisma migrate deploy` before the run.
+ * The suite runs against **real PostgreSQL** (no Prisma mocks) in a dedicated
+ * `<database>_test` database, so a developer's normal database is never touched.
+ * The test database is created and migrated on first use.
  *
- * When no database is reachable the harness returns `undefined` and the calling
- * suite is skipped, so `npm test` still passes on a machine without PostgreSQL
- * (matching Phase 1's "unit tests need no database" contract). CI and the
- * documented verification commands provide a database, so the tests execute
- * there.
+ * Why a separate database rather than a `schema=` query parameter: `@prisma/adapter-pg`
+ * ignores `schema=` on the connection string (`current_schema()` stays `public`), so
+ * migrations landed in one schema while the client queried another.
  *
- * Migrations are applied lazily, the first time a suite tries to open the test
- * database. Keeping this out of a shared Vitest global setup means the unit and
- * Phase 1 integration suites never touch PostgreSQL at all.
+ * When no database is reachable the suite is skipped, so `npm test` still passes on a
+ * machine without PostgreSQL - unless `CI` is set (or `REQUIRE_DATABASE_TESTS=1`), in
+ * which case the suite fails loudly instead of silently skipping.
  */
 
 export const TEST_SCHEMA = 'badminton_test';
 
-/** Derives the test connection string by pointing `DATABASE_URL` at the test schema. */
+function overrideDatabase(url: URL, database: string): string {
+  url.pathname = `/${database}`;
+  // The adapter ignores `schema=`, and a stale value would be misleading.
+  url.searchParams.delete('schema');
+  return url.toString();
+}
+
+/** Resolves the test database URL, deriving it from `DATABASE_URL` when not supplied. */
 export function resolveTestDatabaseUrl(): string | undefined {
   // Vitest does not load `.env` for us; the repository loader keeps this
   // consistent with `npm run db:*` and the API.
   loadEnvironmentFiles();
+
+  const explicit = process.env.TEST_DATABASE_URL;
+  if (explicit) {
+    return explicit;
+  }
 
   const configured = process.env.DATABASE_URL;
   if (!configured) {
@@ -37,71 +47,102 @@ export function resolveTestDatabaseUrl(): string | undefined {
 
   try {
     const url = new URL(configured);
-    url.searchParams.set('schema', TEST_SCHEMA);
-    return url.toString();
+    const database = url.pathname.replace(/^\//, '');
+    const testDatabase = database.endsWith('_test') ? database : `${database}_test`;
+    return overrideDatabase(url, testDatabase);
   } catch {
     return undefined;
   }
 }
 
-/**
- * Applies migrations to the dedicated test schema, at most once per process.
- *
- * Failures are reported and swallowed so a missing database skips the suite
- * instead of failing it.
- */
-let migrated = false;
-
-export function ensureTestSchema(): void {
-  if (migrated) {
-    return;
-  }
-  migrated = true;
-
-  const url = resolveTestDatabaseUrl();
-  if (!url) {
-    process.stdout.write('[database-tests] DATABASE_URL is not set; database tests will skip.\n');
-    return;
-  }
-
-  try {
-    execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
-      cwd: process.cwd(),
-      env: { ...process.env, DATABASE_URL: url },
-      stdio: 'pipe',
-      timeout: 120_000,
-    });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'unknown error';
-    process.stdout.write(`[database-tests] Could not prepare ${TEST_SCHEMA}: ${message}\n`);
-  }
+/** Connection string for the maintenance `postgres` database, used to create the test one. */
+function resolveAdminDatabaseUrl(testUrl: string): string {
+  return overrideDatabase(new URL(testUrl), 'postgres');
 }
 
-/** An open connection to the migrated test schema. */
+/** True when a missing database must fail the run rather than skip the suite. */
+export function databaseTestsRequired(): boolean {
+  return Boolean(process.env.CI) || process.env.REQUIRE_DATABASE_TESTS === '1';
+}
+
+function databaseName(url: string): string {
+  return new URL(url).pathname.replace(/^\//, '');
+}
+
+/** Ensures the test database exists, then applies migrations to it. */
+async function prepareTestDatabase(testUrl: string): Promise<void> {
+  const admin = new Pool({ connectionString: resolveAdminDatabaseUrl(testUrl), max: 1 });
+  try {
+    const existing = await admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [
+      databaseName(testUrl),
+    ]);
+    if (existing.rowCount === 0) {
+      // Identifiers cannot be parameterised, so quote from a validated name.
+      const name = databaseName(testUrl);
+      if (!/^[A-Za-z0-9_]+$/.test(name)) {
+        throw new Error(`Unsafe test database name: ${name}`);
+      }
+      await admin.query(`CREATE DATABASE "${name}"`);
+    }
+  } finally {
+    await admin.end();
+  }
+
+  execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
+    cwd: process.cwd(),
+    env: { ...process.env, DATABASE_URL: testUrl },
+    stdio: 'pipe',
+    timeout: 120_000,
+  });
+}
+
+let prepared: Promise<void> | undefined;
+
+/** Runs `prepareTestDatabase` at most once per process. */
+function ensureTestDatabase(testUrl: string): Promise<void> {
+  prepared ??= prepareTestDatabase(testUrl).catch((error: unknown) => {
+    prepared = undefined;
+    throw error;
+  });
+  return prepared;
+}
+
+/** An open connection to the migrated test database. */
 export interface TestDatabase {
   readonly prisma: PrismaClient;
   disconnect(): Promise<void>;
 }
 
 /**
- * Opens a connection to the test schema and verifies the tournament tables
- * exist. Returns `undefined` (so the suite skips) when PostgreSQL is absent or
- * the schema is not migrated.
+ * Opens a connection to the test database. Returns `undefined` (so the suite
+ * skips) when PostgreSQL is absent and the run does not require it; throws when
+ * the run requires a database but one cannot be prepared.
  */
 export async function openTestDatabase(): Promise<TestDatabase | undefined> {
   const url = resolveTestDatabaseUrl();
   if (!url) {
+    if (databaseTestsRequired()) {
+      throw new Error('DATABASE_URL is required to run the database integration tests.');
+    }
     return undefined;
   }
 
-  ensureTestSchema();
-
   let connection: DatabaseConnection | undefined;
   try {
+    await ensureTestDatabase(url);
     connection = connectDatabase(url);
     await connection.prisma.$queryRaw`SELECT 1 FROM "tournaments" LIMIT 0`;
-  } catch {
+  } catch (error: unknown) {
     await connection?.disconnect();
+    if (databaseTestsRequired()) {
+      throw new Error(
+        `Could not prepare the database integration tests against ${databaseName(url)}: ${String(error)}`,
+        { cause: error },
+      );
+    }
+    process.stdout.write(
+      `[database-tests] Skipping: could not prepare ${databaseName(url)} (${String(error)}).\n`,
+    );
     return undefined;
   }
 

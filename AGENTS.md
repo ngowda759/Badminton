@@ -62,8 +62,11 @@ database — integration tests use `app.inject()` with stub probes.
   indexes) live in the `add_tournament_domain` migration. Do not re-add conflicting
   Prisma `@unique` attributes for those columns.
 - The database integration tests (`tests/integration/database/`) run against real
-  PostgreSQL in a dedicated `badminton_test` schema and skip when no database is
-  reachable. They need no fixture setup beyond a running PostgreSQL instance.
+  PostgreSQL in a dedicated `<database>_test` database, created and migrated on first
+  use. They skip when no database is reachable, but fail the run when `CI` is set or
+  `REQUIRE_DATABASE_TESTS=1` is set. The `schema=` URL parameter is ignored by
+  `@prisma/adapter-pg` (`current_schema()` stays `public`), so isolation uses a separate
+  database, not a schema.
 - Never log or return connection strings, credentials, SQL errors or stack traces.
 - Server-only config is read via `getServerEnv()`. Only `VITE_`-prefixed variables reach
   the browser bundle.

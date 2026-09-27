@@ -12,10 +12,10 @@ import {
   createTeam,
   createTeamMember,
   createTournament,
+  databaseTestsRequired,
   isUuid,
   openTestDatabase,
   resetTournamentData,
-  TEST_SCHEMA,
 } from './harness.ts';
 
 /**
@@ -28,8 +28,9 @@ import {
  * player-in-two-teams) are deliberately **not** asserted here - they belong to
  * the service layer.
  *
- * The suite talks to a dedicated `badminton_test` schema. If PostgreSQL is not
- * reachable it is skipped, keeping `npm test` database-free on workstations.
+ * The suite talks to a dedicated `<database>_test` database. Without a reachable
+ * PostgreSQL it is skipped on a workstation, but a missing database fails the run
+ * under CI (`CI` set) or when `REQUIRE_DATABASE_TESTS=1`.
  */
 
 const database = await openTestDatabase();
@@ -57,7 +58,7 @@ async function expectRejectionContaining(
   expect(String(error)).toContain(fragment);
 }
 
-const SUITE_NAME = `Phase 2 tournament database (${TEST_SCHEMA})`;
+const SUITE_NAME = 'Phase 2 tournament database';
 
 /**
  * Registers the suite for an open database. Kept as a function so the Prisma
@@ -720,4 +721,13 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
 
 if (database) {
   registerDatabaseSuite(database.prisma);
+} else {
+  // A file that registers no suite fails Vitest with "No test suite found".
+  // Register an explicit skip so a database-less workstation stays green while
+  // still surfacing that the suite did not run. CI never reaches this branch.
+  describe.skip(`${SUITE_NAME} (skipped: no database)`, () => {
+    it('requires PostgreSQL', () => {
+      expect(databaseTestsRequired()).toBe(false);
+    });
+  });
 }
