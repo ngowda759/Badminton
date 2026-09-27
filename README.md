@@ -144,12 +144,22 @@ to boot on invalid configuration and reports variable _names_, never values.
 | `DATABASE_URL`      | server | — (required)            | PostgreSQL connection string; must use a `postgres://` scheme       |
 | `CORS_ORIGINS`      | server | `''`                    | Comma-separated browser origins. Empty disables CORS (fails closed) |
 | `LOG_LEVEL`         | server | `info`                  | `debug` \| `info` \| `warn` \| `error`                              |
+| `TRUST_PROXY`       | server | `false`                 | Trust `X-Forwarded-*` headers; `true` \| `false` only               |
 | `WEB_PORT`          | web    | `5173`                  | Vite dev server port                                                |
 | `VITE_API_BASE_URL` | client | `http://localhost:3000` | Base URL the browser uses to reach the API                          |
 | `POSTGRES_*`        | docker | `badminton`             | Credentials used by `docker-compose.yml`                            |
 
 `VITE_`-prefixed variables are inlined into public JavaScript. Nothing server-side may
 use that prefix — server configuration is only read through `getServerEnv()`.
+
+`TRUST_PROXY` defaults to `false`. Leave it off unless a reverse proxy that overwrites
+`X-Forwarded-*` headers runs in front of the API: those headers are client-controlled
+otherwise, so trusting them lets a caller forge its own address and protocol. Only the
+exact values `true` and `false` are accepted; anything else (including `1`, `yes`, `TRUE`)
+fails startup rather than silently choosing a state.
+
+`.env` is resolved from the repository root as well as the current directory, so
+`npm run dev` works whether it is launched from the root or from `apps/api`.
 
 ## Database
 

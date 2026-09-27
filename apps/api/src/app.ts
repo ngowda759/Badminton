@@ -17,6 +17,12 @@ export interface BuildAppOptions {
   readonly checks: readonly HealthCheck[];
   readonly corsOrigins: readonly string[];
   readonly logger?: FastifyServerOptions['logger'];
+  /**
+   * Whether to trust `X-Forwarded-*` headers. Defaults to `false` so that a
+   * misconfigured deployment fails closed rather than honouring client-supplied
+   * proxy headers.
+   */
+  readonly trustProxy?: boolean;
 }
 
 /**
@@ -28,7 +34,7 @@ export interface BuildAppOptions {
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: options.logger ?? false,
-    trustProxy: true,
+    trustProxy: options.trustProxy ?? false,
   });
 
   registerErrorHandler(app);

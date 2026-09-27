@@ -15,6 +15,22 @@ export const DEFAULT_WEB_PORT = 5173;
 const portSchema = z.coerce.number().int().min(1).max(65_535);
 
 /**
+ * Boolean environment flag.
+ *
+ * Environment variables are strings, so `"true"`/`"false"` are accepted and
+ * coerced. Anything else - including a bare `"1"`, `"yes"` or `"TRUE"` - is
+ * rejected rather than guessed at, because a typo in a security-relevant flag
+ * must fail loudly instead of silently enabling it.
+ *
+ * The default is applied to the enum *before* the transform, so an absent
+ * variable is coerced through the same path as an explicit value.
+ */
+const booleanFlagSchema = z
+  .enum(['true', 'false'])
+  .default('false')
+  .transform((value) => value === 'true');
+
+/**
  * Rejects connection strings that embed a password. Credentials are supplied
  * out of band (docker-compose / Supabase secrets) and must never be committed.
  */
@@ -32,6 +48,9 @@ export const serverEnvSchema = z.object({
   DATABASE_URL: databaseUrlSchema,
   CORS_ORIGINS: z.string().default(''),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+  // Off by default: forwarded headers are attacker-controlled unless a trusted
+  // proxy is known to sit in front of the API. Enable explicitly per deployment.
+  TRUST_PROXY: booleanFlagSchema,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

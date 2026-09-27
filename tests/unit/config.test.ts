@@ -15,6 +15,20 @@ describe('server environment validation', () => {
     expect(env.API_PORT).toBe(3000);
     expect(env.LOG_LEVEL).toBe('info');
     expect(env.CORS_ORIGINS).toBe('');
+    expect(env.TRUST_PROXY).toBe(false);
+  });
+
+  it('coerces the TRUST_PROXY string flag to a boolean', () => {
+    expect(parseServerEnv({ ...VALID_ENV, TRUST_PROXY: 'true' }).TRUST_PROXY).toBe(true);
+    expect(parseServerEnv({ ...VALID_ENV, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
+  });
+
+  it('rejects a TRUST_PROXY value that is not exactly "true" or "false"', () => {
+    // A typo must fail loudly rather than silently leaving a security-relevant
+    // flag in an unexpected state.
+    for (const value of ['TRUE', 'yes', '1', 'on', '']) {
+      expect(serverEnvSchema.safeParse({ ...VALID_ENV, TRUST_PROXY: value }).success).toBe(false);
+    }
   });
 
   it('coerces numeric ports supplied as strings', () => {

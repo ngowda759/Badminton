@@ -19,6 +19,7 @@ async function start(): Promise<void> {
     checks: createDatabaseHealthChecks(database),
     corsOrigins: config.corsOrigins,
     logger: config.logger,
+    trustProxy: config.trustProxy,
   });
 
   let shuttingDown = false;
