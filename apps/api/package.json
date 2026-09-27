@@ -1,0 +1,20 @@
+{
+  "name": "@badminton/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p ../../tsconfig.build.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@badminton/config": "*",
+    "@badminton/database": "*",
+    "@badminton/domain": "*",
+    "@badminton/validation": "*",
+    "@fastify/cors": "11.3.0",
+    "fastify": "5.12.5"
+  }
+}

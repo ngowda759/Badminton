@@ -1,0 +1,28 @@
+// Badminton V2 - foundation schema.
+//
+// Intentionally minimal. Tournament entities (Tournament, Player, Team, Match,
+// Group, Court, Score, Fixture, Ranking) belong to later phases and must not
+// be added here.
+//
+// `SystemMetadata` exists only to give Prisma something concrete to migrate and
+// seed, proving the PostgreSQL connection end to end. It is infrastructure
+// bookkeeping, not a domain model.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../packages/database/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model SystemMetadata {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("system_metadata")
+}
