@@ -1,5 +1,6 @@
 import type {
   CreateCategoryData,
+  CreateCourtData,
   CreateEntryData,
   CreateMatchData,
   CreateMatchGameData,
@@ -9,9 +10,11 @@ import type {
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  CourtRepository,
   MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
+  MatchScheduleData,
   PlayerRepository,
   RepositoryClient,
   TeamMemberRepository,
@@ -22,6 +25,7 @@ import type {
   TournamentStageRepository,
   UnitOfWork,
   UpdateCategoryData,
+  UpdateCourtData,
   UpdateMatchData,
   UpdatePlayerData,
   UpdateStageData,
@@ -32,6 +36,7 @@ import type { PrismaClient, TransactionClient } from '@badminton/database';
 
 import { translatePersistenceErrors } from './errors.ts';
 import {
+  toCourt,
   toMatch,
   toMatchGame,
   toMatchParticipant,
@@ -151,6 +156,15 @@ function createPlayerRepository(db: Db): PlayerRepository {
         return row ? toPlayer(row) : undefined;
       });
     },
+    async listByIds(ids: readonly string[]) {
+      return translatePersistenceErrors(async () => {
+        if (ids.length === 0) {
+          return [];
+        }
+        const rows = await db.player.findMany({ where: { id: { in: [...ids] } } });
+        return rows.map(toPlayer);
+      });
+    },
     update(id: string, data: UpdatePlayerData) {
       return translatePersistenceErrors(async () =>
         toPlayer(await db.player.update({ where: { id }, data })),
@@ -168,6 +182,15 @@ function createTeamRepository(db: Db): TeamRepository {
       return translatePersistenceErrors(async () => {
         const row = await db.team.findUnique({ where: { id } });
         return row ? toTeam(row) : undefined;
+      });
+    },
+    async listByIds(ids: readonly string[]) {
+      return translatePersistenceErrors(async () => {
+        if (ids.length === 0) {
+          return [];
+        }
+        const rows = await db.team.findMany({ where: { id: { in: [...ids] } } });
+        return rows.map(toTeam);
       });
     },
     update(id: string, data: UpdateTeamData) {
@@ -264,6 +287,16 @@ function createEntryRepository(db: Db): TournamentEntryRepository {
         return rows.map(toTournamentEntry);
       });
     },
+    async listByTournament(tournamentId: string) {
+      return translatePersistenceErrors(async () => {
+        // One query through the category relation; no per-category fan-out.
+        const rows = await db.tournamentEntry.findMany({
+          where: { category: { tournamentId } },
+          orderBy: { registeredAt: 'asc' },
+        });
+        return rows.map(toTournamentEntry);
+      });
+    },
     updateSeed(id: string, seed: number | null) {
       return translatePersistenceErrors(async () =>
         toTournamentEntry(await db.tournamentEntry.update({ where: { id }, data: { seed } })),
@@ -295,6 +328,16 @@ function createStageRepository(db: Db): TournamentStageRepository {
         const rows = await db.tournamentStage.findMany({
           where: { categoryId },
           orderBy: { sequence: 'asc' },
+        });
+        return rows.map(toTournamentStage);
+      });
+    },
+    async listByTournament(tournamentId: string) {
+      return translatePersistenceErrors(async () => {
+        // One query through the category relation, ordered by category then stage.
+        const rows = await db.tournamentStage.findMany({
+          where: { category: { tournamentId } },
+          orderBy: [{ categoryId: 'asc' }, { sequence: 'asc' }],
         });
         return rows.map(toTournamentStage);
       });
@@ -374,6 +417,98 @@ function createMatchRepository(db: Db): MatchRepository {
             data: { status: 'COMPLETED', winnerEntryId },
           }),
         ),
+      );
+    },
+    schedule(id: string, data: MatchScheduleData) {
+      // Writes court and both times in one update; the CHECK constraints and the
+      // GiST exclusion constraint reject a partial or overlapping schedule.
+      return translatePersistenceErrors(async () =>
+        toMatch(
+          await db.match.update({
+            where: { id },
+            data: {
+              courtId: data.courtId,
+              scheduledStartAt: data.scheduledStartAt,
+              scheduledEndAt: data.scheduledEndAt,
+            },
+          }),
+        ),
+      );
+    },
+    unschedule(id: string) {
+      return translatePersistenceErrors(async () =>
+        toMatch(
+          await db.match.update({
+            where: { id },
+            data: { courtId: null, scheduledStartAt: null, scheduledEndAt: null },
+          }),
+        ),
+      );
+    },
+    async listByTournament(tournamentId: string) {
+      return translatePersistenceErrors(async () => {
+        // One query joining match → stage → category; no per-stage fan-out.
+        const rows = await db.match.findMany({
+          where: { stage: { category: { tournamentId } } },
+          orderBy: { sequence: 'asc' },
+        });
+        return rows.map(toMatch);
+      });
+    },
+    async findOverlappingSchedule(courtId, startAt, endAt, excludeMatchId) {
+      return translatePersistenceErrors(async () => {
+        const row = await db.match.findFirst({
+          where: {
+            courtId,
+            ...(excludeMatchId ? { id: { not: excludeMatchId } } : {}),
+            scheduledStartAt: { lt: endAt },
+            scheduledEndAt: { gt: startAt },
+          },
+          ...UNIQUE_LOOKUP,
+        });
+        return row ? toMatch(row) : undefined;
+      });
+    },
+    async listByCourt(courtId: string) {
+      return translatePersistenceErrors(async () => {
+        const rows = await db.match.findMany({
+          where: { courtId },
+          orderBy: { scheduledStartAt: 'asc' },
+        });
+        return rows.map(toMatch);
+      });
+    },
+  };
+}
+
+function createCourtRepository(db: Db): CourtRepository {
+  return {
+    create(data: CreateCourtData) {
+      return translatePersistenceErrors(async () => toCourt(await db.court.create({ data })));
+    },
+    async findById(id: string) {
+      return translatePersistenceErrors(async () => {
+        const row = await db.court.findUnique({ where: { id } });
+        return row ? toCourt(row) : undefined;
+      });
+    },
+    async listByTournament(tournamentId: string) {
+      return translatePersistenceErrors(async () => {
+        const rows = await db.court.findMany({
+          where: { tournamentId },
+          orderBy: { number: 'asc' },
+        });
+        return rows.map(toCourt);
+      });
+    },
+    update(id: string, data: UpdateCourtData) {
+      return translatePersistenceErrors(async () =>
+        toCourt(await db.court.update({ where: { id }, data })),
+      );
+    },
+    updateStatus(id, status) {
+      return translatePersistenceErrors(async () =>
+        toCourt(await db.court.update({ where: { id }, data: { status } })),
       );
     },
   };
@@ -481,6 +616,7 @@ export function createRepositoryClient(db: Db): RepositoryClient {
     matches: createMatchRepository(db),
     matchParticipants: createMatchParticipantRepository(db),
     matchGames: createMatchGameRepository(db),
+    courts: createCourtRepository(db),
   };
 }
 

@@ -828,6 +828,7 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
       `;
         const names = rows.map((row) => row.table_name).sort();
         expect(names).toEqual([
+          'courts',
           'match_games',
           'match_participants',
           'matches',

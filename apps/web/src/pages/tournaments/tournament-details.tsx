@@ -26,6 +26,9 @@ export function TournamentDetailsPage() {
   }, [remember, tournament.id, tournament.name]);
 
   const links = [
+    { to: 'dashboard', label: 'Dashboard' },
+    { to: 'courts', label: 'Court board' },
+    { to: 'courts/manage', label: 'Courts' },
     { to: 'categories', label: 'Categories' },
     { to: 'players', label: 'Players' },
     { to: 'teams', label: 'Teams' },

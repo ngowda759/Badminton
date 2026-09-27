@@ -129,8 +129,29 @@ export interface Match {
    * match; it is never chosen by a caller.
    */
   readonly winnerEntryId: string | null;
+  /**
+   * Scheduling information is optional: a match can exist before an operator
+   * decides where and when it is played. `courtId`, `scheduledStartAt` and
+   * `scheduledEndAt` are always all-set or all-null together.
+   */
+  readonly courtId: string | null;
+  readonly scheduledStartAt: Date | null;
+  readonly scheduledEndAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+/**
+ * The scheduling slice of a match.
+ *
+ * A start/end pair plus the owning court; `null` means the match is unscheduled.
+ * The application layer treats a schedule as one atomic value so a partially
+ * populated schedule is never persisted.
+ */
+export interface MatchSchedule {
+  readonly courtId: string;
+  readonly scheduledStartAt: Date;
+  readonly scheduledEndAt: Date;
 }
 
 export interface MatchParticipant {

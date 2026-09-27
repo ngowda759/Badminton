@@ -32,6 +32,8 @@ const CONFLICT_MESSAGES: Readonly<Record<string, string>> = {
   match_participants_matchId_slot_key: 'This slot is already occupied in this match.',
   match_participants_matchId_entryId_key: 'This entry is already a participant in this match.',
   match_games_matchId_gameNumber_key: 'A result for this match has already been recorded.',
+  courts_tournamentId_number_key: 'A court with this number already exists in this tournament.',
+  matches_court_schedule_no_overlap: 'This court already has a match overlapping that time.',
 };
 
 /**
@@ -72,7 +74,28 @@ export function toApplicationError(error: unknown): Error {
     return new ValidationError('The persistence request was malformed.');
   }
 
+  // An exclusion-constraint violation (PostgreSQL 23P01) is not part of Prisma's
+  // mapped known-error set, so it would otherwise surface as a generic 500. Scan
+  // the raw error for a known constraint name and translate it into the same
+  // controlled `ConflictError`; the SQL and constraint name are never returned.
+  const conflictTarget = findConflictTargetInError(error);
+  if (conflictTarget) {
+    return new ConflictError(CONFLICT_MESSAGES[conflictTarget] ?? 'A conflict occurred.');
+  }
+
   return new PersistenceError();
+}
+
+/** Scans any error's message for a known constraint/index name. */
+function findConflictTargetInError(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+  const message = (error as { readonly message?: unknown }).message;
+  if (typeof message !== 'string') {
+    return undefined;
+  }
+  return findKnownConstraint([message]);
 }
 
 /**

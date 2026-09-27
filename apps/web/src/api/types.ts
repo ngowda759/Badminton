@@ -1,6 +1,7 @@
 import type { CategoryFormat, CategoryGender } from '@badminton/domain';
 import type {
   CategoryStatus,
+  CourtStatus,
   EntryStatus,
   MatchSlot,
   MatchStatus,
@@ -103,6 +104,9 @@ export interface MatchDto {
   readonly status: MatchStatus;
   /** Set once the match is completed; the winning entry. */
   readonly winnerEntryId: string | null;
+  readonly courtId: string | null;
+  readonly scheduledStartAt: string | null;
+  readonly scheduledEndAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -184,6 +188,92 @@ export interface BracketDto {
   readonly roundCount: number;
   readonly rounds: readonly BracketRoundDto[];
   readonly complete: boolean;
+}
+
+/** A tournament court as returned by the court endpoints. */
+export interface CourtDto {
+  readonly id: string;
+  readonly tournamentId: string;
+  readonly number: number;
+  readonly name: string;
+  readonly status: CourtStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** A resolved competitor name for a dashboard match participant slot. */
+export interface DashboardCompetitorDto {
+  readonly entryId: string | null;
+  readonly name: string | null;
+  readonly slot: number;
+}
+
+/** A match shown on the dashboard, with enough context to render a card. */
+export interface DashboardMatchDto {
+  readonly matchId: string;
+  readonly status: MatchStatus;
+  readonly categoryId: string;
+  readonly categoryName: string;
+  readonly stageId: string;
+  readonly stageName: string;
+  readonly courtId: string | null;
+  readonly courtName: string | null;
+  readonly courtNumber: number | null;
+  readonly scheduledStartAt: string | null;
+  readonly scheduledEndAt: string | null;
+  readonly participants: readonly DashboardCompetitorDto[];
+  readonly winnerEntryId: string | null;
+}
+
+/** A court with a derived busy flag (never persisted). */
+export interface DashboardCourtDto {
+  readonly courtId: string;
+  readonly number: number;
+  readonly name: string;
+  readonly status: CourtStatus;
+  readonly busy: boolean;
+}
+
+/** Per-stage progress within a dashboard category. */
+export interface DashboardStageProgressDto {
+  readonly stageId: string;
+  readonly name: string;
+  readonly type: StageType;
+  readonly status: StageStatus;
+  readonly totalMatches: number;
+  readonly completedMatches: number;
+}
+
+/** Per-category progress aggregating its stages. */
+export interface DashboardCategoryProgressDto {
+  readonly categoryId: string;
+  readonly name: string;
+  readonly code: string;
+  readonly totalMatches: number;
+  readonly completedMatches: number;
+  readonly stages: readonly DashboardStageProgressDto[];
+}
+
+/** Aggregate match/entry counts for the dashboard. */
+export interface DashboardSummaryDto {
+  readonly totalEntries: number;
+  readonly totalMatches: number;
+  readonly completedMatches: number;
+  readonly inProgressMatches: number;
+  readonly scheduledMatches: number;
+  readonly unscheduledMatches: number;
+}
+
+/** The aggregated dashboard payload returned by the dashboard endpoint. */
+export interface TournamentDashboardDto {
+  readonly tournament: TournamentDto;
+  readonly summary: DashboardSummaryDto;
+  readonly courts: readonly DashboardCourtDto[];
+  readonly liveMatches: readonly DashboardMatchDto[];
+  readonly upcomingMatches: readonly DashboardMatchDto[];
+  readonly recentResults: readonly DashboardMatchDto[];
+  readonly unscheduledMatches: readonly DashboardMatchDto[];
+  readonly categories: readonly DashboardCategoryProgressDto[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -299,4 +389,20 @@ export interface RecordMatchResultInput {
 /** Generates a knockout bracket from a caller-supplied entry ordering. */
 export interface GenerateKnockoutBracketInput {
   readonly entryIds: readonly string[];
+}
+
+export interface CreateCourtInput {
+  readonly number: number;
+  readonly name: string;
+}
+
+export interface UpdateCourtInput {
+  readonly number?: number;
+  readonly name?: string;
+}
+
+export interface ScheduleMatchInput {
+  readonly courtId: string;
+  readonly scheduledStartAt: string;
+  readonly scheduledEndAt: string;
 }

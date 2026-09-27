@@ -2,7 +2,9 @@ import type { ApiClient } from './client.ts';
 import type {
   BracketDto,
   CategoryDto,
+  CourtDto,
   CreateCategoryInput,
+  CreateCourtInput,
   CreateMatchInput,
   CreatePlayerInput,
   CreateStageInput,
@@ -16,12 +18,15 @@ import type {
   PlayerDto,
   RecordMatchResultInput,
   RegisterEntryInput,
+  ScheduleMatchInput,
   StageDto,
   StandingRowDto,
   TeamDto,
   TeamMemberDto,
+  TournamentDashboardDto,
   TournamentDto,
   UpdateCategoryInput,
+  UpdateCourtInput,
   UpdateEntryInput,
   UpdateMatchInput,
   UpdatePlayerInput,
@@ -124,6 +129,22 @@ export interface MatchApi {
   ): Promise<MatchResultDto>;
   /** Reads the stored result, or `null` while the match is not completed. */
   getResult(matchId: string, signal?: AbortSignal): Promise<MatchResultDto | null>;
+  /** Assigns a court and a start/end window to a match. */
+  schedule(matchId: string, input: ScheduleMatchInput, signal?: AbortSignal): Promise<MatchDto>;
+  /** Clears a future schedule from a match. */
+  unschedule(matchId: string, signal?: AbortSignal): Promise<MatchDto>;
+}
+
+export interface CourtApi {
+  listByTournament(tournamentId: string, signal?: AbortSignal): Promise<readonly CourtDto[]>;
+  create(tournamentId: string, input: CreateCourtInput, signal?: AbortSignal): Promise<CourtDto>;
+  get(id: string, signal?: AbortSignal): Promise<CourtDto>;
+  update(id: string, input: UpdateCourtInput, signal?: AbortSignal): Promise<CourtDto>;
+  transition(id: string, status: string, signal?: AbortSignal): Promise<CourtDto>;
+}
+
+export interface DashboardApi {
+  get(tournamentId: string, signal?: AbortSignal): Promise<TournamentDashboardDto>;
 }
 
 /** The complete API surface consumed by the tournament setup UI. */
@@ -135,6 +156,8 @@ export interface BadmintonApi {
   readonly entries: EntryApi;
   readonly stages: StageApi;
   readonly matches: MatchApi;
+  readonly courts: CourtApi;
+  readonly dashboard: DashboardApi;
 }
 
 /** Builds every domain API module over one shared transport. */
@@ -214,6 +237,24 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
         client.post(`/api/v1/matches/${matchId}/result`, input, signal),
       getResult: (matchId, signal) =>
         client.get<MatchResultDto | null>(`/api/v1/matches/${matchId}/result`, signal),
+      schedule: (matchId, input, signal) =>
+        client.post(`/api/v1/matches/${matchId}/schedule`, input, signal),
+      unschedule: (matchId, signal) =>
+        client.deleteResource<MatchDto>(`/api/v1/matches/${matchId}/schedule`, signal),
+    },
+    courts: {
+      listByTournament: (tournamentId, signal) =>
+        client.get(`/api/v1/tournaments/${tournamentId}/courts`, signal),
+      create: (tournamentId, input, signal) =>
+        client.post(`/api/v1/tournaments/${tournamentId}/courts`, input, signal),
+      get: (id, signal) => client.get(`/api/v1/courts/${id}`, signal),
+      update: (id, input, signal) => client.patch(`/api/v1/courts/${id}`, input, signal),
+      transition: (id, status, signal) =>
+        client.post(`/api/v1/courts/${id}/transition`, { status }, signal),
+    },
+    dashboard: {
+      get: (tournamentId, signal) =>
+        client.get(`/api/v1/tournaments/${tournamentId}/dashboard`, signal),
     },
   };
 }

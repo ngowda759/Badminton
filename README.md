@@ -3,13 +3,18 @@
 A badminton tournament management platform, rebuilt from scratch as a typed full-stack
 monorepo.
 
-**Phases 1, 2, 3 and 4 are implemented:** the foundation (Phase 1), the tournament
-database/domain/application layers (Phase 2), the REST API layer (Phase 3), and the
-tournament setup UI (Phase 4). The API exposes the Phase 2 application services under
-`/api/v1` ([docs/phase-3-rest-api.md](docs/phase-3-rest-api.md)); the web application
-drives them through a typed API client ([docs/phase-4-tournament-ui.md](docs/phase-4-tournament-ui.md)).
-Draw generation, scoring and scheduling are intentionally absent; see
-[Future phases](#future-phases).
+**Phases 1–7 are implemented:** the foundation (Phase 1), the tournament
+database/domain/application layers (Phase 2), the REST API layer (Phase 3), the
+tournament setup UI (Phase 4), group-stage scheduling and scoring (Phase 5), the
+knockout stage and bracket management (Phase 6), and court management, match
+scheduling and the tournament dashboard (Phase 7). The API exposes the application
+services under `/api/v1` ([docs/phase-3-rest-api.md](docs/phase-3-rest-api.md)); the
+web application drives them through a typed API client
+([docs/phase-4-tournament-ui.md](docs/phase-4-tournament-ui.md)); the Phase 7
+operational layer is documented in
+[docs/phase-7-courts-dashboard.md](docs/phase-7-courts-dashboard.md).
+Draw generation, automatic scheduling, ranking and realtime are intentionally absent;
+see [Future phases](#future-phases).
 
 ---
 
@@ -368,21 +373,42 @@ Phase 4 — tournament setup UI:
 - Vitest component/page tests against a stub API, plus a Playwright setup flow
 - See [docs/phase-4-tournament-ui.md](docs/phase-4-tournament-ui.md)
 
+Phase 5 — group-stage scheduling and scoring:
+
+- Group-stage match scoring using the authoritative badminton scoring rules
+- Derived, stage-isolated standings over active entries
+- Match lifecycle actions (SCHEDULED → IN_PROGRESS → COMPLETED) unchanged
+- See [docs/phase-5-group-scoring.md](docs/phase-5-group-scoring.md)
+
+Phase 6 — knockout stage and bracket management:
+
+- Single-elimination bracket generation for supported draw sizes
+- Atomic winner progression through the bracket into the final
+- Bracket retrieval API and knockout UI
+- See [docs/phase-6-knockout.md](docs/phase-6-knockout.md)
+
+Phase 7 — court management, match scheduling and tournament dashboard:
+
+- Per-tournament courts with unique numbers and an ACTIVE/INACTIVE lifecycle
+- Operator-controlled match scheduling on an active court with a `[start, end)` window
+- Overlapping schedules rejected by a database GiST exclusion constraint
+- A court board and an aggregated tournament dashboard read model
+- See [docs/phase-7-courts-dashboard.md](docs/phase-7-courts-dashboard.md)
+
 Intentionally **not** implemented: authentication and authorization, draw generation,
-match scheduling, groups, knockout brackets, scoring, ranking, court management, live
-scoring, realtime subscriptions, dashboards, payments and notifications. No API
-OpenAPI/Swagger surface; the REST API is documented in Markdown.
+automatic scheduling, ranking, realtime subscriptions, payments and notifications. No
+API OpenAPI/Swagger surface; the REST API is documented in Markdown.
 
 ## Future phases
 
-| Phase | Scope                              |
-| ----- | ---------------------------------- |
-| 1     | Foundation ✅                      |
-| 2     | Tournament domain and database ✅  |
-| 3     | REST API layer ✅                  |
-| 4     | Tournament setup UI ✅             |
-| 5     | Group-stage scheduling and scoring |
-| 6     | Knockout engine                    |
-| 7     | Live courts and dashboard          |
-| 8     | Multi-device and realtime          |
-| 9     | Deployment (Supabase + free tier)  |
+| Phase | Scope                                 |
+| ----- | ------------------------------------- |
+| 1     | Foundation ✅                         |
+| 2     | Tournament domain and database ✅     |
+| 3     | REST API layer ✅                     |
+| 4     | Tournament setup UI ✅                |
+| 5     | Group-stage scheduling and scoring ✅ |
+| 6     | Knockout engine ✅                    |
+| 7     | Live courts and dashboard ✅          |
+| 8     | Multi-device and realtime             |
+| 9     | Deployment (Supabase + free tier)     |

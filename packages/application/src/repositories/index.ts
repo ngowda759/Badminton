@@ -1,5 +1,7 @@
 import type {
   CategoryStatus,
+  Court,
+  CourtStatus,
   EntryStatus,
   Match,
   MatchGame,
@@ -17,17 +19,20 @@ import type {
 
 import type {
   CreateCategoryData,
+  CreateCourtData,
   CreateEntryData,
   CreateMatchData,
   CreateMatchGameData,
   CreateMatchParticipantData,
-  MatchGameWithMatch,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  MatchGameWithMatch,
+  MatchScheduleData,
   UpdateCategoryData,
+  UpdateCourtData,
   UpdateMatchData,
   UpdatePlayerData,
   UpdateStageData,
@@ -60,6 +65,16 @@ export interface RepositoryClient {
   readonly matches: MatchRepository;
   readonly matchParticipants: MatchParticipantRepository;
   readonly matchGames: MatchGameRepository;
+  readonly courts: CourtRepository;
+}
+
+export interface CourtRepository {
+  create(data: CreateCourtData): Promise<Court>;
+  findById(id: string): Promise<Court | undefined>;
+  /** All courts of a tournament, ordered by court number. */
+  listByTournament(tournamentId: string): Promise<readonly Court[]>;
+  update(id: string, data: UpdateCourtData): Promise<Court>;
+  updateStatus(id: string, status: CourtStatus): Promise<Court>;
 }
 
 export interface TournamentRepository {
@@ -83,12 +98,16 @@ export interface PlayerRepository {
   findById(id: string): Promise<Player | undefined>;
   findByEmail(email: string): Promise<Player | undefined>;
   findByPhone(phone: string): Promise<Player | undefined>;
+  /** Players for several ids, so the dashboard avoids a per-participant query. */
+  listByIds(ids: readonly string[]): Promise<readonly Player[]>;
   update(id: string, data: UpdatePlayerData): Promise<Player>;
 }
 
 export interface TeamRepository {
   create(data: CreateTeamData): Promise<Team>;
   findById(id: string): Promise<Team | undefined>;
+  /** Teams for several ids, so the dashboard avoids a per-participant query. */
+  listByIds(ids: readonly string[]): Promise<readonly Team[]>;
   update(id: string, data: UpdateTeamData): Promise<Team>;
 }
 
@@ -118,6 +137,8 @@ export interface TournamentEntryRepository {
     excludedTeamId: string,
   ): Promise<TournamentEntry | undefined>;
   listByCategory(categoryId: string): Promise<readonly TournamentEntry[]>;
+  /** All entries of a tournament (through its categories), in one read. */
+  listByTournament(tournamentId: string): Promise<readonly TournamentEntry[]>;
   updateSeed(id: string, seed: number | null): Promise<TournamentEntry>;
   updateStatus(id: string, status: EntryStatus): Promise<TournamentEntry>;
 }
@@ -126,6 +147,8 @@ export interface TournamentStageRepository {
   create(data: CreateStageData): Promise<TournamentStage>;
   findById(id: string): Promise<TournamentStage | undefined>;
   listByCategory(categoryId: string): Promise<readonly TournamentStage[]>;
+  /** All stages of a tournament (through its categories), in one read. */
+  listByTournament(tournamentId: string): Promise<readonly TournamentStage[]>;
   update(id: string, data: UpdateStageData): Promise<TournamentStage>;
   updateStatus(id: string, status: StageStatus): Promise<TournamentStage>;
 }
@@ -145,6 +168,25 @@ export interface MatchRepository {
   updateStatus(id: string, status: MatchStatus): Promise<Match>;
   /** Writes the derived winner and the terminal status in one update. */
   complete(id: string, winnerEntryId: string): Promise<Match>;
+  /**
+   * Atomically writes the whole scheduling slice of a match (court and both
+   * times). Persisting all three together keeps the match from ever holding a
+   * partial schedule; the database exclusion constraint is the final guard.
+   */
+  schedule(id: string, data: MatchScheduleData): Promise<Match>;
+  /** Clears the court and both times together. */
+  unschedule(id: string): Promise<Match>;
+  /** Scheduled/in-progress/completed matches of a tournament, in one read. */
+  listByTournament(tournamentId: string): Promise<readonly Match[]>;
+  /** Whether `courtId` already has a match overlapping the requested window. */
+  findOverlappingSchedule(
+    courtId: string,
+    startAt: Date,
+    endAt: Date,
+    excludeMatchId?: string,
+  ): Promise<Match | undefined>;
+  /** Matches on one court, ordered by scheduled start. */
+  listByCourt(courtId: string): Promise<readonly Match[]>;
 }
 
 /** A match read together with its participants, for batched bracket reads. */

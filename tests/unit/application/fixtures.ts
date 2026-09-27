@@ -127,3 +127,18 @@ export async function seedKnockoutStage(
   });
   return stage.id;
 }
+
+/** A court in a tournament; defaults to court 1, ACTIVE. */
+export async function seedCourt(
+  client: RepositoryClient,
+  tournamentId: string,
+  input: { number?: number; name?: string; status?: 'ACTIVE' | 'INACTIVE' } = {},
+): Promise<string> {
+  const court = await client.courts.create({
+    tournamentId,
+    number: input.number ?? 1,
+    name: input.name ?? `Court ${String(input.number ?? 1)}`,
+    status: input.status ?? 'ACTIVE',
+  });
+  return court.id;
+}

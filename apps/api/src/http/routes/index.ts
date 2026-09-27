@@ -2,6 +2,8 @@ import type { FastifyPluginAsync } from 'fastify';
 
 import type { ApiServices } from '../api-services.ts';
 import { categoryRoutes } from './category.routes.ts';
+import { courtSchedulingRoutes } from './court.routes.ts';
+import { dashboardRoutes } from './dashboard.routes.ts';
 import { entryRoutes } from './entry.routes.ts';
 import { playerRoutes } from './player.routes.ts';
 import { stageMatchRoutes } from './stage-match.routes.ts';
@@ -35,5 +37,10 @@ export function createApiV1Routes(services: ApiServices): FastifyPluginAsync {
       standings: services.standings,
       knockout: services.knockout,
     });
+    await instance.register(courtSchedulingRoutes, {
+      courts: services.courts,
+      scheduling: services.scheduling,
+    });
+    await instance.register(dashboardRoutes, { dashboard: services.dashboard });
   };
 }

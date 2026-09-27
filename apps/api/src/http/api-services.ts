@@ -1,11 +1,14 @@
 import type {
+  CourtService,
   KnockoutBracketService,
   MatchResultService,
+  MatchSchedulingService,
   MatchService,
   PlayerService,
   StandingsService,
   TeamService,
   TournamentCategoryService,
+  TournamentDashboardService,
   TournamentEntryService,
   TournamentService,
   TournamentStageService,
@@ -30,4 +33,7 @@ export interface ApiServices {
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
   readonly knockout: KnockoutBracketService;
+  readonly courts: CourtService;
+  readonly scheduling: MatchSchedulingService;
+  readonly dashboard: TournamentDashboardService;
 }

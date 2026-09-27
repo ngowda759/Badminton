@@ -2,6 +2,7 @@ import type {
   CategoryFormat,
   CategoryGender,
   CategoryStatus,
+  CourtStatus,
   MatchSlot,
   MatchStatus,
   StageStatus,
@@ -166,4 +167,36 @@ export interface GenerateKnockoutBracketCommand {
 /** Reads a knockout bracket, optionally refreshing stage completion. */
 export interface GetKnockoutBracketQuery {
   readonly stageId: string;
+}
+
+/* ------------------------------------------------------------------ */
+/* Phase 7 - court management and match scheduling                     */
+/* ------------------------------------------------------------------ */
+
+export interface CreateCourtCommand {
+  readonly number: number;
+  readonly name: string;
+}
+
+export interface UpdateCourtCommand {
+  readonly number?: number;
+  readonly name?: string;
+}
+
+export interface TransitionCourtStatusCommand {
+  readonly status: CourtStatus;
+}
+
+/**
+ * Assigns a match to a court for a bounded window.
+ *
+ * Both times are required: a schedule is a `[start, end)` interval so that a
+ * later match's start can be compared against an earlier match's end. The court
+ * must belong to the match's tournament; the interval must be positive; the
+ * court must be active and the match must be in a schedulable state.
+ */
+export interface ScheduleMatchCommand {
+  readonly courtId: string;
+  readonly scheduledStartAt: Date;
+  readonly scheduledEndAt: Date;
 }

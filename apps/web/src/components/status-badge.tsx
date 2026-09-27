@@ -55,12 +55,18 @@ const MATCH: Readonly<Record<string, Presentation>> = {
   CANCELLED: { label: 'Cancelled', variant: 'destructive' },
 };
 
+const COURT: Readonly<Record<string, Presentation>> = {
+  ACTIVE: { label: 'Active', variant: 'success' },
+  INACTIVE: { label: 'Inactive', variant: 'muted' },
+};
+
 const PRESENTATIONS: Readonly<Record<string, Readonly<Record<string, Presentation>>>> = {
   tournament: TOURNAMENT,
   category: CATEGORY,
   entry: ENTRY,
   stage: STAGE,
   match: MATCH,
+  court: COURT,
 };
 
 export type StatusKind = keyof typeof PRESENTATIONS;
