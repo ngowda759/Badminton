@@ -5,8 +5,11 @@ Repository guidance for automated agents working on Badminton V2.
 ## What this repository is
 
 Badminton V2 — a badminton tournament management platform. **Phase 1 (foundation) is
-complete; tournament features are not implemented.** Do not add tournament models,
-routes, UI or schemas unless the task explicitly asks for a later phase.
+complete; Phase 2.1 (tournament database foundation) is implemented: the Prisma
+schema, migration, constraints, indexes, seed and database tests exist. Tournament
+repositories, services, API routes, algorithms and UI are not implemented.** Do not add
+those unless the task explicitly asks for a later phase. The authoritative design is
+`docs/phase-2-domain-design.md`.
 
 ## Layout
 
@@ -55,6 +58,15 @@ database — integration tests use `app.inject()` with stub probes.
 
 - `localhost` and `127.0.0.1` are distinct browser origins. Both are in the default
   `CORS_ORIGINS`; if you change one, change the other or E2E will report `Unreachable`.
+- Phase 2 constraints Prisma cannot express (row-local `CHECK`s and partial unique
+  indexes) live in the `add_tournament_domain` migration. Do not re-add conflicting
+  Prisma `@unique` attributes for those columns.
+- The database integration tests (`tests/integration/database/`) run against real
+  PostgreSQL in a dedicated `badminton_test` schema and skip when no database is
+  reachable. They need no fixture setup beyond a running PostgreSQL instance.
+- Never log or return connection strings, credentials, SQL errors or stack traces.
+- Server-only config is read via `getServerEnv()`. Only `VITE_`-prefixed variables reach
+  the browser bundle.
 - Prisma 7 resolves `env('DATABASE_URL')` eagerly when `prisma.config.ts` is imported, so
   that file loads `dotenv` itself before calling `defineConfig`.
 - Prisma generates into `packages/database/generated/prisma`, which is gitignored. Run
