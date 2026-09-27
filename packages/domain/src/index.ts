@@ -67,6 +67,29 @@ export type {
   TournamentStatus,
 } from './tournament.ts';
 export {
+  GAME_POINT_TARGET,
+  GAME_POINT_CEILING,
+  GAME_MIN_MARGIN,
+  MIN_GAMES_PER_MATCH,
+  MAX_GAMES_PER_MATCH,
+  GAMES_TO_WIN_MATCH,
+  GAME_NUMBERS,
+  isValidGameScore,
+  determineGameWinner,
+  validateGameScore,
+  scoreMatchGames,
+  determineMatchOutcome,
+} from './scoring.ts';
+export type {
+  GameNumber,
+  MatchGameInput,
+  MatchGame,
+  MatchOutcome,
+  MatchResult,
+} from './scoring.ts';
+export { calculateStandings, STANDING_WIN_POINTS, STANDING_LOSS_POINTS } from './standings.ts';
+export type { StandingsMatch, StandingsParticipant, StandingRow } from './standings.ts';
+export {
   APPLICATION_ERROR_CODES,
   ApplicationError,
   ValidationError,

@@ -1,5 +1,6 @@
 import type {
   PrismaMatch,
+  PrismaMatchGame,
   PrismaMatchParticipant,
   PrismaPlayer,
   PrismaTournament,
@@ -9,7 +10,7 @@ import type {
   PrismaTeam,
   PrismaTeamMember,
 } from '@badminton/database';
-import { PersistenceError } from '@badminton/domain';
+import { PersistenceError, type MatchGame } from '@badminton/domain';
 import type {
   Match,
   MatchParticipant,
@@ -127,8 +128,18 @@ export function toMatch(row: PrismaMatch): Match {
     roundNumber: row.roundNumber,
     matchNumber: row.matchNumber,
     status: row.status,
+    winnerEntryId: row.winnerEntryId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+export function toMatchGame(row: PrismaMatchGame): MatchGame {
+  return {
+    gameNumber: row.gameNumber,
+    participant1Points: row.participant1Points,
+    participant2Points: row.participant2Points,
+    winnerSlot: toMatchSlot(row.winnerSlot),
   };
 }
 

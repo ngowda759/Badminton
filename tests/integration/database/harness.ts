@@ -307,3 +307,23 @@ export function createParticipant(
     data: { matchId: input.matchId, entryId: input.entryId, slot: input.slot },
   });
 }
+
+interface MatchGameInput {
+  readonly matchId: string;
+  readonly gameNumber?: number;
+  readonly participant1Points?: number;
+  readonly participant2Points?: number;
+  readonly winnerSlot?: number;
+}
+
+export function createMatchGame(prisma: PrismaClient, input: MatchGameInput) {
+  return prisma.matchGame.create({
+    data: {
+      matchId: input.matchId,
+      gameNumber: input.gameNumber ?? 1,
+      participant1Points: input.participant1Points ?? 21,
+      participant2Points: input.participant2Points ?? 18,
+      winnerSlot: input.winnerSlot ?? 1,
+    },
+  });
+}

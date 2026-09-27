@@ -1,5 +1,6 @@
 import { createMatchService, createTournamentStageService } from '@badminton/application';
 import {
+  BusinessRuleViolationError,
   ConflictError,
   InvalidStateTransitionError,
   NotFoundError,
@@ -196,14 +197,26 @@ describe('MatchService.addParticipant', () => {
 });
 
 describe('MatchService.transitionStatus', () => {
-  it('runs the match lifecycle', async () => {
+  it('starts a scheduled match', async () => {
     const categoryId = await singlesCategory();
     const stageId = await seedStage(repos.client, categoryId);
     const matchId = await seedMatch(repos.client, stageId);
 
+    const started = await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
+    expect(started.status).toBe('IN_PROGRESS');
+  });
+
+  it('does not allow completing a match through the status endpoint', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedStage(repos.client, categoryId);
+    const matchId = await seedMatch(repos.client, stageId);
     await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
-    const completed = await matches.transitionStatus(matchId, { status: 'COMPLETED' });
-    expect(completed.status).toBe('COMPLETED');
+
+    // Completion is a scored operation: only a validated result may move a
+    // match to COMPLETED, so the bare transition is rejected.
+    await expect(matches.transitionStatus(matchId, { status: 'COMPLETED' })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
   });
 
   it('rejects starting a cancelled match', async () => {

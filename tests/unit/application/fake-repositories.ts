@@ -6,12 +6,14 @@ import type {
   CreateCategoryData,
   CreateEntryData,
   CreateMatchData,
+  CreateMatchGameData,
   CreateMatchParticipantData,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
   PlayerRepository,
@@ -35,6 +37,7 @@ import {
   type CategoryStatus,
   type EntryStatus,
   type Match,
+  type MatchGame,
   type MatchParticipant,
   type MatchSlot,
   type MatchStatus,
@@ -67,6 +70,12 @@ interface State {
   stages: Map<string, TournamentStage>;
   matches: Map<string, Match>;
   matchParticipants: Map<string, MatchParticipant>;
+  matchGames: Map<string, FakeMatchGame>;
+}
+
+/** A stored game; the domain `MatchGame` has no owner field, so the fake adds one. */
+interface FakeMatchGame extends MatchGame {
+  readonly matchId: string;
 }
 
 let sequence = 0;
@@ -117,6 +126,7 @@ const FAKE_CONFLICT_MESSAGES: Readonly<Record<string, string>> = {
   matches_stageId_sequence_key: 'Another match already occupies this sequence in this stage.',
   match_participants_matchId_slot_key: 'This slot is already occupied in this match.',
   match_participants_matchId_entryId_key: 'This entry is already a participant in this match.',
+  match_games_matchId_gameNumber_key: 'A result for this match has already been recorded.',
 };
 
 function assertUnique(condition: boolean, constraint: string): void {
@@ -136,6 +146,7 @@ function emptyState(): State {
     stages: new Map(),
     matches: new Map(),
     matchParticipants: new Map(),
+    matchGames: new Map(),
   };
 }
 
@@ -150,6 +161,7 @@ function cloneState(state: State): State {
     stages: new Map(state.stages),
     matches: new Map(state.matches),
     matchParticipants: new Map(state.matchParticipants),
+    matchGames: new Map(state.matchGames),
   };
 }
 
@@ -491,7 +503,13 @@ function buildClient(state: State): RepositoryClient {
         ),
         'matches_stageId_sequence_key',
       );
-      const row: Match = { id: nextId('match'), ...data, createdAt: now(), updatedAt: now() };
+      const row: Match = {
+        id: nextId('match'),
+        ...data,
+        winnerEntryId: null,
+        createdAt: now(),
+        updatedAt: now(),
+      };
       state.matches.set(row.id, row);
       return row;
     },
@@ -500,6 +518,11 @@ function buildClient(state: State): RepositoryClient {
     },
     async listByStage(stageId) {
       return [...state.matches.values()].filter((row) => row.stageId === stageId);
+    },
+    async listCompletedByStage(stageId) {
+      return [...state.matches.values()].filter(
+        (row) => row.status === 'COMPLETED' && row.stageId === stageId,
+      );
     },
     async update(id: string, data: UpdateMatchData): Promise<Match> {
       const current = state.matches.get(id);
@@ -518,6 +541,57 @@ function buildClient(state: State): RepositoryClient {
       const updated = { ...current, status, updatedAt: now() };
       state.matches.set(id, updated);
       return updated;
+    },
+    async complete(id: string, winnerEntryId: string) {
+      const current = state.matches.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      const updated: Match = {
+        ...current,
+        status: 'COMPLETED',
+        winnerEntryId,
+        updatedAt: now(),
+      };
+      state.matches.set(id, updated);
+      return updated;
+    },
+  };
+
+  const matchGames: MatchGameRepository = {
+    async createMany(data: readonly CreateMatchGameData[]): Promise<readonly MatchGame[]> {
+      const created: MatchGame[] = [];
+      for (const game of data) {
+        assertUnique(
+          ![...state.matchGames.values()].some(
+            (row) => row.matchId === game.matchId && row.gameNumber === game.gameNumber,
+          ),
+          'match_games_matchId_gameNumber_key',
+        );
+        const row: FakeMatchGame = {
+          matchId: game.matchId,
+          gameNumber: game.gameNumber,
+          participant1Points: game.participant1Points,
+          participant2Points: game.participant2Points,
+          winnerSlot: game.winnerSlot,
+        };
+        state.matchGames.set(nextId('game'), row);
+        created.push(toDomainGame(row));
+      }
+      return created;
+    },
+    async listByMatch(matchId) {
+      return [...state.matchGames.values()]
+        .filter((row) => row.matchId === matchId)
+        .sort((left, right) => left.gameNumber - right.gameNumber)
+        .map(toDomainGame);
+    },
+    async listByMatchIds(matchIds) {
+      const wanted = new Set(matchIds);
+      return [...state.matchGames.values()]
+        .filter((row) => wanted.has(row.matchId))
+        .sort((left, right) => left.gameNumber - right.gameNumber)
+        .map((row) => ({ matchId: row.matchId, ...toDomainGame(row) }));
     },
   };
 
@@ -547,6 +621,10 @@ function buildClient(state: State): RepositoryClient {
     async listByMatch(matchId) {
       return [...state.matchParticipants.values()].filter((row) => row.matchId === matchId);
     },
+    async listByMatchIds(matchIds) {
+      const wanted = new Set(matchIds);
+      return [...state.matchParticipants.values()].filter((row) => wanted.has(row.matchId));
+    },
     async findSlot(matchId, slot) {
       return [...state.matchParticipants.values()].find(
         (row) => row.matchId === matchId && row.slot === slot,
@@ -569,6 +647,16 @@ function buildClient(state: State): RepositoryClient {
     stages,
     matches,
     matchParticipants,
+    matchGames,
+  };
+}
+
+function toDomainGame(row: FakeMatchGame): MatchGame {
+  return {
+    gameNumber: row.gameNumber,
+    participant1Points: row.participant1Points,
+    participant2Points: row.participant2Points,
+    winnerSlot: row.winnerSlot,
   };
 }
 

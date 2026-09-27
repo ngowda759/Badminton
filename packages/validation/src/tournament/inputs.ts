@@ -175,6 +175,36 @@ export const addMatchParticipantInputSchema = z.object({
   slot: z.union([z.literal(1), z.literal(2)]),
 });
 
+/**
+ * A single game in a match result.
+ *
+ * Only the request *shape* is validated here: the game number is 1-3 (best of
+ * three) and each point value is a whole number between 0 and 30 (the game
+ * ceiling). Whether the combination is a legal badminton score - a 21-point
+ * target, a two-point margin, best-of-three completeness - is a domain rule
+ * enforced by `scoreMatchGames` in the application layer.
+ */
+export const recordMatchGameInputSchema = z.object({
+  gameNumber: positiveIntegerSchema.max(3, 'A match is best of three games (game number 1-3).'),
+  participant1Points: z.coerce
+    .number()
+    .int('Points must be a whole number.')
+    .min(0, 'Points cannot be negative.')
+    .max(30, 'A game cannot exceed 30 points.'),
+  participant2Points: z.coerce
+    .number()
+    .int('Points must be a whole number.')
+    .min(0, 'Points cannot be negative.')
+    .max(30, 'A game cannot exceed 30 points.'),
+});
+
+export const recordMatchResultInputSchema = z.object({
+  games: z
+    .array(recordMatchGameInputSchema)
+    .min(1, 'A result must contain at least one game.')
+    .max(3, 'A match is best of three games.'),
+});
+
 export type CreateTournamentInput = z.input<typeof createTournamentInputSchema>;
 export type UpdateTournamentInput = z.input<typeof updateTournamentInputSchema>;
 export type CreateCategoryInput = z.input<typeof createCategoryInputSchema>;
@@ -192,3 +222,5 @@ export type UpdateStageInput = z.input<typeof updateStageInputSchema>;
 export type CreateMatchInput = z.input<typeof createMatchInputSchema>;
 export type UpdateMatchInput = z.input<typeof updateMatchInputSchema>;
 export type AddMatchParticipantInput = z.input<typeof addMatchParticipantInputSchema>;
+export type RecordMatchGameInput = z.input<typeof recordMatchGameInputSchema>;
+export type RecordMatchResultInput = z.input<typeof recordMatchResultInputSchema>;

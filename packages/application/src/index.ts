@@ -16,12 +16,15 @@ export type {
   TournamentStageRepository,
   MatchRepository,
   MatchParticipantRepository,
+  MatchGameRepository,
 } from './repositories/index.ts';
 export type {
   CreateCategoryData,
   CreateEntryData,
   CreateMatchData,
+  CreateMatchGameData,
   CreateMatchParticipantData,
+  MatchGameWithMatch,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
@@ -45,6 +48,8 @@ export type {
   CreateStageCommand,
   CreateTeamCommand,
   CreateTournamentCommand,
+  RecordMatchGameCommand,
+  RecordMatchResultCommand,
   RegisterEntryCommand,
   TransitionCategoryStatusCommand,
   TransitionMatchStatusCommand,
@@ -74,3 +79,8 @@ export {
   type TournamentStageService,
 } from './services/stage.service.ts';
 export { createMatchService, type MatchService } from './services/match.service.ts';
+export {
+  createMatchResultService,
+  type MatchResultService,
+} from './services/match-result.service.ts';
+export { createStandingsService, type StandingsService } from './services/standings.service.ts';

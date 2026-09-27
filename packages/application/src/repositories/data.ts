@@ -3,6 +3,7 @@ import type {
   CategoryGender,
   CategoryStatus,
   EntryStatus,
+  MatchGame,
   MatchSlot,
   MatchStatus,
   StageStatus,
@@ -118,4 +119,21 @@ export interface CreateMatchParticipantData {
   readonly matchId: string;
   readonly entryId: string;
   readonly slot: MatchSlot;
+}
+
+export interface CreateMatchGameData {
+  readonly matchId: string;
+  readonly gameNumber: number;
+  readonly participant1Points: number;
+  readonly participant2Points: number;
+  readonly winnerSlot: MatchSlot;
+}
+
+/**
+ * A game read back together with its owner, for batched reads where the
+ * caller must group games by match (standings). The domain `MatchGame` is
+ * intentionally owner-less; only reads that span several matches need this.
+ */
+export interface MatchGameWithMatch extends MatchGame {
+  readonly matchId: string;
 }

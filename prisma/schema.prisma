@@ -181,6 +181,7 @@ model TournamentEntry {
   status       EntryStatus        @default(PENDING)
   registeredAt DateTime           @default(now()) @db.Timestamptz(3)
   participants MatchParticipant[]
+  wonMatches   Match[]            @relation("MatchWinner")
   createdAt    DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
 
@@ -208,19 +209,23 @@ model TournamentStage {
 }
 
 model Match {
-  id           String             @id @default(uuid()) @db.Uuid
-  stageId      String             @db.Uuid
-  stage        TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  sequence     Int                @db.SmallInt
-  roundNumber  Int?               @db.SmallInt
-  matchNumber  Int?
-  status       MatchStatus        @default(SCHEDULED)
-  participants MatchParticipant[]
-  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
+  id            String             @id @default(uuid()) @db.Uuid
+  stageId       String             @db.Uuid
+  stage         TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  sequence      Int                @db.SmallInt
+  roundNumber   Int?               @db.SmallInt
+  matchNumber   Int?
+  status        MatchStatus        @default(SCHEDULED)
+  winnerEntryId String?            @db.Uuid
+  winnerEntry   TournamentEntry?   @relation("MatchWinner", fields: [winnerEntryId], references: [id], onDelete: Restrict)
+  participants  MatchParticipant[]
+  games         MatchGame[]
+  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime           @updatedAt @db.Timestamptz(3)
 
   @@unique([stageId, sequence])
   @@index([status])
+  @@index([winnerEntryId])
   @@map("matches")
 }
 
@@ -238,4 +243,28 @@ model MatchParticipant {
   @@unique([matchId, entryId])
   @@index([entryId])
   @@map("match_participants")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 - group-stage scoring
+// ---------------------------------------------------------------------------
+
+// A single game in a best-of-three badminton match. Points belong to the two
+// participant slots (1 and 2), so the model stays agnostic to singles and
+// doubles; the winning slot is stored so a completed result can be read back
+// without re-deriving it. Row-local CHECKs that Prisma cannot express are added
+// in the `add_match_scoring` migration.
+model MatchGame {
+  id                 String   @id @default(uuid()) @db.Uuid
+  matchId            String   @db.Uuid
+  match              Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  gameNumber         Int      @db.SmallInt
+  participant1Points Int      @db.SmallInt
+  participant2Points Int      @db.SmallInt
+  winnerSlot         Int      @db.SmallInt
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([matchId, gameNumber])
+  @@map("match_games")
 }

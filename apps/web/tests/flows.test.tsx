@@ -5,13 +5,18 @@ import { describe, expect, it } from 'vitest';
 import type { BadmintonApi } from '@/api/services.ts';
 import { AppRoutes } from '@/routes.tsx';
 
+import { ApiError } from '@/api/client.ts';
+
 import {
   createStubApi,
   makeCategory,
   makeEntry,
   makeMatch,
+  makeMatchResult,
   makeParticipant,
   makePlayer,
+  makeStage,
+  makeStandingRow,
   makeTeam,
   makeTeamMember,
   makeTournament,
@@ -251,6 +256,194 @@ describe('tournament setup flows', () => {
     await waitFor(() => {
       expect(api.entries.withdraw).toHaveBeenCalledWith('e1');
     });
+  });
+
+  it('records a 2-0 result from an in-progress match and completes it', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    const match = makeMatch({ id: 'm1', stageId: 's1', status: 'IN_PROGRESS' });
+    const entryA = makeEntry({ id: 'e1', playerId: 'p1' });
+    const entryB = makeEntry({ id: 'e2', playerId: 'p2' });
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.matches.get.mockResolvedValue(match);
+    api.matches.listParticipants.mockResolvedValue([
+      makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
+      makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
+    ]);
+    api.matches.getResult.mockResolvedValue(null);
+    api.matches.recordResult.mockResolvedValue(makeMatchResult());
+    api.entries.listByCategory.mockResolvedValue([entryA, entryB]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/matches/m1',
+    });
+
+    await user.type(await screen.findByLabelText('Game 1 — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game 1 — Bob points'), '15');
+    await user.type(screen.getByLabelText('Game 2 — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game 2 — Bob points'), '18');
+
+    expect(await screen.findByTestId('match-winner')).toHaveTextContent('Match winner: Alice');
+
+    await user.click(screen.getByRole('button', { name: 'Save & complete result' }));
+
+    await waitFor(() => {
+      expect(api.matches.recordResult).toHaveBeenCalledWith('m1', {
+        games: [
+          { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+          { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+        ],
+      });
+    });
+  });
+
+  it('shows a completed match result read-only', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.matches.get.mockResolvedValue(
+      makeMatch({ id: 'm1', stageId: 's1', status: 'COMPLETED', winnerEntryId: 'e1' }),
+    );
+    api.matches.listParticipants.mockResolvedValue([
+      makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
+      makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
+    ]);
+    api.matches.getResult.mockResolvedValue(makeMatchResult());
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1' }),
+      makeEntry({ id: 'e2', playerId: 'p2' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/matches/m1',
+    });
+
+    // Entry names resolve asynchronously after the result renders, so wait for
+    // the resolved label rather than the first paint.
+    await waitFor(() => {
+      expect(screen.getByTestId('match-result-winner')).toHaveTextContent('Winner: Alice (2–0)');
+    });
+    expect(screen.getByTestId('result-game-1')).toHaveTextContent('Game 1: Alice 21 – 15 Bob');
+    // A completed result is immutable: no scoring form or save button.
+    expect(
+      screen.queryByRole('button', { name: 'Save & complete result' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('surfaces a scoring API error safely', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.matches.get.mockResolvedValue(
+      makeMatch({ id: 'm1', stageId: 's1', status: 'IN_PROGRESS' }),
+    );
+    api.matches.listParticipants.mockResolvedValue([
+      makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
+      makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
+    ]);
+    api.matches.getResult.mockResolvedValue(null);
+    api.matches.recordResult.mockRejectedValueOnce(
+      new ApiError(422, 'BUSINESS_RULE_VIOLATION', 'Match is already completed.'),
+    );
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1' }),
+      makeEntry({ id: 'e2', playerId: 'p2' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/matches/m1',
+    });
+
+    await user.type(await screen.findByLabelText('Game 1 — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game 1 — Bob points'), '15');
+    await user.type(screen.getByLabelText('Game 2 — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game 2 — Bob points'), '18');
+    await user.click(screen.getByRole('button', { name: 'Save & complete result' }));
+
+    expect(await screen.findByText('Match is already completed.')).toBeInTheDocument();
+  });
+
+  it('renders group standings derived from completed matches', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([
+      makeStandingRow({ entryId: 'e1', position: 1, won: 1, lost: 0, gameDifference: 2 }),
+      makeStandingRow({ entryId: 'e2', position: 2, won: 0, lost: 1, gameDifference: -2 }),
+    ]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1' }),
+      makeEntry({ id: 'e2', playerId: 'p2' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Alice')).toBeInTheDocument();
+    expect(within(table).getByText('Bob')).toBeInTheDocument();
+    expect(within(table).getByText('Competitor')).toBeInTheDocument();
+  });
+
+  it('shows an empty standings state when no matches are complete', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([]);
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    expect(await screen.findByText('No standings yet')).toBeInTheDocument();
+  });
+
+  it('shows a standings error state when the endpoint fails', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockRejectedValueOnce(
+      new ApiError(
+        500,
+        'INTERNAL_SERVER_ERROR',
+        'The server encountered an error. Please try again.',
+      ),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    expect(await screen.findByText('Could not load standings')).toBeInTheDocument();
   });
 });
 

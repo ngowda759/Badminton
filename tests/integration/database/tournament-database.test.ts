@@ -6,6 +6,7 @@ import {
   createCategory,
   createEntry,
   createMatch,
+  createMatchGame,
   createParticipant,
   createPlayer,
   createStage,
@@ -506,6 +507,90 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
       });
     });
 
+    describe('match games', () => {
+      async function matchFixture(): Promise<string> {
+        const tournament = await createTournament(prisma);
+        const category = await createCategory(prisma, { tournamentId: tournament.id });
+        const stage = await createStage(prisma, { categoryId: category.id });
+        const match = await createMatch(prisma, { stageId: stage.id });
+        return match.id;
+      }
+
+      it('accepts games numbered 1 to 3', async () => {
+        const matchId = await matchFixture();
+        await createMatchGame(prisma, { matchId, gameNumber: 1 });
+        await createMatchGame(prisma, { matchId, gameNumber: 2 });
+        await createMatchGame(prisma, { matchId, gameNumber: 3 });
+        expect(await prisma.matchGame.count({ where: { matchId } })).toBe(3);
+      });
+
+      it('rejects a game number outside 1-3', async () => {
+        const matchId = await matchFixture();
+        await expectRejectionContaining(
+          createMatchGame(prisma, { matchId, gameNumber: 4 }),
+          'match_games_number_valid',
+        );
+      });
+
+      it('rejects two games with the same number in one match', async () => {
+        const matchId = await matchFixture();
+        await createMatchGame(prisma, { matchId, gameNumber: 1 });
+        await expectRejectionContaining(
+          createMatchGame(prisma, {
+            matchId,
+            gameNumber: 1,
+            winnerSlot: 2,
+            participant1Points: 18,
+            participant2Points: 21,
+          }),
+          'matchId_gameNumber',
+        );
+      });
+
+      it('rejects points outside 0-30', async () => {
+        const matchId = await matchFixture();
+        await expectRejectionContaining(
+          createMatchGame(prisma, { matchId, participant1Points: 31 }),
+          'match_games_points_in_range',
+        );
+        await expectRejectionContaining(
+          createMatchGame(prisma, { matchId, participant2Points: -1 }),
+          'match_games_points_in_range',
+        );
+      });
+
+      it('rejects an invalid winner slot', async () => {
+        const matchId = await matchFixture();
+        // A slot of 3 violates both winner-slot checks; Postgres reports
+        // whichever it evaluates first, so assert on the shared prefix.
+        await expectRejectionContaining(
+          createMatchGame(prisma, { matchId, winnerSlot: 3 }),
+          'match_games_winner',
+        );
+      });
+
+      it('rejects a winner slot that contradicts the points', async () => {
+        const matchId = await matchFixture();
+        await expectRejectionContaining(
+          createMatchGame(prisma, {
+            matchId,
+            participant1Points: 18,
+            participant2Points: 21,
+            winnerSlot: 1,
+          }),
+          'match_games_winner_matches_points',
+        );
+      });
+
+      it('deleting a match cascades to its games', async () => {
+        const matchId = await matchFixture();
+        await createMatchGame(prisma, { matchId, gameNumber: 1 });
+        await createMatchGame(prisma, { matchId, gameNumber: 2 });
+        await prisma.match.delete({ where: { id: matchId } });
+        expect(await prisma.matchGame.count({ where: { matchId } })).toBe(0);
+      });
+    });
+
     describe('referential integrity', () => {
       it('cannot delete a tournament that contains categories', async () => {
         const tournament = await createTournament(prisma);
@@ -726,6 +811,8 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
           'match_participants_matchId_slot_key',
           'match_participants_matchId_entryId_key',
           'match_participants_entryId_idx',
+          'match_games_matchId_gameNumber_key',
+          'matches_winnerEntryId_idx',
         ];
 
         expect(required.filter((name) => !names.has(name))).toEqual([]);
@@ -741,6 +828,7 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
       `;
         const names = rows.map((row) => row.table_name).sort();
         expect(names).toEqual([
+          'match_games',
           'match_participants',
           'matches',
           'players',

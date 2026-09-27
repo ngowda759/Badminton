@@ -31,6 +31,7 @@ const CONFLICT_MESSAGES: Readonly<Record<string, string>> = {
   matches_stageId_sequence_key: 'Another match already occupies this sequence in this stage.',
   match_participants_matchId_slot_key: 'This slot is already occupied in this match.',
   match_participants_matchId_entryId_key: 'This entry is already a participant in this match.',
+  match_games_matchId_gameNumber_key: 'A result for this match has already been recorded.',
 };
 
 /**

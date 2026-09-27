@@ -12,6 +12,7 @@ export { createPrismaClient } from './prisma-client.ts';
 export { Prisma, PrismaClient } from '../generated/prisma/client.ts';
 export type {
   Match as PrismaMatch,
+  MatchGame as PrismaMatchGame,
   MatchParticipant as PrismaMatchParticipant,
   Player as PrismaPlayer,
   Team as PrismaTeam,

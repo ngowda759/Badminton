@@ -101,6 +101,8 @@ export interface MatchDto {
   readonly roundNumber: number | null;
   readonly matchNumber: number | null;
   readonly status: MatchStatus;
+  /** Set once the match is completed; the winning entry. */
+  readonly winnerEntryId: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -112,6 +114,41 @@ export interface MatchParticipantDto {
   readonly slot: MatchSlot;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/** A single game of a completed match as returned by the result endpoint. */
+export interface MatchGameDto {
+  readonly gameNumber: number;
+  readonly participant1Points: number;
+  readonly participant2Points: number;
+  readonly winnerSlot: MatchSlot;
+}
+
+/** A recorded match result, including the resolved winner entry. */
+export interface MatchResultDto {
+  readonly matchId: string;
+  readonly winnerSlot: MatchSlot;
+  readonly winnerGames: number;
+  readonly loserGames: number;
+  readonly winnerEntryId: string;
+  readonly loserEntryId: string;
+  readonly games: readonly MatchGameDto[];
+}
+
+/** One derived line of a group standings table. */
+export interface StandingRowDto {
+  readonly entryId: string;
+  readonly played: number;
+  readonly won: number;
+  readonly lost: number;
+  readonly points: number;
+  readonly gamesWon: number;
+  readonly gamesLost: number;
+  readonly gameDifference: number;
+  readonly pointsFor: number;
+  readonly pointsAgainst: number;
+  readonly pointDifference: number;
+  readonly position: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -212,4 +249,14 @@ export interface UpdateMatchInput {
 export interface AddMatchParticipantInput {
   readonly entryId: string;
   readonly slot: MatchSlot;
+}
+
+export interface RecordMatchGameInput {
+  readonly gameNumber: number;
+  readonly participant1Points: number;
+  readonly participant2Points: number;
+}
+
+export interface RecordMatchResultInput {
+  readonly games: readonly RecordMatchGameInput[];
 }

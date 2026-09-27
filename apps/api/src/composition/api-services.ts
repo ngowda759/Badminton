@@ -1,6 +1,8 @@
 import {
+  createMatchResultService,
   createMatchService,
   createPlayerService,
+  createStandingsService,
   createTeamService,
   createTournamentCategoryService,
   createTournamentEntryService,
@@ -28,5 +30,7 @@ export function createApiServices(client: RepositoryClient, unitOfWork: UnitOfWo
     entries: createTournamentEntryService(client, unitOfWork),
     stages: createTournamentStageService(client),
     matches: createMatchService(client, unitOfWork),
+    matchResults: createMatchResultService(client, unitOfWork),
+    standings: createStandingsService(client),
   };
 }
