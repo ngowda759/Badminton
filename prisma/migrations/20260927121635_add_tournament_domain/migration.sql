@@ -32,8 +32,8 @@ CREATE TABLE "tournaments" (
     "location" TEXT,
     "timezone" TEXT NOT NULL,
     "status" "TournamentStatus" NOT NULL DEFAULT 'DRAFT',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "tournaments_pkey" PRIMARY KEY ("id")
 );
@@ -47,8 +47,8 @@ CREATE TABLE "tournament_categories" (
     "format" "CategoryFormat" NOT NULL,
     "gender" "CategoryGender",
     "status" "CategoryStatus" NOT NULL DEFAULT 'DRAFT',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "tournament_categories_pkey" PRIMARY KEY ("id")
 );
@@ -59,8 +59,8 @@ CREATE TABLE "players" (
     "name" TEXT NOT NULL,
     "email" TEXT,
     "phone" TEXT,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "players_pkey" PRIMARY KEY ("id")
 );
@@ -69,8 +69,8 @@ CREATE TABLE "players" (
 CREATE TABLE "teams" (
     "id" UUID NOT NULL,
     "name" TEXT NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "teams_pkey" PRIMARY KEY ("id")
 );
@@ -80,9 +80,9 @@ CREATE TABLE "team_members" (
     "id" UUID NOT NULL,
     "teamId" UUID NOT NULL,
     "playerId" UUID NOT NULL,
-    "position" INTEGER NOT NULL DEFAULT 1,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "position" SMALLINT NOT NULL DEFAULT 1,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "team_members_pkey" PRIMARY KEY ("id")
 );
@@ -95,9 +95,9 @@ CREATE TABLE "tournament_entries" (
     "teamId" UUID,
     "seed" INTEGER,
     "status" "EntryStatus" NOT NULL DEFAULT 'PENDING',
-    "registeredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "registeredAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "tournament_entries_pkey" PRIMARY KEY ("id")
 );
@@ -108,11 +108,11 @@ CREATE TABLE "tournament_stages" (
     "categoryId" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "type" "StageType" NOT NULL,
-    "sequence" INTEGER NOT NULL,
-    "drawSize" INTEGER,
+    "sequence" SMALLINT NOT NULL,
+    "drawSize" SMALLINT,
     "status" "StageStatus" NOT NULL DEFAULT 'PENDING',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "tournament_stages_pkey" PRIMARY KEY ("id")
 );
@@ -121,12 +121,12 @@ CREATE TABLE "tournament_stages" (
 CREATE TABLE "matches" (
     "id" UUID NOT NULL,
     "stageId" UUID NOT NULL,
-    "sequence" INTEGER NOT NULL,
-    "roundNumber" INTEGER,
+    "sequence" SMALLINT NOT NULL,
+    "roundNumber" SMALLINT,
     "matchNumber" INTEGER,
     "status" "MatchStatus" NOT NULL DEFAULT 'SCHEDULED',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "matches_pkey" PRIMARY KEY ("id")
 );
@@ -136,9 +136,9 @@ CREATE TABLE "match_participants" (
     "id" UUID NOT NULL,
     "matchId" UUID NOT NULL,
     "entryId" UUID NOT NULL,
-    "slot" INTEGER NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
+    "slot" SMALLINT NOT NULL,
+    "createdAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMPTZ(3) NOT NULL,
 
     CONSTRAINT "match_participants_pkey" PRIMARY KEY ("id")
 );

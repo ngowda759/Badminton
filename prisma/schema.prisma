@@ -103,8 +103,8 @@ model Tournament {
   timezone    String
   status      TournamentStatus     @default(DRAFT)
   categories  TournamentCategory[]
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+  createdAt   DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime             @updatedAt @db.Timestamptz(3)
 
   @@index([status])
   @@index([startDate])
@@ -122,8 +122,8 @@ model TournamentCategory {
   status       CategoryStatus    @default(DRAFT)
   entries      TournamentEntry[]
   stages       TournamentStage[]
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
 
   @@unique([tournamentId, code])
   @@map("tournament_categories")
@@ -136,8 +136,8 @@ model Player {
   phone       String?
   entries     TournamentEntry[]
   teamMembers TeamMember[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
 
   @@index([name])
   @@map("players")
@@ -148,8 +148,8 @@ model Team {
   name      String
   members   TeamMember[]
   entries   TournamentEntry[]
-  createdAt DateTime          @default(now())
-  updatedAt DateTime          @updatedAt
+  createdAt DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime          @updatedAt @db.Timestamptz(3)
 
   @@map("teams")
 }
@@ -160,9 +160,9 @@ model TeamMember {
   team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
   playerId  String   @db.Uuid
   player    Player   @relation(fields: [playerId], references: [id], onDelete: Restrict)
-  position  Int      @default(1)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  position  Int      @default(1) @db.SmallInt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@unique([teamId, playerId])
   @@index([playerId])
@@ -179,10 +179,10 @@ model TournamentEntry {
   team         Team?              @relation(fields: [teamId], references: [id], onDelete: Restrict)
   seed         Int?
   status       EntryStatus        @default(PENDING)
-  registeredAt DateTime           @default(now())
+  registeredAt DateTime           @default(now()) @db.Timestamptz(3)
   participants MatchParticipant[]
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
 
   @@index([categoryId])
   @@index([playerId])
@@ -196,12 +196,12 @@ model TournamentStage {
   category   TournamentCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   name       String
   type       StageType
-  sequence   Int
-  drawSize   Int?
+  sequence   Int                @db.SmallInt
+  drawSize   Int?               @db.SmallInt
   status     StageStatus        @default(PENDING)
   matches    Match[]
-  createdAt  DateTime           @default(now())
-  updatedAt  DateTime           @updatedAt
+  createdAt  DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime           @updatedAt @db.Timestamptz(3)
 
   @@unique([categoryId, sequence])
   @@map("tournament_stages")
@@ -211,13 +211,13 @@ model Match {
   id           String             @id @default(uuid()) @db.Uuid
   stageId      String             @db.Uuid
   stage        TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  sequence     Int
-  roundNumber  Int?
+  sequence     Int                @db.SmallInt
+  roundNumber  Int?               @db.SmallInt
   matchNumber  Int?
   status       MatchStatus        @default(SCHEDULED)
   participants MatchParticipant[]
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
 
   @@unique([stageId, sequence])
   @@index([status])
@@ -230,9 +230,9 @@ model MatchParticipant {
   match     Match           @relation(fields: [matchId], references: [id], onDelete: Cascade)
   entryId   String          @db.Uuid
   entry     TournamentEntry @relation(fields: [entryId], references: [id], onDelete: Restrict)
-  slot      Int
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
+  slot      Int             @db.SmallInt
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
 
   @@unique([matchId, slot])
   @@unique([matchId, entryId])

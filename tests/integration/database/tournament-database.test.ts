@@ -137,6 +137,44 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
         expect(rows.every((row) => row.data_type === 'date')).toBe(true);
         expect(tournament.startDate).toBeInstanceOf(Date);
       });
+
+      it('stores Phase 2 record timestamps with a time zone', async () => {
+        await createTournament(prisma);
+        const rows = await prisma.$queryRaw<{ table_name: string; column_name: string }[]>`
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name <> 'system_metadata'
+          AND column_name IN ('createdAt', 'updatedAt', 'registeredAt')
+          AND data_type <> 'timestamp with time zone'
+      `;
+
+        // Every Phase 2 timestamp must be timezone-aware; Phase 1 is untouched.
+        expect(rows).toEqual([]);
+      });
+
+      it('stores ordinal columns as smallint and seed as integer', async () => {
+        const rows = await prisma.$queryRaw<{ column_name: string; data_type: string }[]>`
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND (
+            (table_name = 'team_members' AND column_name = 'position') OR
+            (table_name = 'tournament_stages' AND column_name IN ('sequence', 'drawSize')) OR
+            (table_name = 'matches' AND column_name IN ('sequence', 'roundNumber')) OR
+            (table_name = 'match_participants' AND column_name = 'slot') OR
+            (table_name = 'tournament_entries' AND column_name = 'seed')
+          )
+      `;
+        const byColumn = new Map(rows.map((row) => [row.column_name, row.data_type]));
+
+        expect(byColumn.get('position')).toBe('smallint');
+        expect(byColumn.get('sequence')).toBe('smallint');
+        expect(byColumn.get('drawSize')).toBe('smallint');
+        expect(byColumn.get('roundNumber')).toBe('smallint');
+        expect(byColumn.get('slot')).toBe('smallint');
+        expect(byColumn.get('seed')).toBe('integer');
+      });
     });
 
     describe('tournament constraints', () => {
