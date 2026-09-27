@@ -1,4 +1,9 @@
-import type { MatchService, TournamentStageService } from '@badminton/application';
+import type {
+  MatchResultService,
+  MatchService,
+  StandingsService,
+  TournamentStageService,
+} from '@badminton/application';
 import {
   addMatchParticipantInputSchema,
   categoryIdParamSchema,
@@ -7,6 +12,7 @@ import {
   idParamSchema,
   matchIdParamSchema,
   matchTransitionInputSchema,
+  recordMatchResultInputSchema,
   stageIdParamSchema,
   stageTransitionInputSchema,
   updateMatchInputSchema,
@@ -20,6 +26,8 @@ import { data } from '../response.ts';
 export interface StageMatchRoutesOptions {
   readonly stages: TournamentStageService;
   readonly matches: MatchService;
+  readonly matchResults: MatchResultService;
+  readonly standings: StandingsService;
 }
 
 /**
@@ -30,7 +38,7 @@ export interface StageMatchRoutesOptions {
  * handlers validate, delegate and serialise.
  */
 export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = (app, options) => {
-  const { stages, matches } = options;
+  const { stages, matches, matchResults, standings } = options;
 
   app.get('/categories/:categoryId/stages', async (request) => {
     const { categoryId } = validate(categoryIdParamSchema, request.params);
@@ -100,5 +108,26 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
     const body = validate(addMatchParticipantInputSchema, request.body);
     const participant = await matches.addParticipant(matchId, body);
     return reply.status(201).send(data(participant));
+  });
+
+  // Recording a result both persists the games and completes the match in one
+  // transaction, so it replaces the direct COMPLETED transition.
+  app.post('/matches/:id/result', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    const body = validate(recordMatchResultInputSchema, request.body);
+    const result = await matchResults.recordResult(id, body);
+    return reply.status(201).send(data(result));
+  });
+
+  app.get('/matches/:id/result', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    // A match that has not been completed has no result yet; `null` keeps the
+    // `{ data }` envelope intact instead of dropping the property.
+    return data((await matchResults.getResult(id)) ?? null);
+  });
+
+  app.get('/stages/:id/standings', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    return data(await standings.getStageStandings(id));
   });
 };

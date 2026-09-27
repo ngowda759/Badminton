@@ -123,6 +123,12 @@ export interface Match {
   readonly roundNumber: number | null;
   readonly matchNumber: number | null;
   readonly status: MatchStatus;
+  /**
+   * The entry that won a completed match, or `null` before completion. Derived
+   * from the validated games and set in the same transaction that completes the
+   * match; it is never chosen by a caller.
+   */
+  readonly winnerEntryId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }

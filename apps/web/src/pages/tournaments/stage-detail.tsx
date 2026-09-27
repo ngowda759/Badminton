@@ -2,11 +2,12 @@ import { useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { MatchDto, StageDto } from '@/api/types.ts';
+import type { MatchDto, MatchParticipantDto, StageDto, StandingRowDto } from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
+import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
@@ -23,6 +24,7 @@ import {
 import { useCategory } from '@/components/tournaments/context.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
+import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { humanizeEnum, orDash } from '@/lib/format.ts';
 import { stageNextStatuses } from '@/lib/lifecycle.ts';
@@ -50,6 +52,17 @@ export function StageDetailPage() {
   const matchQuery = useApiQuery<readonly MatchDto[]>(['matches', stageId], (signal) =>
     api.matches.listByStage(stageId, signal),
   );
+  // Include the (eventually-known) stage type in the key so standings are only
+  // requested for GROUP stages; other stages have no standings to derive.
+  const stageType = stageQuery.state.status === 'loaded' ? stageQuery.state.data.type : 'UNKNOWN';
+  const standingsQuery = useApiQuery<readonly StandingRowDto[]>(
+    ['standings', stageId, stageType],
+    (signal) =>
+      stageType === 'GROUP'
+        ? api.stages.standings(stageId, signal)
+        : Promise.resolve([] as readonly StandingRowDto[]),
+  );
+  const { nameFor } = useEntryNames(category.id);
   const mutation = useMutation<unknown>();
 
   if (stageQuery.state.status === 'loading') {
@@ -66,7 +79,9 @@ export function StageDetailPage() {
   }
 
   const stage = stageQuery.state.data;
-  const base = `/tournaments/${tournament.id}/categories/${category.id}/stages/${stage.id}`;
+  // Matches are siblings of stages under the category route (see routes.tsx),
+  // not nested beneath the stage, so the match link omits the stage segment.
+  const categoryBase = `/tournaments/${tournament.id}/categories/${category.id}`;
 
   return (
     <div className="space-y-6">
@@ -154,7 +169,9 @@ export function StageDetailPage() {
                     <TableHead>Sequence</TableHead>
                     <TableHead>Round</TableHead>
                     <TableHead>Match #</TableHead>
+                    <TableHead>Participants</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Result</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -165,11 +182,17 @@ export function StageDetailPage() {
                       <TableCell>{orDash(match.roundNumber)}</TableCell>
                       <TableCell>{orDash(match.matchNumber)}</TableCell>
                       <TableCell>
+                        <MatchParticipantsCell matchId={match.id} nameFor={nameFor} />
+                      </TableCell>
+                      <TableCell>
                         <StatusBadge kind="match" status={match.status} />
+                      </TableCell>
+                      <TableCell>
+                        <MatchResultCell match={match} nameFor={nameFor} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Button asChild variant="outline" size="sm">
-                          <Link to={`${base}/matches/${match.id}`}>Open</Link>
+                          <Link to={`${categoryBase}/matches/${match.id}`}>Open</Link>
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -180,8 +203,85 @@ export function StageDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {stage.type === 'GROUP' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Standings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {standingsQuery.state.status === 'loading' ? (
+              <LoadingState label="Loading standings…" />
+            ) : null}
+            {standingsQuery.state.status === 'error' ? (
+              <ErrorState
+                error={standingsQuery.state.error}
+                onRetry={standingsQuery.refetch}
+                title="Could not load standings"
+              />
+            ) : null}
+            {standingsQuery.state.status === 'loaded' && standingsQuery.state.data.length === 0 ? (
+              <EmptyState
+                title="No standings yet"
+                description="Standings appear once group matches are completed."
+              />
+            ) : null}
+            {standingsQuery.state.status === 'loaded' && standingsQuery.state.data.length > 0 ? (
+              <StandingsTable rows={standingsQuery.state.data} nameFor={nameFor} />
+            ) : null}
+            <p className="text-muted-foreground text-xs">
+              Standings are derived from completed matches and cannot be edited. Ties break on match
+              wins, then game difference, then point difference, then entry name.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
+}
+
+/** Resolves and shows both participant names for a match list row. */
+function MatchParticipantsCell({
+  matchId,
+  nameFor,
+}: {
+  readonly matchId: string;
+  readonly nameFor: (entryId: string) => string;
+}) {
+  const api = useApi();
+  const query = useApiQuery<readonly MatchParticipantDto[]>(
+    ['match-participants', matchId],
+    (signal) => api.matches.listParticipants(matchId, signal),
+  );
+
+  if (query.state.status !== 'loaded') {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  const slot1 = query.state.data.find((participant) => participant.slot === 1);
+  const slot2 = query.state.data.find((participant) => participant.slot === 2);
+  if (!slot1 && !slot2) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="text-sm">
+      {slot1 ? nameFor(slot1.entryId) : '—'} <span className="text-muted-foreground">vs</span>{' '}
+      {slot2 ? nameFor(slot2.entryId) : '—'}
+    </span>
+  );
+}
+
+/** Shows the derived winner for a completed match, or a dash otherwise. */
+function MatchResultCell({
+  match,
+  nameFor,
+}: {
+  readonly match: MatchDto;
+  readonly nameFor: (entryId: string) => string;
+}) {
+  if (match.status !== 'COMPLETED' || !match.winnerEntryId) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return <span className="text-sm">{nameFor(match.winnerEntryId)}</span>;
 }
 
 function EditStageForm({

@@ -1,5 +1,6 @@
 import {
   ACTIVE_ENTRY_STATUSES,
+  BusinessRuleViolationError,
   ConflictError,
   InvalidStateTransitionError,
   isAllowedTransition,
@@ -118,6 +119,15 @@ export function createMatchService(client: RepositoryClient, unitOfWork: UnitOfW
 
       if (!isAllowedTransition(MATCH_TRANSITIONS, from, to)) {
         throw new InvalidStateTransitionError('Match', from, to);
+      }
+
+      // Completion is a scored operation, not a bare status change: a match may
+      // only reach COMPLETED by recording a validated result, which selects the
+      // winner and persists the games. This route covers start/cancel only.
+      if (to === 'COMPLETED') {
+        throw new BusinessRuleViolationError(
+          'Record a match result to complete the match; the status cannot be set directly.',
+        );
       }
 
       return client.matches.updateStatus(id, to);

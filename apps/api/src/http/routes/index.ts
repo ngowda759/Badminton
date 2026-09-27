@@ -31,6 +31,8 @@ export function createApiV1Routes(services: ApiServices): FastifyPluginAsync {
     await instance.register(stageMatchRoutes, {
       stages: services.stages,
       matches: services.matches,
+      matchResults: services.matchResults,
+      standings: services.standings,
     });
   };
 }

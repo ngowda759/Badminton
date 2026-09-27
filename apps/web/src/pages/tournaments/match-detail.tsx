@@ -2,7 +2,7 @@ import { useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { EntryDto, MatchDto, MatchParticipantDto } from '@/api/types.ts';
+import type { MatchDto, MatchParticipantDto, MatchResultDto } from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { LoadingState } from '@/components/states.tsx';
@@ -13,7 +13,10 @@ import { FormField } from '@/components/form-field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useCategory } from '@/components/tournaments/context.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
+import { MatchResultSummary } from '@/components/tournaments/match-result-summary.tsx';
+import { MatchScoring } from '@/components/tournaments/match-scoring.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
+import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { orDash } from '@/lib/format.ts';
 import { matchNextStatuses } from '@/lib/lifecycle.ts';
@@ -25,10 +28,11 @@ import {
 } from '@/lib/form-validation.ts';
 
 /**
- * Match detail: metadata, lifecycle and manual participant assignment.
+ * Match detail: metadata, lifecycle, participant assignment and scoring.
  *
- * Only two slots exist (1 and 2). No scoring, winner selection or automatic
- * advancement is performed or displayed.
+ * Only two slots exist (1 and 2). Scoring is available once the match is in
+ * progress; the winner is always derived from the scores by the API, never
+ * chosen here. A completed result is shown read-only.
  */
 export function MatchDetailPage() {
   const api = useApi();
@@ -42,7 +46,12 @@ export function MatchDetailPage() {
     ['match-participants', matchId],
     (signal) => api.matches.listParticipants(matchId, signal),
   );
+  const resultQuery = useApiQuery<MatchResultDto | null>(['match-result', matchId], (signal) =>
+    api.matches.getResult(matchId, signal),
+  );
   const mutation = useMutation<unknown>();
+
+  const { nameFor } = useEntryNames(category.id);
 
   if (matchQuery.state.status === 'loading') {
     return <LoadingState label="Loading match…" rows={3} />;
@@ -58,7 +67,20 @@ export function MatchDetailPage() {
   }
 
   const match = matchQuery.state.data;
+  const participants =
+    participantQuery.state.status === 'loaded' ? participantQuery.state.data : [];
+  const slot1 = participants.find((participant) => participant.slot === 1);
+  const slot2 = participants.find((participant) => participant.slot === 2);
+  const slot1Label = slot1 ? nameFor(slot1.entryId) : 'Slot 1';
+  const slot2Label = slot2 ? nameFor(slot2.entryId) : 'Slot 2';
+
   const stagesHref = `/tournaments/${tournament.id}/categories/${category.id}/stages/${match.stageId}`;
+
+  const hasTwoParticipants = Boolean(slot1 && slot2);
+  const refreshAll = (): void => {
+    matchQuery.refetch();
+    resultQuery.refetch();
+  };
 
   return (
     <div className="space-y-6">
@@ -87,7 +109,12 @@ export function MatchDetailPage() {
           <LifecycleActions
             kind="match"
             currentStatus={match.status}
-            nextStatuses={matchNextStatuses(match.status)}
+            // Completion is deliberately not offered here: a match reaches
+            // COMPLETED only by recording a validated result in the scoring
+            // form, so the bare transition would always be rejected.
+            nextStatuses={matchNextStatuses(match.status).filter(
+              (status) => status !== 'COMPLETED',
+            )}
             pending={mutation.pending}
             onTransition={async (status) => {
               await mutation.run(async () => {
@@ -127,12 +154,61 @@ export function MatchDetailPage() {
             <ParticipantSlots
               match={match}
               participants={participantQuery.state.data}
-              categoryId={category.id}
+              nameFor={nameFor}
               onChanged={participantQuery.refetch}
             />
           ) : null}
         </CardContent>
       </Card>
+
+      {match.status === 'COMPLETED' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Result</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {resultQuery.state.status === 'loading' ? (
+              <LoadingState label="Loading result…" />
+            ) : null}
+            {resultQuery.state.status === 'error' ? (
+              <ErrorState
+                error={resultQuery.state.error}
+                onRetry={resultQuery.refetch}
+                title="Could not load result"
+              />
+            ) : null}
+            {resultQuery.state.status === 'loaded' && resultQuery.state.data ? (
+              <MatchResultSummary
+                result={resultQuery.state.data}
+                slot1Label={slot1Label}
+                slot2Label={slot2Label}
+              />
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {match.status === 'IN_PROGRESS' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Score match</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!hasTwoParticipants ? (
+              <p className="text-muted-foreground text-sm">
+                Assign both slots before recording a result.
+              </p>
+            ) : (
+              <MatchScoring
+                matchId={match.id}
+                slot1Label={slot1Label}
+                slot2Label={slot2Label}
+                onCompleted={refreshAll}
+              />
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -241,37 +317,21 @@ function EditMatchForm({
 function ParticipantSlots({
   match,
   participants,
-  categoryId,
+  nameFor,
   onChanged,
 }: {
   readonly match: MatchDto;
   readonly participants: readonly MatchParticipantDto[];
-  readonly categoryId: string;
+  readonly nameFor: (entryId: string) => string;
   readonly onChanged: () => void;
 }) {
   const api = useApi();
-  const entriesQuery = useApiQuery<readonly EntryDto[]>(['entries', categoryId], (signal) =>
-    api.entries.listByCategory(categoryId, signal),
-  );
   const [slot1Entry, setSlot1Entry] = useState('');
   const [slot2Entry, setSlot2Entry] = useState('');
   const mutation = useMutation<unknown>();
 
   const slot1 = participants.find((participant) => participant.slot === 1);
   const slot2 = participants.find((participant) => participant.slot === 2);
-
-  const labelFor = (entryId: string): string => {
-    if (entriesQuery.state.status !== 'loaded') {
-      return entryId;
-    }
-    const entry = entriesQuery.state.data.find((candidate) => candidate.id === entryId);
-    if (!entry) {
-      return entryId;
-    }
-    return entry.playerId
-      ? `Player entry ${entry.playerId.slice(0, 8)}…`
-      : `Team entry ${entry.teamId?.slice(0, 8) ?? ''}…`;
-  };
 
   const assign = (slot: 1 | 2, entryId: string): void => {
     const value = entryId.trim();
@@ -295,13 +355,13 @@ function ParticipantSlots({
         <div className="rounded-md border p-3">
           <dt className="text-muted-foreground text-xs uppercase">Slot 1</dt>
           <dd className="mt-1 text-sm">
-            {slot1 ? labelFor(slot1.entryId) : <span className="text-muted-foreground">Empty</span>}
+            {slot1 ? nameFor(slot1.entryId) : <span className="text-muted-foreground">Empty</span>}
           </dd>
         </div>
         <div className="rounded-md border p-3">
           <dt className="text-muted-foreground text-xs uppercase">Slot 2</dt>
           <dd className="mt-1 text-sm">
-            {slot2 ? labelFor(slot2.entryId) : <span className="text-muted-foreground">Empty</span>}
+            {slot2 ? nameFor(slot2.entryId) : <span className="text-muted-foreground">Empty</span>}
           </dd>
         </div>
       </dl>

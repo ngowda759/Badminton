@@ -2,6 +2,7 @@ import type {
   CategoryStatus,
   EntryStatus,
   Match,
+  MatchGame,
   MatchParticipant,
   MatchStatus,
   Player,
@@ -18,7 +19,9 @@ import type {
   CreateCategoryData,
   CreateEntryData,
   CreateMatchData,
+  CreateMatchGameData,
   CreateMatchParticipantData,
+  MatchGameWithMatch,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
@@ -56,6 +59,7 @@ export interface RepositoryClient {
   readonly stages: TournamentStageRepository;
   readonly matches: MatchRepository;
   readonly matchParticipants: MatchParticipantRepository;
+  readonly matchGames: MatchGameRepository;
 }
 
 export interface TournamentRepository {
@@ -130,13 +134,26 @@ export interface MatchRepository {
   create(data: CreateMatchData): Promise<Match>;
   findById(id: string): Promise<Match | undefined>;
   listByStage(stageId: string): Promise<readonly Match[]>;
+  /** Completed matches only, for a whole category (drives group standings). */
+  listCompletedByCategory(categoryId: string): Promise<readonly Match[]>;
   update(id: string, data: UpdateMatchData): Promise<Match>;
   updateStatus(id: string, status: MatchStatus): Promise<Match>;
+  /** Writes the derived winner and the terminal status in one update. */
+  complete(id: string, winnerEntryId: string): Promise<Match>;
 }
 
 export interface MatchParticipantRepository {
   create(data: CreateMatchParticipantData): Promise<MatchParticipant>;
   listByMatch(matchId: string): Promise<readonly MatchParticipant[]>;
+  /** Participants for several matches, so standings avoids a per-match query. */
+  listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchParticipant[]>;
   findSlot(matchId: string, slot: number): Promise<MatchParticipant | undefined>;
   findEntry(matchId: string, entryId: string): Promise<MatchParticipant | undefined>;
+}
+
+export interface MatchGameRepository {
+  createMany(data: readonly CreateMatchGameData[]): Promise<readonly MatchGame[]>;
+  listByMatch(matchId: string): Promise<readonly MatchGame[]>;
+  /** Games across several matches (with their owner), so standings avoids N+1. */
+  listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchGameWithMatch[]>;
 }

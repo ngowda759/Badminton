@@ -9,9 +9,12 @@ import type {
   CategoryDto,
   EntryDto,
   MatchDto,
+  MatchGameDto,
   MatchParticipantDto,
+  MatchResultDto,
   PlayerDto,
   StageDto,
+  StandingRowDto,
   TeamDto,
   TeamMemberDto,
   TournamentDto,
@@ -124,6 +127,7 @@ export function makeMatch(overrides: Partial<MatchDto> = {}): MatchDto {
     roundNumber: null,
     matchNumber: null,
     status: 'SCHEDULED',
+    winnerEntryId: null,
     createdAt: ISO,
     updatedAt: ISO,
     ...overrides,
@@ -138,6 +142,47 @@ export function makeParticipant(overrides: Partial<MatchParticipantDto> = {}): M
     slot: 1,
     createdAt: ISO,
     updatedAt: ISO,
+    ...overrides,
+  };
+}
+
+export function makeMatchGame(overrides: Partial<MatchGameDto> = {}): MatchGameDto {
+  return {
+    gameNumber: 1,
+    participant1Points: 21,
+    participant2Points: 15,
+    winnerSlot: 1,
+    ...overrides,
+  };
+}
+
+export function makeMatchResult(overrides: Partial<MatchResultDto> = {}): MatchResultDto {
+  return {
+    matchId: '88888888-8888-4888-8888-888888888888',
+    winnerSlot: 1,
+    winnerGames: 2,
+    loserGames: 0,
+    winnerEntryId: '66666666-6666-4666-8666-666666666666',
+    loserEntryId: '66666666-6666-4666-8666-666666666667',
+    games: [makeMatchGame(), makeMatchGame({ gameNumber: 2 })],
+    ...overrides,
+  };
+}
+
+export function makeStandingRow(overrides: Partial<StandingRowDto> = {}): StandingRowDto {
+  return {
+    entryId: '66666666-6666-4666-8666-666666666666',
+    played: 1,
+    won: 1,
+    lost: 0,
+    points: 2,
+    gamesWon: 2,
+    gamesLost: 0,
+    gameDifference: 2,
+    pointsFor: 42,
+    pointsAgainst: 33,
+    pointDifference: 9,
+    position: 1,
     ...overrides,
   };
 }
@@ -203,6 +248,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
       get: vi.fn(() => Promise.resolve(makeStage())),
       update: vi.fn(() => Promise.resolve(makeStage())),
       transition: vi.fn(() => Promise.resolve(makeStage())),
+      standings: vi.fn(() => Promise.resolve([] as readonly StandingRowDto[])),
     },
     matches: {
       listByStage: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),
@@ -212,6 +258,8 @@ export function createStubApi(): Mocked<BadmintonApi> {
       transition: vi.fn(() => Promise.resolve(makeMatch())),
       listParticipants: vi.fn(() => Promise.resolve([] as readonly MatchParticipantDto[])),
       addParticipant: vi.fn(() => Promise.resolve(makeParticipant())),
+      recordResult: vi.fn(() => Promise.resolve(makeMatchResult())),
+      getResult: vi.fn(() => Promise.resolve(null as MatchResultDto | null)),
     },
   };
 }

@@ -1,6 +1,8 @@
 import type {
+  MatchResultService,
   MatchService,
   PlayerService,
+  StandingsService,
   TeamService,
   TournamentCategoryService,
   TournamentEntryService,
@@ -24,4 +26,6 @@ export interface ApiServices {
   readonly entries: TournamentEntryService;
   readonly stages: TournamentStageService;
   readonly matches: MatchService;
+  readonly matchResults: MatchResultService;
+  readonly standings: StandingsService;
 }

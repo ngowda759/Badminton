@@ -112,6 +112,25 @@ export interface AddMatchParticipantCommand {
 }
 
 /**
+ * A single game in a result submission. `gameNumber` is 1-based and the points
+ * belong to participant slots 1 and 2; the winner is never supplied.
+ */
+export interface RecordMatchGameCommand {
+  readonly gameNumber: number;
+  readonly participant1Points: number;
+  readonly participant2Points: number;
+}
+
+/**
+ * Records a complete result for an in-progress match and transitions it to
+ * `COMPLETED` in one transaction. The games are validated by the domain scoring
+ * rules and the winner is derived, not supplied.
+ */
+export interface RecordMatchResultCommand {
+  readonly games: readonly RecordMatchGameCommand[];
+}
+
+/**
  * Status transitions accepted by the lifecycle endpoints.
  *
  * Cancellation is modelled explicitly rather than by assigning an arbitrary

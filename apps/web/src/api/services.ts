@@ -10,9 +10,12 @@ import type {
   EntryDto,
   MatchDto,
   MatchParticipantDto,
+  MatchResultDto,
   PlayerDto,
+  RecordMatchResultInput,
   RegisterEntryInput,
   StageDto,
+  StandingRowDto,
   TeamDto,
   TeamMemberDto,
   TournamentDto,
@@ -88,6 +91,7 @@ export interface StageApi {
   get(id: string, signal?: AbortSignal): Promise<StageDto>;
   update(id: string, input: UpdateStageInput, signal?: AbortSignal): Promise<StageDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<StageDto>;
+  standings(id: string, signal?: AbortSignal): Promise<readonly StandingRowDto[]>;
 }
 
 export interface MatchApi {
@@ -102,6 +106,14 @@ export interface MatchApi {
     input: { entryId: string; slot: 1 | 2 },
     signal?: AbortSignal,
   ): Promise<MatchParticipantDto>;
+  /** Records a validated result and completes the match in one transaction. */
+  recordResult(
+    matchId: string,
+    input: RecordMatchResultInput,
+    signal?: AbortSignal,
+  ): Promise<MatchResultDto>;
+  /** Reads the stored result, or `null` while the match is not completed. */
+  getResult(matchId: string, signal?: AbortSignal): Promise<MatchResultDto | null>;
 }
 
 /** The complete API surface consumed by the tournament setup UI. */
@@ -171,6 +183,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       update: (id, input, signal) => client.patch(`/api/v1/stages/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/stages/${id}/transition`, { status }, signal),
+      standings: (id, signal) => client.get(`/api/v1/stages/${id}/standings`, signal),
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),
@@ -184,6 +197,10 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
         client.get(`/api/v1/matches/${matchId}/participants`, signal),
       addParticipant: (matchId, input, signal) =>
         client.post(`/api/v1/matches/${matchId}/participants`, input, signal),
+      recordResult: (matchId, input, signal) =>
+        client.post(`/api/v1/matches/${matchId}/result`, input, signal),
+      getResult: (matchId, signal) =>
+        client.get<MatchResultDto | null>(`/api/v1/matches/${matchId}/result`, signal),
     },
   };
 }

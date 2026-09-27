@@ -202,6 +202,153 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     expect(response.statusCode).toBe(404);
   });
 
+  async function startedGroupMatch(): Promise<{
+    matchId: string;
+    stageId: string;
+    entryOne: string;
+    entryTwo: string;
+  }> {
+    const tournament = await services.tournaments.create({
+      name: 'Scoring Slice',
+      startDate: new Date('2027-04-01T00:00:00.000Z'),
+      endDate: new Date('2027-04-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const match = await services.matches.create(stage.id, { sequence: 1 });
+    const one = await services.players.create({ name: 'Slice One' });
+    const two = await services.players.create({ name: 'Slice Two' });
+    const entryOne = await services.entries.register({ categoryId: category.id, playerId: one.id });
+    const entryTwo = await services.entries.register({ categoryId: category.id, playerId: two.id });
+    await services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
+    await services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
+    await services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+    return { matchId: match.id, stageId: stage.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
+  }
+
+  const twoZero = [
+    { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+    { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+  ];
+
+  it('records a result and reflects it in the standings end to end', async () => {
+    const { matchId, stageId, entryOne } = await startedGroupMatch();
+
+    const recorded = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: { games: twoZero },
+    });
+    expect(recorded.statusCode).toBe(201);
+    expect(recorded.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId).toBe(entryOne);
+
+    // The result really landed in PostgreSQL.
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(2);
+    const stored = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
+    expect(stored.status).toBe('COMPLETED');
+    expect(stored.winnerEntryId).toBe(entryOne);
+
+    const standings = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stageId}/standings`,
+    });
+    expect(standings.statusCode).toBe(200);
+    const leader = standings
+      .json<{ data: { entryId: string; position: number; won: number }[] }>()
+      .data.find((row) => row.entryId === entryOne);
+    expect(leader).toMatchObject({ position: 1, won: 1 });
+  });
+
+  it('rolls back a failed completion so no partial result remains', async () => {
+    const { matchId } = await startedGroupMatch();
+
+    // An invalid score is rejected before any transaction opens; nothing is
+    // written and the match keeps its state.
+    const invalid = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: {
+        games: [
+          { gameNumber: 1, participant1Points: 21, participant2Points: 20 },
+          { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
+        ],
+      },
+    });
+    expect(invalid.statusCode).toBe(422);
+
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(0);
+    const match = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
+    expect(match.status).toBe('IN_PROGRESS');
+    expect(match.winnerEntryId).toBeNull();
+  });
+
+  it('rolls back a mid-transaction write so no partial result remains', async () => {
+    const { matchId } = await startedGroupMatch();
+
+    // Force a failure *inside* the unit of work: a pre-existing game 1 makes the
+    // service's insert violate the real unique(matchId, gameNumber) constraint,
+    // so the transaction aborts after it has already opened.
+    await prisma.matchGame.create({
+      data: {
+        matchId,
+        gameNumber: 1,
+        participant1Points: 21,
+        participant2Points: 10,
+        winnerSlot: 1,
+      },
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: { games: twoZero },
+    });
+    expect(response.statusCode).toBe(409);
+
+    // The match is untouched and only the pre-existing game survives.
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(1);
+    const match = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
+    expect(match.status).toBe('IN_PROGRESS');
+    expect(match.winnerEntryId).toBeNull();
+  });
+
+  it('rejects a conflicting concurrent completion without duplicating games', async () => {
+    const { matchId } = await startedGroupMatch();
+
+    // Two operators complete the same match at once. Exactly one may win; the
+    // loser must fail as a conflict, and the games must not be duplicated.
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/result`,
+        payload: { games: twoZero },
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/result`,
+        payload: { games: twoZero },
+      }),
+    ]);
+
+    const statuses = [first.statusCode, second.statusCode].sort();
+    expect(statuses).toEqual([201, 409]);
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(2);
+
+    const stored = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
+    expect(stored.status).toBe('COMPLETED');
+  });
+
   it('persists a lifecycle transition and rejects the next invalid one', async () => {
     const tournament = await app.inject({
       method: 'POST',

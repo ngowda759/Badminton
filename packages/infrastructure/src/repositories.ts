@@ -2,12 +2,14 @@ import type {
   CreateCategoryData,
   CreateEntryData,
   CreateMatchData,
+  CreateMatchGameData,
   CreateMatchParticipantData,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
   PlayerRepository,
@@ -31,6 +33,7 @@ import type { PrismaClient, TransactionClient } from '@badminton/database';
 import { translatePersistenceErrors } from './errors.ts';
 import {
   toMatch,
+  toMatchGame,
   toMatchParticipant,
   toPlayer,
   toTeam,
@@ -329,6 +332,15 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
+    async listCompletedByCategory(categoryId: string) {
+      return translatePersistenceErrors(async () => {
+        const rows = await db.match.findMany({
+          where: { status: 'COMPLETED', stage: { categoryId } },
+          orderBy: { sequence: 'asc' },
+        });
+        return rows.map(toMatch);
+      });
+    },
     update(id: string, data: UpdateMatchData) {
       return translatePersistenceErrors(async () =>
         toMatch(await db.match.update({ where: { id }, data })),
@@ -338,6 +350,50 @@ function createMatchRepository(db: Db): MatchRepository {
       return translatePersistenceErrors(async () =>
         toMatch(await db.match.update({ where: { id }, data: { status } })),
       );
+    },
+    complete(id: string, winnerEntryId: string) {
+      return translatePersistenceErrors(async () =>
+        toMatch(
+          await db.match.update({
+            where: { id },
+            data: { status: 'COMPLETED', winnerEntryId },
+          }),
+        ),
+      );
+    },
+  };
+}
+
+function createMatchGameRepository(db: Db): MatchGameRepository {
+  return {
+    async createMany(data: readonly CreateMatchGameData[]) {
+      return translatePersistenceErrors(async () => {
+        // `createManyAndReturn` writes the whole result set in one statement
+        // inside the active transaction, so a failure rolls back every game.
+        const rows = await db.matchGame.createManyAndReturn({ data: [...data] });
+        return rows.map(toMatchGame);
+      });
+    },
+    async listByMatch(matchId: string) {
+      return translatePersistenceErrors(async () => {
+        const rows = await db.matchGame.findMany({
+          where: { matchId },
+          orderBy: { gameNumber: 'asc' },
+        });
+        return rows.map(toMatchGame);
+      });
+    },
+    async listByMatchIds(matchIds: readonly string[]) {
+      if (matchIds.length === 0) {
+        return [];
+      }
+      return translatePersistenceErrors(async () => {
+        const rows = await db.matchGame.findMany({
+          where: { matchId: { in: [...matchIds] } },
+          orderBy: [{ matchId: 'asc' }, { gameNumber: 'asc' }],
+        });
+        return rows.map((row) => ({ matchId: row.matchId, ...toMatchGame(row) }));
+      });
     },
   };
 }
@@ -354,6 +410,18 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
         const rows = await db.matchParticipant.findMany({
           where: { matchId },
           orderBy: { slot: 'asc' },
+        });
+        return rows.map(toMatchParticipant);
+      });
+    },
+    async listByMatchIds(matchIds: readonly string[]) {
+      if (matchIds.length === 0) {
+        return [];
+      }
+      return translatePersistenceErrors(async () => {
+        const rows = await db.matchParticipant.findMany({
+          where: { matchId: { in: [...matchIds] } },
+          orderBy: [{ matchId: 'asc' }, { slot: 'asc' }],
         });
         return rows.map(toMatchParticipant);
       });
@@ -389,6 +457,7 @@ export function createRepositoryClient(db: Db): RepositoryClient {
     stages: createStageRepository(db),
     matches: createMatchRepository(db),
     matchParticipants: createMatchParticipantRepository(db),
+    matchGames: createMatchGameRepository(db),
   };
 }
 
