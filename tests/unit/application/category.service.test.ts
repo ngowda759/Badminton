@@ -21,7 +21,7 @@ let service: ReturnType<typeof createTournamentCategoryService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentCategoryService(repos.unitOfWork);
+  service = createTournamentCategoryService(repos.client);
 });
 
 describe('TournamentCategoryService.create', () => {

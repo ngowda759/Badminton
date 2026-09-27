@@ -13,7 +13,6 @@ import {
 } from '@badminton/domain';
 
 import type { RepositoryClient } from '../repositories/index.ts';
-import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
   CreateCategoryCommand,
   TransitionCategoryStatusCommand,
@@ -26,6 +25,8 @@ import type {
  * Owns category creation within a tournament, the code normalization mandate
  * and the rules that freeze `format` once entries exist. A category is always
  * created in `DRAFT`; opening it for registration is an explicit transition.
+ * Every operation here is a read or a single write, so no interactive
+ * transaction is opened.
  */
 export interface TournamentCategoryService {
   create(tournamentId: string, command: CreateCategoryCommand): Promise<TournamentCategory>;
@@ -38,7 +39,9 @@ export interface TournamentCategoryService {
   listByTournament(tournamentId: string): Promise<readonly TournamentCategory[]>;
 }
 
-export function createTournamentCategoryService(unitOfWork: UnitOfWork): TournamentCategoryService {
+export function createTournamentCategoryService(
+  client: RepositoryClient,
+): TournamentCategoryService {
   return {
     async create(
       tournamentId: string,
@@ -54,87 +57,84 @@ export function createTournamentCategoryService(unitOfWork: UnitOfWork): Tournam
         );
       }
 
-      return unitOfWork.runInTransaction(async (client) => {
-        const tournament = await client.tournaments.findById(tournamentId);
-        if (!tournament) {
-          throw new NotFoundError('Tournament', tournamentId);
-        }
+      const tournament = await client.tournaments.findById(tournamentId);
+      if (!tournament) {
+        throw new NotFoundError('Tournament', tournamentId);
+      }
 
-        return client.categories.create({
-          tournamentId,
-          name,
-          code,
-          format: command.format,
-          gender: command.gender ?? null,
-          status: 'DRAFT',
-        });
+      return client.categories.create({
+        tournamentId,
+        name,
+        code,
+        format: command.format,
+        gender: command.gender ?? null,
+        status: 'DRAFT',
       });
     },
 
     async update(id: string, command: UpdateCategoryCommand): Promise<TournamentCategory> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const current = await requireCategory(client, id);
-        assertCategoryEditable(current.status);
+      const current = await requireCategory(client, id);
+      assertCategoryEditable(current.status);
 
-        const data: {
-          name?: string;
-          format?: 'SINGLES' | 'DOUBLES';
-          gender?: 'MALE' | 'FEMALE' | 'MIXED' | 'OPEN' | null;
-        } = {};
-
-        if (command.name !== undefined) {
-          data.name = requireName(command.name, 'Category name');
+      // `format` is frozen once entries exist: changing it would invalidate the
+      // entry owners (singles entries reference players, doubles entries
+      // reference teams). This has no transactional writer, so the read-then-
+      // write pair does not need an interactive transaction.
+      let format: 'SINGLES' | 'DOUBLES' | undefined;
+      if (command.format !== undefined && command.format !== current.format) {
+        const entries = await client.categories.countEntries(id);
+        if (entries > 0) {
+          throw new BusinessRuleViolationError(
+            'Category format cannot be changed once entries exist.',
+          );
         }
+        format = command.format;
+      }
 
-        if (command.format !== undefined && command.format !== current.format) {
-          // Changing format once entries exist would invalidate the entry owners
-          // (singles entries reference players, doubles entries reference teams).
-          const entries = await client.categories.countEntries(id);
-          if (entries > 0) {
-            throw new BusinessRuleViolationError(
-              'Category format cannot be changed once entries exist.',
-            );
-          }
-          data.format = command.format;
-        }
+      const data: {
+        name?: string;
+        format?: 'SINGLES' | 'DOUBLES';
+        gender?: 'MALE' | 'FEMALE' | 'MIXED' | 'OPEN' | null;
+      } = {};
 
-        if (command.gender !== undefined) {
-          data.gender = command.gender;
-        }
+      if (command.name !== undefined) {
+        data.name = requireName(command.name, 'Category name');
+      }
+      if (format !== undefined) {
+        data.format = format;
+      }
+      if (command.gender !== undefined) {
+        data.gender = command.gender;
+      }
 
-        return client.categories.update(id, data);
-      });
+      return client.categories.update(id, data);
     },
 
     async transitionStatus(
       id: string,
       command: TransitionCategoryStatusCommand,
     ): Promise<TournamentCategory> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const current = await requireCategory(client, id);
-        const from: CategoryStatus = current.status;
-        const to = command.status;
+      const current = await requireCategory(client, id);
+      const from: CategoryStatus = current.status;
+      const to = command.status;
 
-        if (!isAllowedTransition(CATEGORY_TRANSITIONS, from, to)) {
-          throw new InvalidStateTransitionError('Category', from, to);
-        }
+      if (!isAllowedTransition(CATEGORY_TRANSITIONS, from, to)) {
+        throw new InvalidStateTransitionError('Category', from, to);
+      }
 
-        return client.categories.updateStatus(id, to);
-      });
+      return client.categories.updateStatus(id, to);
     },
 
     async getById(id: string): Promise<TournamentCategory> {
-      return unitOfWork.runInTransaction(async (client) => requireCategory(client, id));
+      return requireCategory(client, id);
     },
 
     async listByTournament(tournamentId: string): Promise<readonly TournamentCategory[]> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const tournament = await client.tournaments.findById(tournamentId);
-        if (!tournament) {
-          throw new NotFoundError('Tournament', tournamentId);
-        }
-        return client.categories.listByTournament(tournamentId);
-      });
+      const tournament = await client.tournaments.findById(tournamentId);
+      if (!tournament) {
+        throw new NotFoundError('Tournament', tournamentId);
+      }
+      return client.categories.listByTournament(tournamentId);
     },
   };
 }

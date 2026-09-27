@@ -1,4 +1,5 @@
 import {
+  ACTIVE_ENTRY_STATUSES,
   ConflictError,
   InvalidStateTransitionError,
   isAllowedTransition,
@@ -42,25 +43,27 @@ export interface MatchService {
   listParticipants(matchId: string): Promise<readonly MatchParticipant[]>;
 }
 
-export function createMatchService(unitOfWork: UnitOfWork): MatchService {
+export function createMatchService(client: RepositoryClient, unitOfWork: UnitOfWork): MatchService {
   return {
     async create(stageId: string, command: CreateMatchCommand): Promise<Match> {
       assertPositive(command.sequence, 'sequence');
       assertOptionalPositive(command.roundNumber, 'roundNumber');
       assertOptionalPositive(command.matchNumber, 'matchNumber');
 
-      return unitOfWork.runInTransaction(async (client) => {
-        const stage = await client.stages.findById(stageId);
+      // Read (stage, sequence list) then insert: kept atomic so the sequence
+      // pre-check reflects the state the insert is applied to.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const stage = await tx.stages.findById(stageId);
         if (!stage) {
           throw new NotFoundError('Stage', stageId);
         }
 
-        const matches = await client.matches.listByStage(stageId);
+        const matches = await tx.matches.listByStage(stageId);
         if (matches.some((match) => match.sequence === command.sequence)) {
           throw new ConflictError('Another match already occupies this sequence.');
         }
 
-        return client.matches.create({
+        return tx.matches.create({
           stageId,
           sequence: command.sequence,
           roundNumber: command.roundNumber ?? null,
@@ -71,67 +74,61 @@ export function createMatchService(unitOfWork: UnitOfWork): MatchService {
     },
 
     async update(id: string, command: UpdateMatchCommand): Promise<Match> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const current = await requireMatch(client, id);
+      const current = await requireMatch(client, id);
 
-        if (current.status === 'COMPLETED' || current.status === 'CANCELLED') {
-          throw new ValidationError('A completed or cancelled match cannot be edited.', 'status');
+      if (current.status === 'COMPLETED' || current.status === 'CANCELLED') {
+        throw new ValidationError('A completed or cancelled match cannot be edited.', 'status');
+      }
+
+      const data: {
+        sequence?: number;
+        roundNumber?: number | null;
+        matchNumber?: number | null;
+      } = {};
+
+      if (command.sequence !== undefined) {
+        assertPositive(command.sequence, 'sequence');
+        if (current.status === 'IN_PROGRESS') {
+          throw new ValidationError('An in-progress match cannot be reordered.', 'sequence');
         }
-
-        if (command.sequence !== undefined) {
-          assertPositive(command.sequence, 'sequence');
-          if (current.status === 'IN_PROGRESS') {
-            throw new ValidationError('An in-progress match cannot be reordered.', 'sequence');
-          }
-          const matches = await client.matches.listByStage(current.stageId);
-          if (matches.some((match) => match.sequence === command.sequence && match.id !== id)) {
-            throw new ConflictError('Another match already occupies this sequence.');
-          }
+        const matches = await client.matches.listByStage(current.stageId);
+        if (matches.some((match) => match.sequence === command.sequence && match.id !== id)) {
+          throw new ConflictError('Another match already occupies this sequence.');
         }
+        data.sequence = command.sequence;
+      }
 
-        assertOptionalPositive(command.roundNumber, 'roundNumber');
-        assertOptionalPositive(command.matchNumber, 'matchNumber');
+      assertOptionalPositive(command.roundNumber, 'roundNumber');
+      assertOptionalPositive(command.matchNumber, 'matchNumber');
 
-        const data: {
-          sequence?: number;
-          roundNumber?: number | null;
-          matchNumber?: number | null;
-        } = {};
+      if (command.roundNumber !== undefined) {
+        data.roundNumber = command.roundNumber;
+      }
+      if (command.matchNumber !== undefined) {
+        data.matchNumber = command.matchNumber;
+      }
 
-        if (command.sequence !== undefined) {
-          data.sequence = command.sequence;
-        }
-        if (command.roundNumber !== undefined) {
-          data.roundNumber = command.roundNumber;
-        }
-        if (command.matchNumber !== undefined) {
-          data.matchNumber = command.matchNumber;
-        }
-
-        return client.matches.update(id, data);
-      });
+      return client.matches.update(id, data);
     },
 
     async transitionStatus(id: string, command: TransitionMatchStatusCommand): Promise<Match> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const current = await requireMatch(client, id);
-        const from: MatchStatus = current.status;
-        const to = command.status;
+      const current = await requireMatch(client, id);
+      const from: MatchStatus = current.status;
+      const to = command.status;
 
-        if (!isAllowedTransition(MATCH_TRANSITIONS, from, to)) {
-          throw new InvalidStateTransitionError('Match', from, to);
-        }
+      if (!isAllowedTransition(MATCH_TRANSITIONS, from, to)) {
+        throw new InvalidStateTransitionError('Match', from, to);
+      }
 
-        return client.matches.updateStatus(id, to);
-      });
+      return client.matches.updateStatus(id, to);
     },
 
     async getById(id: string): Promise<Match> {
-      return unitOfWork.runInTransaction(async (client) => requireMatch(client, id));
+      return requireMatch(client, id);
     },
 
     async listByStage(stageId: string): Promise<readonly Match[]> {
-      return unitOfWork.runInTransaction(async (client) => client.matches.listByStage(stageId));
+      return client.matches.listByStage(stageId);
     },
 
     async addParticipant(
@@ -142,8 +139,11 @@ export function createMatchService(unitOfWork: UnitOfWork): MatchService {
         throw new ValidationError('Slot must be either 1 or 2.', 'slot');
       }
 
-      return unitOfWork.runInTransaction(async (client) => {
-        const match = await requireMatch(client, matchId);
+      // Participant assignment evaluates the match, entry and stage, then
+      // inserts. One transaction keeps the slot/eligibility checks consistent
+      // with the insert; the compound unique indexes remain authoritative.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const match = await requireMatch(tx, matchId);
 
         if (match.status === 'COMPLETED' || match.status === 'CANCELLED') {
           throw new ValidationError(
@@ -152,12 +152,12 @@ export function createMatchService(unitOfWork: UnitOfWork): MatchService {
           );
         }
 
-        const entry = await client.entries.findById(command.entryId);
+        const entry = await tx.entries.findById(command.entryId);
         if (!entry) {
           throw new NotFoundError('Entry', command.entryId);
         }
 
-        const stage = await client.stages.findById(match.stageId);
+        const stage = await tx.stages.findById(match.stageId);
         if (!stage) {
           throw new NotFoundError('Stage', match.stageId);
         }
@@ -170,21 +170,21 @@ export function createMatchService(unitOfWork: UnitOfWork): MatchService {
         }
 
         // Eligibility: a withdrawn or disqualified entry cannot take a slot.
-        if (entry.status === 'WITHDRAWN' || entry.status === 'DISQUALIFIED') {
+        if (!ACTIVE_ENTRY_STATUSES.includes(entry.status)) {
           throw new ValidationError('This entry is not eligible to participate.', 'entryId');
         }
 
-        const existingSlot = await client.matchParticipants.findSlot(matchId, command.slot);
+        const existingSlot = await tx.matchParticipants.findSlot(matchId, command.slot);
         if (existingSlot) {
           throw new ConflictError('This slot is already occupied.');
         }
 
-        const existingEntry = await client.matchParticipants.findEntry(matchId, command.entryId);
+        const existingEntry = await tx.matchParticipants.findEntry(matchId, command.entryId);
         if (existingEntry) {
           throw new ConflictError('This entry is already a participant in this match.');
         }
 
-        return client.matchParticipants.create({
+        return tx.matchParticipants.create({
           matchId,
           entryId: command.entryId,
           slot: command.slot,
@@ -193,10 +193,8 @@ export function createMatchService(unitOfWork: UnitOfWork): MatchService {
     },
 
     async listParticipants(matchId: string): Promise<readonly MatchParticipant[]> {
-      return unitOfWork.runInTransaction(async (client) => {
-        await requireMatch(client, matchId);
-        return client.matchParticipants.listByMatch(matchId);
-      });
+      await requireMatch(client, matchId);
+      return client.matchParticipants.listByMatch(matchId);
     },
   };
 }

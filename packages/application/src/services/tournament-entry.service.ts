@@ -1,10 +1,13 @@
 import {
+  ACTIVE_ENTRY_STATUSES,
   BusinessRuleViolationError,
+  CATEGORY_REGISTRATION_STATUS,
   ConflictError,
   ENTRY_TRANSITIONS,
   InvalidStateTransitionError,
   isAllowedTransition,
   NotFoundError,
+  TOURNAMENT_REGISTRATION_STATUSES,
   ValidationError,
   type EntryStatus,
   type TournamentEntry,
@@ -36,7 +39,10 @@ export interface TournamentEntryService {
   listByCategory(categoryId: string): Promise<readonly TournamentEntry[]>;
 }
 
-export function createTournamentEntryService(unitOfWork: UnitOfWork): TournamentEntryService {
+export function createTournamentEntryService(
+  client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+): TournamentEntryService {
   return {
     async register(command: RegisterEntryCommand): Promise<TournamentEntry> {
       const competitor = resolveCompetitor(command);
@@ -45,24 +51,28 @@ export function createTournamentEntryService(unitOfWork: UnitOfWork): Tournament
         throw new ValidationError('Seed must be a positive number.', 'seed');
       }
 
-      return unitOfWork.runInTransaction(async (client) => {
-        const category = await client.categories.findById(command.categoryId);
+      // Registration reads several records, applies cross-table rules and then
+      // inserts. The whole sequence runs in one transaction so the snapshot the
+      // rules were evaluated against still holds at insert time. The database
+      // partial unique indexes remain the final consistency boundary.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const category = await tx.categories.findById(command.categoryId);
         if (!category) {
           throw new NotFoundError('Category', command.categoryId);
         }
 
-        const tournament = await client.tournaments.findById(category.tournamentId);
+        const tournament = await tx.tournaments.findById(category.tournamentId);
         if (!tournament) {
           throw new NotFoundError('Tournament', category.tournamentId);
         }
 
-        if (category.status !== 'OPEN') {
+        if (category.status !== CATEGORY_REGISTRATION_STATUS) {
           throw new BusinessRuleViolationError(
             `Category is not open for registration (current status ${category.status}).`,
           );
         }
 
-        if (tournament.status !== 'REGISTRATION_OPEN') {
+        if (!TOURNAMENT_REGISTRATION_STATUSES.includes(tournament.status)) {
           throw new BusinessRuleViolationError(
             `Tournament is not accepting registrations (current status ${tournament.status}).`,
           );
@@ -70,10 +80,10 @@ export function createTournamentEntryService(unitOfWork: UnitOfWork): Tournament
 
         const entry =
           competitor.kind === 'player'
-            ? await buildSinglesEntry(client, command, competitor.playerId, category.format)
-            : await buildDoublesEntry(client, command, competitor.teamId, category.format);
+            ? await buildSinglesEntry(tx, command, competitor.playerId, category.format)
+            : await buildDoublesEntry(tx, command, competitor.teamId, category.format);
 
-        return client.entries.create(entry);
+        return tx.entries.create(entry);
       });
     },
 
@@ -90,35 +100,31 @@ export function createTournamentEntryService(unitOfWork: UnitOfWork): Tournament
     },
 
     async update(id: string, command: UpdateEntryCommand): Promise<TournamentEntry> {
-      return unitOfWork.runInTransaction(async (client) => {
-        const current = await requireEntry(client, id);
+      const current = await requireEntry(client, id);
 
-        if (current.status === 'WITHDRAWN' || current.status === 'DISQUALIFIED') {
-          throw new BusinessRuleViolationError(
-            `A ${current.status.toLowerCase()} entry cannot be edited.`,
-          );
-        }
+      if (!ACTIVE_ENTRY_STATUSES.includes(current.status)) {
+        throw new BusinessRuleViolationError(
+          `A ${current.status.toLowerCase()} entry cannot be edited.`,
+        );
+      }
 
-        if (command.seed === undefined) {
-          return current;
-        }
+      if (command.seed === undefined) {
+        return current;
+      }
 
-        if (command.seed !== null && command.seed <= 0) {
-          throw new ValidationError('Seed must be a positive number.', 'seed');
-        }
+      if (command.seed !== null && command.seed <= 0) {
+        throw new ValidationError('Seed must be a positive number.', 'seed');
+      }
 
-        return client.entries.updateSeed(id, command.seed);
-      });
+      return client.entries.updateSeed(id, command.seed);
     },
 
     async getById(id: string): Promise<TournamentEntry> {
-      return unitOfWork.runInTransaction(async (client) => requireEntry(client, id));
+      return requireEntry(client, id);
     },
 
     async listByCategory(categoryId: string): Promise<readonly TournamentEntry[]> {
-      return unitOfWork.runInTransaction(async (client) =>
-        client.entries.listByCategory(categoryId),
-      );
+      return client.entries.listByCategory(categoryId);
     },
   };
 }
@@ -253,15 +259,17 @@ async function transitionEntry(
   id: string,
   to: EntryStatus,
 ): Promise<TournamentEntry> {
-  return unitOfWork.runInTransaction(async (client) => {
-    const current = await requireEntry(client, id);
+  // Read-transition-write: the lifecycle guard must be evaluated against the
+  // same snapshot the write applies to.
+  return unitOfWork.runInTransaction(async (tx) => {
+    const current = await requireEntry(tx, id);
     const from: EntryStatus = current.status;
 
     if (!isAllowedTransition(ENTRY_TRANSITIONS, from, to)) {
       throw new InvalidStateTransitionError('Entry', from, to);
     }
 
-    return client.entries.updateStatus(id, to);
+    return tx.entries.updateStatus(id, to);
   });
 }
 

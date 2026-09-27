@@ -104,21 +104,29 @@ transaction via the existing client; no second abstraction was introduced.
 
 ### Services
 
-Each service is a factory that receives a `UnitOfWork` and returns an interface
-value, so dependencies are injected and the services are testable against fake
-ports:
+Each service is a factory that returns an interface value, so dependencies are
+injected and the services are testable against fake ports:
 
-- `createTournamentService` — create/update, explicit lifecycle transitions.
-- `createTournamentCategoryService` — create/update, code normalization, status
-  transitions, entry-count guard.
-- `createPlayerService` — create/update with contact normalization.
-- `createTeamService` — create (with initial members), add/remove member,
-  membership listing.
-- `createTournamentEntryService` — `register`/`withdraw`/`confirm`/`disqualify`/
-  `update`; the keystone cross-table rules.
-- `createTournamentStageService` — create/update, sequence rules, transitions.
-- `createMatchService` — create/update, participant assignment, status
+- `createTournamentService(client)` — create/update, explicit lifecycle
   transitions.
+- `createTournamentCategoryService(client)` — create/update, code normalization,
+  status transitions, entry-count guard.
+- `createPlayerService(client)` — create/update with contact normalization.
+- `createTeamService(client, unitOfWork)` — create (with initial members),
+  add/remove member, membership listing.
+- `createTournamentEntryService(client, unitOfWork)` — `register`/`withdraw`/
+  `confirm`/`disqualify`/`update`; the keystone cross-table rules.
+- `createTournamentStageService(client)` — create/update, sequence rules,
+  transitions.
+- `createMatchService(client, unitOfWork)` — create/update, participant
+  assignment, status transitions.
+
+A service takes the default `RepositoryClient` for reads and single writes, and
+additionally takes the `UnitOfWork` **only** when it needs a multi-row atomic
+operation. Tournament, category, player and stage services therefore receive no
+transaction port at all — they cannot accidentally open an interactive
+transaction. Team, entry and match receive both because they own atomic
+operations.
 
 ## 5. Business rules (services, not repositories)
 
@@ -146,8 +154,9 @@ belongs to its tournament → category is `OPEN` → tournament is
 `REGISTRATION_OPEN` → competitor kind matches the format (and a doubles team has
 exactly two members) → no duplicate registration → create. Singles requires
 `playerId != null, teamId == null`; doubles the inverse. Seed, when supplied,
-must be positive. Entries start `PENDING`. Lifecycle: `PENDING ↔ CONFIRMED →
-WITHDRAWN|DISQUALIFIED`, terminal thereafter.
+must be positive. Entries start `PENDING`. Lifecycle: `PENDING → CONFIRMED`;
+`WITHDRAWN` and `DISQUALIFIED` are reachable from either `PENDING` or
+`CONFIRMED` and are terminal, with no transition back.
 
 **Stage.** Belongs to a category; positive, unique-per-category `sequence`; valid
 type; optional draw-size validation; `PENDING → ACTIVE → COMPLETED`. No draw
@@ -201,16 +210,34 @@ controlled application error. This is exercised by the concurrency test in §9.
 
 ## 8. Transaction boundaries
 
-Transactions wrap the multi-write operations:
+An interactive transaction is opened **only** where more than one row must be
+observed and/or written atomically. Reads and single-write operations use the
+plain `RepositoryClient`, so they never hold a database transaction open.
 
-- team creation together with its initial members;
-- tournament-entry registration (read checks + insert);
-- member add/remove where more than one row changes;
-- match participant assignment (slot/entry checks + insert);
-- lifecycle operations that update more than one record.
+Transactions wrap:
 
-Because all repository calls accept the transactional `RepositoryClient`, a
-service's writes commit or roll back atomically. Rollback is tested in §9.
+- **team creation** together with its initial member rows — a failure inserting a
+  member must not leave a partially created team;
+- **`addMember` / `removeMember`** — the membership read and the write share one
+  snapshot so the derived `position` cannot race;
+- **tournament-entry `register`** — the category/tournament/competitor/eligibility
+  reads and the insert commit together;
+- **entry lifecycle transitions** (`withdraw`/`confirm`/`disqualify`) — the guard
+  is evaluated against the same snapshot the status write applies to;
+- **match creation** — the stage read and unique-sequence check share the insert;
+- **match participant assignment** — slot/entry/stage/eligibility checks share the
+  insert.
+
+Read-only and single-write paths that are deliberately **not** transactional:
+`getById`, `listBy*`, `listMembers`, `listParticipants`, tournament/category/
+player/stage create and update, tournament/category/stage/match status
+transitions, and `update` (seed) on an entry. Each of these compiles to at most
+one write, so a transaction would add contention without adding atomicity.
+
+The unit tests in `tests/unit/application/transaction-boundaries.test.ts` assert
+this contract by counting `runInTransaction` calls: read/single-write operations
+open zero, and each atomic operation opens exactly one. Rollback is tested against
+real PostgreSQL in §9.
 
 ## 9. Testing
 
@@ -222,6 +249,9 @@ with fixtures, plus pure domain tests:
 - `application/*.service.test.ts` — tournament, category, player/team, entry and
   stage/match rules; singles/doubles compatibility; team-size and
   player-in-two-teams rules; participant slot/eligibility; lifecycle rejections.
+- `application/transaction-boundaries.test.ts` — counts `runInTransaction` calls
+  to prove reads and single writes open no transaction and each atomic operation
+  opens exactly one.
 - `validation/tournament-inputs.test.ts` — trimming, normalization, enums,
   numeric and date constraints.
 - `infrastructure/errors.test.ts` — constraint-to-application-error translation

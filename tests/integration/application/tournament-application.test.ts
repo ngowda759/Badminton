@@ -9,7 +9,7 @@ import {
   createTournamentService,
   createTournamentStageService,
 } from '@badminton/application';
-import { createPrismaUnitOfWork } from '@badminton/infrastructure';
+import { createPrismaUnitOfWork, createRepositoryClient } from '@badminton/infrastructure';
 
 import {
   createTournament as createTournamentRow,
@@ -65,15 +65,16 @@ describe.skipIf(!database)('application services against PostgreSQL', () => {
   }
 
   const prisma = database.prisma;
+  const client = createRepositoryClient(prisma);
   const unitOfWork = createPrismaUnitOfWork(prisma);
 
-  const tournaments = createTournamentService(unitOfWork);
-  const categories = createTournamentCategoryService(unitOfWork);
-  const players = createPlayerService(unitOfWork);
-  const teams = createTeamService(unitOfWork);
-  const entries = createTournamentEntryService(unitOfWork);
-  const matches = createMatchService(unitOfWork);
-  const stages = createTournamentStageService(unitOfWork);
+  const tournaments = createTournamentService(client);
+  const categories = createTournamentCategoryService(client);
+  const players = createPlayerService(client);
+  const teams = createTeamService(client, unitOfWork);
+  const entries = createTournamentEntryService(client, unitOfWork);
+  const matches = createMatchService(client, unitOfWork);
+  const stages = createTournamentStageService(client);
 
   beforeEach(async () => {
     await resetTournamentData(prisma);

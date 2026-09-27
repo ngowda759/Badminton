@@ -10,7 +10,6 @@ import {
 } from '@badminton/domain';
 
 import type { RepositoryClient } from '../repositories/index.ts';
-import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { CreatePlayerCommand, UpdatePlayerCommand } from './commands.ts';
 
 /**
@@ -28,73 +27,71 @@ export interface PlayerService {
   getById(id: string): Promise<Player>;
 }
 
-export function createPlayerService(unitOfWork: UnitOfWork): PlayerService {
+export function createPlayerService(client: RepositoryClient): PlayerService {
   return {
     async create(command: CreatePlayerCommand): Promise<Player> {
       const name = requireName(command.name);
       const email = normalizeOptionalContact(command.email, normalizeEmail);
       const phone = normalizeOptionalContact(command.phone, normalizePhone);
 
-      return unitOfWork.runInTransaction(async (client) => {
-        if (email !== null) {
-          const existing = await client.players.findByEmail(email);
-          if (existing) {
-            throw new ConflictError('A player with this email address already exists.');
-          }
+      // The lookups give a friendly error; the database partial unique indexes
+      // remain authoritative, so two single writes cannot leave a duplicate.
+      if (email !== null) {
+        const existing = await client.players.findByEmail(email);
+        if (existing) {
+          throw new ConflictError('A player with this email address already exists.');
         }
-        if (phone !== null) {
-          const existing = await client.players.findByPhone(phone);
-          if (existing) {
-            throw new ConflictError('A player with this phone number already exists.');
-          }
+      }
+      if (phone !== null) {
+        const existing = await client.players.findByPhone(phone);
+        if (existing) {
+          throw new ConflictError('A player with this phone number already exists.');
         }
+      }
 
-        return client.players.create({ name, email, phone });
-      });
+      return client.players.create({ name, email, phone });
     },
 
     async update(id: string, command: UpdatePlayerCommand): Promise<Player> {
-      return unitOfWork.runInTransaction(async (client) => {
-        await requirePlayer(client, id);
+      await requirePlayer(client, id);
 
-        const data: {
-          name?: string;
-          email?: string | null;
-          phone?: string | null;
-        } = {};
+      const data: {
+        name?: string;
+        email?: string | null;
+        phone?: string | null;
+      } = {};
 
-        if (command.name !== undefined) {
-          data.name = requireName(command.name);
-        }
+      if (command.name !== undefined) {
+        data.name = requireName(command.name);
+      }
 
-        if (command.email !== undefined) {
-          const email = normalizeOptionalContact(command.email, normalizeEmail);
-          if (email !== null) {
-            const existing = await client.players.findByEmail(email);
-            if (existing && existing.id !== id) {
-              throw new ConflictError('A player with this email address already exists.');
-            }
+      if (command.email !== undefined) {
+        const email = normalizeOptionalContact(command.email, normalizeEmail);
+        if (email !== null) {
+          const existing = await client.players.findByEmail(email);
+          if (existing && existing.id !== id) {
+            throw new ConflictError('A player with this email address already exists.');
           }
-          data.email = email;
         }
+        data.email = email;
+      }
 
-        if (command.phone !== undefined) {
-          const phone = normalizeOptionalContact(command.phone, normalizePhone);
-          if (phone !== null) {
-            const existing = await client.players.findByPhone(phone);
-            if (existing && existing.id !== id) {
-              throw new ConflictError('A player with this phone number already exists.');
-            }
+      if (command.phone !== undefined) {
+        const phone = normalizeOptionalContact(command.phone, normalizePhone);
+        if (phone !== null) {
+          const existing = await client.players.findByPhone(phone);
+          if (existing && existing.id !== id) {
+            throw new ConflictError('A player with this phone number already exists.');
           }
-          data.phone = phone;
         }
+        data.phone = phone;
+      }
 
-        return client.players.update(id, data);
-      });
+      return client.players.update(id, data);
     },
 
     async getById(id: string): Promise<Player> {
-      return unitOfWork.runInTransaction(async (client) => requirePlayer(client, id));
+      return requirePlayer(client, id);
     },
   };
 }

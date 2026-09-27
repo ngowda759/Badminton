@@ -20,7 +20,7 @@ let service: ReturnType<typeof createTournamentService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentService(repos.unitOfWork);
+  service = createTournamentService(repos.client);
 });
 
 const validInput = {

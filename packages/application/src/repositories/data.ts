@@ -85,10 +85,6 @@ export interface CreateEntryData {
   readonly status: EntryStatus;
 }
 
-export interface UpdateEntryData {
-  readonly seed?: number | null;
-}
-
 export interface CreateStageData {
   readonly categoryId: string;
   readonly name: string;

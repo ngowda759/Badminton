@@ -24,7 +24,7 @@ let service: ReturnType<typeof createTournamentEntryService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentEntryService(repos.unitOfWork);
+  service = createTournamentEntryService(repos.client, repos.unitOfWork);
 });
 
 async function openSingles(): Promise<string> {

@@ -23,8 +23,8 @@ let matches: ReturnType<typeof createMatchService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  stages = createTournamentStageService(repos.unitOfWork);
-  matches = createMatchService(repos.unitOfWork);
+  stages = createTournamentStageService(repos.client);
+  matches = createMatchService(repos.client, repos.unitOfWork);
 });
 
 async function singlesCategory(): Promise<string> {

@@ -224,11 +224,6 @@ function buildClient(state: State): RepositoryClient {
     async findById(id) {
       return state.categories.get(id);
     },
-    async findByTournamentAndCode(tournamentId, code) {
-      return [...state.categories.values()].find(
-        (row) => row.tournamentId === tournamentId && row.code === code,
-      );
-    },
     async listByTournament(tournamentId) {
       return [...state.categories.values()].filter((row) => row.tournamentId === tournamentId);
     },

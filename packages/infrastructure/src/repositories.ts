@@ -94,14 +94,6 @@ function createCategoryRepository(db: Db): TournamentCategoryRepository {
         return row ? toTournamentCategory(row) : undefined;
       });
     },
-    findByTournamentAndCode(tournamentId: string, code: string) {
-      return translatePersistenceErrors(async () => {
-        const row = await db.tournamentCategory.findUnique({
-          where: { tournamentId_code: { tournamentId, code } },
-        });
-        return row ? toTournamentCategory(row) : undefined;
-      });
-    },
     listByTournament(tournamentId: string) {
       return translatePersistenceErrors(async () => {
         const rows = await db.tournamentCategory.findMany({

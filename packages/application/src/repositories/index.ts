@@ -68,10 +68,6 @@ export interface TournamentRepository {
 export interface TournamentCategoryRepository {
   create(data: CreateCategoryData): Promise<TournamentCategory>;
   findById(id: string): Promise<TournamentCategory | undefined>;
-  findByTournamentAndCode(
-    tournamentId: string,
-    code: string,
-  ): Promise<TournamentCategory | undefined>;
   listByTournament(tournamentId: string): Promise<readonly TournamentCategory[]>;
   update(id: string, data: UpdateCategoryData): Promise<TournamentCategory>;
   updateStatus(id: string, status: CategoryStatus): Promise<TournamentCategory>;

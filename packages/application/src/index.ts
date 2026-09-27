@@ -28,7 +28,6 @@ export type {
   CreateTeamMemberData,
   CreateTournamentData,
   UpdateCategoryData,
-  UpdateEntryData,
   UpdateMatchData,
   UpdatePlayerData,
   UpdateStageData,

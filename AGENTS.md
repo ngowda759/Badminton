@@ -34,9 +34,13 @@ Phase 2.2 architecture is `docs/phase-2-2-architecture.md`.
 - Business logic never lives in route handlers or React components. Routes delegate to
   services; components delegate to hooks/clients in `lib/`.
 - Route handlers must not import Prisma. Go through `packages/database` ports.
-- Application services depend only on repository ports and `UnitOfWork`; they never import
-  Prisma, Fastify or HTTP types. Prisma lives in `packages/infrastructure` (and
-  `packages/database`). Keep business rules in services/domain, not in repositories.
+- Application services depend only on repository ports; they never import Prisma, Fastify or
+  HTTP types. Prisma lives in `packages/infrastructure` (and `packages/database`). Keep
+  business rules in services/domain, not in repositories.
+- Services take a plain `RepositoryClient` for reads and single writes and receive
+  `UnitOfWork` only when they own a multi-row atomic operation. Do not open an interactive
+  transaction for a read or a single write; add a transaction only where atomicity requires
+  it, and cover the boundary with `tests/unit/application/transaction-boundaries.test.ts`.
 - Repositories translate known Prisma constraint failures into `@badminton/domain` errors
   (never leak SQL, constraint names or stack traces). The database stays the final
   consistency boundary; pre-checks alone are not enough.

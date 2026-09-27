@@ -30,7 +30,7 @@ export interface TeamService {
   removeMember(teamId: string, playerId: string): Promise<void>;
 }
 
-export function createTeamService(unitOfWork: UnitOfWork): TeamService {
+export function createTeamService(client: RepositoryClient, unitOfWork: UnitOfWork): TeamService {
   return {
     async create(command: CreateTeamCommand): Promise<Team> {
       const name = requireName(command.name);
@@ -43,17 +43,19 @@ export function createTeamService(unitOfWork: UnitOfWork): TeamService {
         );
       }
 
-      return unitOfWork.runInTransaction(async (client) => {
+      // The team row and its member rows must commit together: if any member
+      // insert fails the team must not remain partially created.
+      return unitOfWork.runInTransaction(async (tx) => {
         for (const playerId of playerIds) {
-          const player = await client.players.findById(playerId);
+          const player = await tx.players.findById(playerId);
           if (!player) {
             throw new NotFoundError('Player', playerId);
           }
         }
 
-        const team = await client.teams.create({ name });
+        const team = await tx.teams.create({ name });
         for (const [index, playerId] of playerIds.entries()) {
-          await client.teamMembers.create({ teamId: team.id, playerId, position: index + 1 });
+          await tx.teamMembers.create({ teamId: team.id, playerId, position: index + 1 });
         }
         return team;
       });
@@ -61,58 +63,57 @@ export function createTeamService(unitOfWork: UnitOfWork): TeamService {
 
     async update(id: string, command: { name: string }): Promise<Team> {
       const name = requireName(command.name);
-      return unitOfWork.runInTransaction(async (client) => {
-        await requireTeam(client, id);
-        return client.teams.update(id, { name });
-      });
+      await requireTeam(client, id);
+      return client.teams.update(id, { name });
     },
 
     async getById(id: string): Promise<Team> {
-      return unitOfWork.runInTransaction(async (client) => requireTeam(client, id));
+      return requireTeam(client, id);
     },
 
     async listMembers(teamId: string): Promise<readonly TeamMember[]> {
-      return unitOfWork.runInTransaction(async (client) => {
-        await requireTeam(client, teamId);
-        return client.teamMembers.listByTeam(teamId);
-      });
+      await requireTeam(client, teamId);
+      return client.teamMembers.listByTeam(teamId);
     },
 
     async addMember(teamId: string, command: AddTeamMemberCommand): Promise<TeamMember> {
-      return unitOfWork.runInTransaction(async (client) => {
-        await requireTeam(client, teamId);
+      // Read (members) then write (insert): the read and write are kept in one
+      // transaction so a concurrent membership change cannot leave the derived
+      // position inconsistent.
+      return unitOfWork.runInTransaction(async (tx) => {
+        await requireTeam(tx, teamId);
 
-        const player = await client.players.findById(command.playerId);
+        const player = await tx.players.findById(command.playerId);
         if (!player) {
           throw new NotFoundError('Player', command.playerId);
         }
 
-        const existing = await client.teamMembers.findMembership(teamId, command.playerId);
+        const existing = await tx.teamMembers.findMembership(teamId, command.playerId);
         if (existing) {
           throw new ConflictError('This player is already a member of the team.');
         }
 
-        const members = await client.teamMembers.listByTeam(teamId);
+        const members = await tx.teamMembers.listByTeam(teamId);
         const position = command.position ?? nextPosition(members);
 
         if (members.some((member) => member.position === position)) {
           throw new ConflictError('Another team member already occupies this position.');
         }
 
-        return client.teamMembers.create({ teamId, playerId: command.playerId, position });
+        return tx.teamMembers.create({ teamId, playerId: command.playerId, position });
       });
     },
 
     async removeMember(teamId: string, playerId: string): Promise<void> {
-      await unitOfWork.runInTransaction(async (client) => {
-        await requireTeam(client, teamId);
+      await unitOfWork.runInTransaction(async (tx) => {
+        await requireTeam(tx, teamId);
 
-        const existing = await client.teamMembers.findMembership(teamId, playerId);
+        const existing = await tx.teamMembers.findMembership(teamId, playerId);
         if (!existing) {
           throw new NotFoundError('Team member', playerId);
         }
 
-        await client.teamMembers.remove(teamId, playerId);
+        await tx.teamMembers.remove(teamId, playerId);
       });
     },
   };

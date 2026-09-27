@@ -22,8 +22,8 @@ let teams: ReturnType<typeof createTeamService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  players = createPlayerService(repos.unitOfWork);
-  teams = createTeamService(repos.unitOfWork);
+  players = createPlayerService(repos.client);
+  teams = createTeamService(repos.client, repos.unitOfWork);
 });
 
 describe('PlayerService', () => {
