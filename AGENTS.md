@@ -6,19 +6,22 @@ Repository guidance for automated agents working on Badminton V2.
 
 Badminton V2 — a badminton tournament management platform. **Phases 1 (foundation),
 2 (tournament database/domain/application/infrastructure), 3 (REST API layer),
-4 (tournament setup UI), 5 (group-stage scheduling and scoring) and 6 (knockout
-stage, bracket management and progression) are implemented.**
+4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
+stage, bracket management and progression) and 7 (court management, match
+scheduling and tournament dashboard) are implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
-setup UI, group-stage match scoring/standings and the knockout bracket workflow
-exist. **Automatic draw/seeding, rankings, scheduling/court/venue management,
-authentication and result-correction workflows are not implemented.** Do not add
+setup UI, group-stage match scoring/standings, the knockout bracket workflow and
+the Phase 7 operational layer (courts, scheduling, court board and dashboard)
+exist. **Automatic draw/seeding, rankings, authentication, authorization,
+result-correction workflows and realtime are not implemented.** Do not add
 those unless the task explicitly asks for a later phase. The authoritative design is
 `docs/phase-2-domain-design.md`; the Phase 2.2 architecture is
 `docs/phase-2-2-architecture.md`; the REST API reference is
 `docs/phase-3-rest-api.md`; Phase 5 scoring is `docs/phase-5-group-scoring.md`;
-Phase 6 knockout is `docs/phase-6-knockout.md`.
+Phase 6 knockout is `docs/phase-6-knockout.md`; Phase 7 courts/scheduling/dashboard
+is `docs/phase-7-courts-dashboard.md`.
 
 ## Layout
 
@@ -104,3 +107,19 @@ database — integration tests use `app.inject()` with stub probes.
   `npm run db:generate` after a fresh clone.
 - The seed is idempotent: Phase 2 fixtures upsert on fixed UUIDs and metadata on its key.
   Running it twice must not duplicate rows; never replace the upserts with `create`.
+- Phase 7 scheduling conflicts are enforced by a PostgreSQL GiST `EXCLUDE` constraint
+  (`matches_court_schedule_no_overlap`) over `courtId` + `tstzrange(start, end, '[)')`, plus
+  `matches_schedule_fields_consistent` / `matches_schedule_range_valid` `CHECK`s. They are
+  hand-written in the `add_courts_scheduling` migration (Prisma cannot express them; the
+  `btree_gist` extension is required). The infrastructure layer translates the `23P01`
+  exclusion violation into a domain `ConflictError`. Application pre-checks give friendly
+  messages but are not the concurrency boundary — do not remove the constraint or replace
+  the migration.
+- Scheduling is a `[start, end)` half-open interval: adjacent matches (10:00–10:30 and
+  10:30–11:00) do not conflict. All three schedule fields (`courtId`, `scheduledStartAt`,
+  `scheduledEndAt`) are set together or all `NULL`; a partially scheduled match is rejected
+  by the database.
+- The dashboard (`TournamentDashboardService`) is a read-only derived model. It must not
+  persist anything and must not fan out into per-match queries — competitor names come from
+  two batched `listByIds` reads, and matches/courts/categories/stages/entries are each
+  loaded once per tournament.

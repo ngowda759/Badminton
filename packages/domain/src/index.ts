@@ -22,6 +22,7 @@ export {
   ENTRY_TRANSITIONS,
   STAGE_TRANSITIONS,
   MATCH_TRANSITIONS,
+  COURT_TRANSITIONS,
   TOURNAMENT_REGISTRATION_STATUSES,
   CATEGORY_REGISTRATION_STATUS,
   ACTIVE_ENTRY_STATUSES,
@@ -53,6 +54,7 @@ export type {
   EntryStatus,
   Match,
   MatchParticipant,
+  MatchSchedule,
   MatchSlot,
   MatchStatus,
   Player,
@@ -66,6 +68,10 @@ export type {
   TournamentStage,
   TournamentStatus,
 } from './tournament.ts';
+export { COURT_STATUSES } from './court.ts';
+export type { Court, CourtStatus } from './court.ts';
+export { doScheduleWindowsOverlap, isValidScheduleRange } from './scheduling.ts';
+export type { ScheduleWindow } from './scheduling.ts';
 export {
   GAME_POINT_TARGET,
   GAME_POINT_CEILING,

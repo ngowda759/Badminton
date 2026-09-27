@@ -14,6 +14,7 @@ export const categoryIdParamSchema = z.object({ categoryId: z.uuid() });
 export const stageIdParamSchema = z.object({ stageId: z.uuid() });
 export const matchIdParamSchema = z.object({ matchId: z.uuid() });
 export const playerIdParamSchema = z.object({ playerId: z.uuid() });
+export const courtIdParamSchema = z.object({ courtId: z.uuid() });
 
 /**
  * Combines two path-parameter schemas so a nested route can validate both of

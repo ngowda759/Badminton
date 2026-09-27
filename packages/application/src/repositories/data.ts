@@ -2,6 +2,7 @@ import type {
   CategoryFormat,
   CategoryGender,
   CategoryStatus,
+  CourtStatus,
   EntryStatus,
   MatchGame,
   MatchSlot,
@@ -113,6 +114,30 @@ export interface UpdateMatchData {
   readonly sequence?: number;
   readonly roundNumber?: number | null;
   readonly matchNumber?: number | null;
+}
+
+/**
+ * The full scheduling slice for a match.
+ *
+ * All three fields are set together: the repository never persists a partial
+ * schedule, matching the database `matches_schedule_fields_consistent` CHECK.
+ */
+export interface MatchScheduleData {
+  readonly courtId: string;
+  readonly scheduledStartAt: Date;
+  readonly scheduledEndAt: Date;
+}
+
+export interface CreateCourtData {
+  readonly tournamentId: string;
+  readonly number: number;
+  readonly name: string;
+  readonly status: CourtStatus;
+}
+
+export interface UpdateCourtData {
+  readonly number?: number;
+  readonly name?: string;
 }
 
 export interface CreateMatchParticipantData {

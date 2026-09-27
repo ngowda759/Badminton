@@ -9,8 +9,11 @@ import { TeamsPage } from '@/pages/teams/teams.tsx';
 import { CategoriesPage } from '@/pages/tournaments/categories.tsx';
 import { CategoryDetailPage } from '@/pages/tournaments/category-detail.tsx';
 import { CategoryLayout } from '@/pages/tournaments/category-layout.tsx';
+import { CourtBoardPage } from '@/pages/tournaments/court-board.tsx';
+import { CourtsManagePage } from '@/pages/tournaments/courts-manage.tsx';
 import { CreateCategoryPage } from '@/pages/tournaments/create-category.tsx';
 import { CreateTournamentPage } from '@/pages/tournaments/create-tournament.tsx';
+import { TournamentDashboardPage } from '@/pages/tournaments/dashboard.tsx';
 import { EditTournamentPage } from '@/pages/tournaments/edit-tournament.tsx';
 import { EntriesPage } from '@/pages/tournaments/entries.tsx';
 import { MatchDetailPage } from '@/pages/tournaments/match-detail.tsx';
@@ -37,6 +40,9 @@ export function AppRoutes() {
 
       <Route path="/tournaments/:tournamentId" element={<TournamentLayout />}>
         <Route index element={<TournamentDetailsPage />} />
+        <Route path="dashboard" element={<TournamentDashboardPage />} />
+        <Route path="courts" element={<CourtBoardPage />} />
+        <Route path="courts/manage" element={<CourtsManagePage />} />
         <Route path="edit" element={<EditTournamentPage />} />
         <Route path="categories" element={<CategoriesPage />} />
         <Route path="categories/new" element={<CreateCategoryPage />} />

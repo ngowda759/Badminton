@@ -11,6 +11,7 @@ export { createPrismaDatabaseProbe, type DatabaseProbe } from './probe.ts';
 export { createPrismaClient } from './prisma-client.ts';
 export { Prisma, PrismaClient } from '../generated/prisma/client.ts';
 export type {
+  Court as PrismaCourt,
   Match as PrismaMatch,
   MatchGame as PrismaMatchGame,
   MatchParticipant as PrismaMatchParticipant,

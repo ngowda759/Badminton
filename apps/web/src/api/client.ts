@@ -38,6 +38,8 @@ export interface ApiClient {
   post<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>;
   patch<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>;
   delete(path: string, signal?: AbortSignal): Promise<void>;
+  /** DELETE for an endpoint that returns a `{ data }` body (e.g. unscheduling). */
+  deleteResource<T>(path: string, signal?: AbortSignal): Promise<T>;
 }
 
 export interface ApiClientOptions {
@@ -171,5 +173,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     delete: async (path, signal) => {
       await request<undefined>('DELETE', path, undefined, signal);
     },
+    deleteResource: <T>(path: string, signal?: AbortSignal) =>
+      request<T>('DELETE', path, undefined, signal),
   };
 }

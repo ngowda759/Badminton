@@ -7,6 +7,7 @@
  */
 export type {
   RepositoryClient,
+  CourtRepository,
   TournamentRepository,
   TournamentCategoryRepository,
   PlayerRepository,
@@ -21,17 +22,20 @@ export type {
 } from './repositories/index.ts';
 export type {
   CreateCategoryData,
+  CreateCourtData,
   CreateEntryData,
   CreateMatchData,
   CreateMatchGameData,
   CreateMatchParticipantData,
   MatchGameWithMatch,
+  MatchScheduleData,
   CreatePlayerData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
   UpdateCategoryData,
+  UpdateCourtData,
   UpdateMatchData,
   UpdatePlayerData,
   UpdateStageData,
@@ -44,6 +48,7 @@ export type {
   AddMatchParticipantCommand,
   AddTeamMemberCommand,
   CreateCategoryCommand,
+  CreateCourtCommand,
   CreateMatchCommand,
   CreatePlayerCommand,
   CreateStageCommand,
@@ -54,11 +59,14 @@ export type {
   RecordMatchGameCommand,
   RecordMatchResultCommand,
   RegisterEntryCommand,
+  ScheduleMatchCommand,
   TransitionCategoryStatusCommand,
+  TransitionCourtStatusCommand,
   TransitionMatchStatusCommand,
   TransitionStageStatusCommand,
   TransitionTournamentStatusCommand,
   UpdateCategoryCommand,
+  UpdateCourtCommand,
   UpdateEntryCommand,
   UpdateMatchCommand,
   UpdatePlayerCommand,
@@ -101,3 +109,21 @@ export type {
   BracketParticipant,
   BracketRound,
 } from './services/knockout.ts';
+export { createCourtService, type CourtService } from './services/court.service.ts';
+export {
+  createMatchSchedulingService,
+  type MatchSchedulingService,
+} from './services/match-scheduling.service.ts';
+export {
+  createTournamentDashboardService,
+  type TournamentDashboardService,
+} from './services/tournament-dashboard.service.ts';
+export type {
+  DashboardCategoryProgress,
+  DashboardCompetitor,
+  DashboardCourt,
+  DashboardMatch,
+  DashboardStageProgress,
+  DashboardSummary,
+  TournamentDashboard,
+} from './services/dashboard.ts';

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 
 import type {
   CreateCategoryData,
+  CreateCourtData,
   CreateEntryData,
   CreateMatchData,
   CreateMatchGameData,
@@ -13,9 +14,11 @@ import type {
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  CourtRepository,
   MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
+  MatchScheduleData,
   PlayerRepository,
   RepositoryClient,
   TeamMemberRepository,
@@ -26,6 +29,7 @@ import type {
   TournamentStageRepository,
   UnitOfWork,
   UpdateCategoryData,
+  UpdateCourtData,
   UpdateMatchData,
   UpdatePlayerData,
   UpdateStageData,
@@ -35,6 +39,8 @@ import type {
 import {
   ConflictError,
   type CategoryStatus,
+  type Court,
+  type CourtStatus,
   type EntryStatus,
   type Match,
   type MatchGame,
@@ -71,6 +77,7 @@ interface State {
   matches: Map<string, Match>;
   matchParticipants: Map<string, MatchParticipant>;
   matchGames: Map<string, FakeMatchGame>;
+  courts: Map<string, Court>;
 }
 
 /** A stored game; the domain `MatchGame` has no owner field, so the fake adds one. */
@@ -127,6 +134,8 @@ const FAKE_CONFLICT_MESSAGES: Readonly<Record<string, string>> = {
   match_participants_matchId_slot_key: 'This slot is already occupied in this match.',
   match_participants_matchId_entryId_key: 'This entry is already a participant in this match.',
   match_games_matchId_gameNumber_key: 'A result for this match has already been recorded.',
+  courts_tournamentId_number_key: 'A court with this number already exists in this tournament.',
+  matches_court_schedule_no_overlap: 'This court already has a match overlapping that time.',
 };
 
 function assertUnique(condition: boolean, constraint: string): void {
@@ -147,6 +156,7 @@ function emptyState(): State {
     matches: new Map(),
     matchParticipants: new Map(),
     matchGames: new Map(),
+    courts: new Map(),
   };
 }
 
@@ -162,6 +172,7 @@ function cloneState(state: State): State {
     matches: new Map(state.matches),
     matchParticipants: new Map(state.matchParticipants),
     matchGames: new Map(state.matchGames),
+    courts: new Map(state.courts),
   };
 }
 
@@ -312,6 +323,10 @@ function buildClient(state: State): RepositoryClient {
     async findByPhone(phone) {
       return [...state.players.values()].find((row) => row.phone === phone);
     },
+    async listByIds(ids) {
+      const wanted = new Set(ids);
+      return [...state.players.values()].filter((row) => wanted.has(row.id));
+    },
     async update(id: string, data: UpdatePlayerData): Promise<Player> {
       const current = state.players.get(id);
       if (!current) {
@@ -331,6 +346,10 @@ function buildClient(state: State): RepositoryClient {
     },
     async findById(id) {
       return state.teams.get(id);
+    },
+    async listByIds(ids) {
+      const wanted = new Set(ids);
+      return [...state.teams.values()].filter((row) => wanted.has(row.id));
     },
     async update(id: string, data: UpdateTeamData): Promise<Team> {
       const current = state.teams.get(id);
@@ -432,6 +451,14 @@ function buildClient(state: State): RepositoryClient {
     async listByCategory(categoryId) {
       return [...state.entries.values()].filter((row) => row.categoryId === categoryId);
     },
+    async listByTournament(tournamentId) {
+      const categoryIds = new Set(
+        [...state.categories.values()]
+          .filter((row) => row.tournamentId === tournamentId)
+          .map((row) => row.id),
+      );
+      return [...state.entries.values()].filter((row) => categoryIds.has(row.categoryId));
+    },
     async updateSeed(id, seed) {
       const current = state.entries.get(id);
       if (!current) {
@@ -475,6 +502,14 @@ function buildClient(state: State): RepositoryClient {
     async listByCategory(categoryId) {
       return [...state.stages.values()].filter((row) => row.categoryId === categoryId);
     },
+    async listByTournament(tournamentId) {
+      const categoryIds = new Set(
+        [...state.categories.values()]
+          .filter((row) => row.tournamentId === tournamentId)
+          .map((row) => row.id),
+      );
+      return [...state.stages.values()].filter((row) => categoryIds.has(row.categoryId));
+    },
     async update(id: string, data: UpdateStageData): Promise<TournamentStage> {
       const current = state.stages.get(id);
       if (!current) {
@@ -507,6 +542,9 @@ function buildClient(state: State): RepositoryClient {
         id: nextId('match'),
         ...data,
         winnerEntryId: null,
+        courtId: null,
+        scheduledStartAt: null,
+        scheduledEndAt: null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -566,6 +604,76 @@ function buildClient(state: State): RepositoryClient {
       };
       state.matches.set(id, updated);
       return updated;
+    },
+    async schedule(id: string, data: MatchScheduleData) {
+      const current = state.matches.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      // Mirrors the PostgreSQL exclusion constraint: a court cannot hold two
+      // matches whose windows overlap. Keeps the fake a faithful boundary.
+      const overlaps = [...state.matches.values()].some(
+        (row) =>
+          row.id !== id &&
+          row.courtId === data.courtId &&
+          row.scheduledStartAt !== null &&
+          row.scheduledEndAt !== null &&
+          row.scheduledStartAt.getTime() < data.scheduledEndAt.getTime() &&
+          data.scheduledStartAt.getTime() < row.scheduledEndAt.getTime(),
+      );
+      assertUnique(!overlaps, 'matches_court_schedule_no_overlap');
+
+      const updated: Match = {
+        ...current,
+        courtId: data.courtId,
+        scheduledStartAt: data.scheduledStartAt,
+        scheduledEndAt: data.scheduledEndAt,
+        updatedAt: now(),
+      };
+      state.matches.set(id, updated);
+      return updated;
+    },
+    async unschedule(id: string) {
+      const current = state.matches.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      const updated: Match = {
+        ...current,
+        courtId: null,
+        scheduledStartAt: null,
+        scheduledEndAt: null,
+        updatedAt: now(),
+      };
+      state.matches.set(id, updated);
+      return updated;
+    },
+    async listByTournament(tournamentId) {
+      const categoryIds = new Set(
+        [...state.categories.values()]
+          .filter((row) => row.tournamentId === tournamentId)
+          .map((row) => row.id),
+      );
+      const stageIds = new Set(
+        [...state.stages.values()]
+          .filter((row) => categoryIds.has(row.categoryId))
+          .map((row) => row.id),
+      );
+      return [...state.matches.values()].filter((row) => stageIds.has(row.stageId));
+    },
+    async findOverlappingSchedule(courtId, startAt, endAt, excludeMatchId) {
+      return [...state.matches.values()].find(
+        (row) =>
+          row.courtId === courtId &&
+          row.id !== excludeMatchId &&
+          row.scheduledStartAt !== null &&
+          row.scheduledEndAt !== null &&
+          row.scheduledStartAt.getTime() < endAt.getTime() &&
+          startAt.getTime() < row.scheduledEndAt.getTime(),
+      );
+    },
+    async listByCourt(courtId) {
+      return [...state.matches.values()].filter((row) => row.courtId === courtId);
     },
   };
 
@@ -674,6 +782,62 @@ function buildClient(state: State): RepositoryClient {
     },
   };
 
+  const courts: CourtRepository = {
+    async create(data: CreateCourtData): Promise<Court> {
+      assertUnique(
+        ![...state.courts.values()].some(
+          (row) => row.tournamentId === data.tournamentId && row.number === data.number,
+        ),
+        'courts_tournamentId_number_key',
+      );
+      const row: Court = {
+        id: nextId('court'),
+        ...data,
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      state.courts.set(row.id, row);
+      return row;
+    },
+    async findById(id) {
+      return state.courts.get(id);
+    },
+    async listByTournament(tournamentId) {
+      return [...state.courts.values()]
+        .filter((row) => row.tournamentId === tournamentId)
+        .sort((left, right) => left.number - right.number);
+    },
+    async update(id: string, data: UpdateCourtData): Promise<Court> {
+      const current = state.courts.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      if (data.number !== undefined) {
+        assertUnique(
+          ![...state.courts.values()].some(
+            (row) =>
+              row.tournamentId === current.tournamentId &&
+              row.number === data.number &&
+              row.id !== id,
+          ),
+          'courts_tournamentId_number_key',
+        );
+      }
+      const updated: Court = { ...current, ...data, updatedAt: now() };
+      state.courts.set(id, updated);
+      return updated;
+    },
+    async updateStatus(id: string, status: CourtStatus) {
+      const current = state.courts.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      const updated: Court = { ...current, status, updatedAt: now() };
+      state.courts.set(id, updated);
+      return updated;
+    },
+  };
+
   return {
     tournaments,
     categories,
@@ -685,6 +849,7 @@ function buildClient(state: State): RepositoryClient {
     matches,
     matchParticipants,
     matchGames,
+    courts,
   };
 }
 

@@ -1,4 +1,5 @@
 import type { TransitionTable } from './lifecycle.ts';
+import type { CourtStatus } from './court.ts';
 import type {
   CategoryStatus,
   EntryStatus,
@@ -49,6 +50,16 @@ export const MATCH_TRANSITIONS: TransitionTable<MatchStatus> = {
   IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
   COMPLETED: [],
   CANCELLED: [],
+};
+
+/**
+ * Court status has no terminal state: a court may always be reactivated or
+ * taken out of service, because deactivating one never destroys its historical
+ * matches.
+ */
+export const COURT_TRANSITIONS: TransitionTable<CourtStatus> = {
+  ACTIVE: ['INACTIVE'],
+  INACTIVE: ['ACTIVE'],
 };
 
 /** Tournament states in which registration is permitted. */

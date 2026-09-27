@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { useCategory } from '@/components/tournaments/context.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
 import { MatchResultSummary } from '@/components/tournaments/match-result-summary.tsx';
+import { MatchSchedulePanel } from '@/components/tournaments/match-schedule-panel.tsx';
 import { MatchScoring } from '@/components/tournaments/match-scoring.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
@@ -135,6 +136,14 @@ export function MatchDetailPage() {
           />
         </CardContent>
       </Card>
+
+      <MatchSchedulePanel
+        match={match}
+        tournamentId={tournament.id}
+        onChanged={() => {
+          matchQuery.refetch();
+        }}
+      />
 
       <Card>
         <CardHeader>

@@ -169,6 +169,7 @@ export async function resetTournamentData(prisma: PrismaClient): Promise<void> {
   await prisma.teamMember.deleteMany();
   await prisma.team.deleteMany();
   await prisma.player.deleteMany();
+  await prisma.court.deleteMany();
   await prisma.tournamentCategory.deleteMany();
   await prisma.tournament.deleteMany();
 }
@@ -291,11 +292,38 @@ export function createStage(prisma: PrismaClient, input: StageInput) {
 interface MatchInput {
   readonly stageId: string;
   readonly sequence?: number;
+  readonly courtId?: string | null;
+  readonly scheduledStartAt?: Date | null;
+  readonly scheduledEndAt?: Date | null;
 }
 
 export function createMatch(prisma: PrismaClient, input: MatchInput) {
   return prisma.match.create({
-    data: { stageId: input.stageId, sequence: input.sequence ?? 1 },
+    data: {
+      stageId: input.stageId,
+      sequence: input.sequence ?? 1,
+      courtId: input.courtId ?? null,
+      scheduledStartAt: input.scheduledStartAt ?? null,
+      scheduledEndAt: input.scheduledEndAt ?? null,
+    },
+  });
+}
+
+interface CourtInput {
+  readonly tournamentId: string;
+  readonly number?: number;
+  readonly name?: string;
+  readonly status?: 'ACTIVE' | 'INACTIVE';
+}
+
+export function createCourt(prisma: PrismaClient, input: CourtInput) {
+  return prisma.court.create({
+    data: {
+      tournamentId: input.tournamentId,
+      number: input.number ?? 1,
+      name: input.name ?? 'Court 1',
+      status: input.status ?? 'ACTIVE',
+    },
   });
 }
 

@@ -10,6 +10,7 @@ export { healthResponseSchema, parseHealthResponse } from './health.ts';
 
 export {
   categoryIdParamSchema,
+  courtIdParamSchema,
   idParamSchema,
   matchIdParamSchema,
   mergeParams,
@@ -29,6 +30,19 @@ export {
   type StageTransitionInput,
   type TournamentTransitionInput,
 } from './tournament/transitions.ts';
+
+export {
+  courtNameSchema,
+  courtTransitionInputSchema,
+  createCourtInputSchema,
+  scheduleMatchInputSchema,
+  scheduledInstantSchema,
+  updateCourtInputSchema,
+  type CourtTransitionInput,
+  type CreateCourtInput,
+  type ScheduleMatchInput,
+  type UpdateCourtInput,
+} from './tournament/courts.ts';
 
 export {
   calendarDateSchema,

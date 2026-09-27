@@ -9,6 +9,8 @@ import type {
   BracketDto,
   BracketMatchDto,
   CategoryDto,
+  CourtDto,
+  DashboardMatchDto,
   EntryDto,
   MatchDto,
   MatchGameDto,
@@ -19,6 +21,7 @@ import type {
   StandingRowDto,
   TeamDto,
   TeamMemberDto,
+  TournamentDashboardDto,
   TournamentDto,
 } from '@/api/types.ts';
 import { RecentProvider } from '@/hooks/use-recent.tsx';
@@ -130,8 +133,77 @@ export function makeMatch(overrides: Partial<MatchDto> = {}): MatchDto {
     matchNumber: null,
     status: 'SCHEDULED',
     winnerEntryId: null,
+    courtId: null,
+    scheduledStartAt: null,
+    scheduledEndAt: null,
     createdAt: ISO,
     updatedAt: ISO,
+    ...overrides,
+  };
+}
+
+export function makeCourt(overrides: Partial<CourtDto> = {}): CourtDto {
+  return {
+    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    tournamentId: '11111111-1111-4111-8111-111111111111',
+    number: 1,
+    name: 'Court 1',
+    status: 'ACTIVE',
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  };
+}
+
+export function makeDashboardMatch(overrides: Partial<DashboardMatchDto> = {}): DashboardMatchDto {
+  return {
+    matchId: '88888888-8888-4888-8888-888888888888',
+    status: 'SCHEDULED',
+    categoryId: '22222222-2222-4222-8222-222222222222',
+    categoryName: 'Men Singles',
+    stageId: '77777777-7777-4777-8777-777777777777',
+    stageName: 'Group A',
+    courtId: null,
+    courtName: null,
+    courtNumber: null,
+    scheduledStartAt: null,
+    scheduledEndAt: null,
+    participants: [
+      { entryId: '66666666-6666-4666-8666-666666666666', name: 'Alice', slot: 1 },
+      { entryId: '66666666-6666-4666-8666-666666666667', name: 'Bob', slot: 2 },
+    ],
+    winnerEntryId: null,
+    ...overrides,
+  };
+}
+
+export function makeDashboard(
+  overrides: Partial<TournamentDashboardDto> = {},
+): TournamentDashboardDto {
+  return {
+    tournament: makeTournament(),
+    summary: {
+      totalEntries: 4,
+      totalMatches: 6,
+      completedMatches: 2,
+      inProgressMatches: 1,
+      scheduledMatches: 2,
+      unscheduledMatches: 1,
+    },
+    courts: [
+      {
+        courtId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        number: 1,
+        name: 'Court 1',
+        status: 'ACTIVE',
+        busy: true,
+      },
+    ],
+    liveMatches: [],
+    upcomingMatches: [],
+    recentResults: [],
+    unscheduledMatches: [],
+    categories: [],
     ...overrides,
   };
 }
@@ -290,6 +362,18 @@ export function createStubApi(): Mocked<BadmintonApi> {
       addParticipant: vi.fn(() => Promise.resolve(makeParticipant())),
       recordResult: vi.fn(() => Promise.resolve(makeMatchResult())),
       getResult: vi.fn(() => Promise.resolve(null as MatchResultDto | null)),
+      schedule: vi.fn(() => Promise.resolve(makeMatch())),
+      unschedule: vi.fn(() => Promise.resolve(makeMatch())),
+    },
+    courts: {
+      listByTournament: vi.fn(() => Promise.resolve([] as readonly CourtDto[])),
+      create: vi.fn(() => Promise.resolve(makeCourt())),
+      get: vi.fn(() => Promise.resolve(makeCourt())),
+      update: vi.fn(() => Promise.resolve(makeCourt())),
+      transition: vi.fn(() => Promise.resolve(makeCourt())),
+    },
+    dashboard: {
+      get: vi.fn(() => Promise.resolve(makeDashboard())),
     },
   };
 }

@@ -93,6 +93,11 @@ enum MatchStatus {
   CANCELLED
 }
 
+enum CourtStatus {
+  ACTIVE
+  INACTIVE
+}
+
 model Tournament {
   id          String               @id @default(uuid()) @db.Uuid
   name        String
@@ -103,6 +108,7 @@ model Tournament {
   timezone    String
   status      TournamentStatus     @default(DRAFT)
   categories  TournamentCategory[]
+  courts      Court[]
   createdAt   DateTime             @default(now()) @db.Timestamptz(3)
   updatedAt   DateTime             @updatedAt @db.Timestamptz(3)
 
@@ -209,23 +215,29 @@ model TournamentStage {
 }
 
 model Match {
-  id            String             @id @default(uuid()) @db.Uuid
-  stageId       String             @db.Uuid
-  stage         TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
-  sequence      Int                @db.SmallInt
-  roundNumber   Int?               @db.SmallInt
-  matchNumber   Int?
-  status        MatchStatus        @default(SCHEDULED)
-  winnerEntryId String?            @db.Uuid
-  winnerEntry   TournamentEntry?   @relation("MatchWinner", fields: [winnerEntryId], references: [id], onDelete: Restrict)
-  participants  MatchParticipant[]
-  games         MatchGame[]
-  createdAt     DateTime           @default(now()) @db.Timestamptz(3)
-  updatedAt     DateTime           @updatedAt @db.Timestamptz(3)
+  id               String             @id @default(uuid()) @db.Uuid
+  stageId          String             @db.Uuid
+  stage            TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  sequence         Int                @db.SmallInt
+  roundNumber      Int?               @db.SmallInt
+  matchNumber      Int?
+  status           MatchStatus        @default(SCHEDULED)
+  winnerEntryId    String?            @db.Uuid
+  winnerEntry      TournamentEntry?   @relation("MatchWinner", fields: [winnerEntryId], references: [id], onDelete: Restrict)
+  courtId          String?            @db.Uuid
+  court            Court?             @relation(fields: [courtId], references: [id], onDelete: Restrict)
+  scheduledStartAt DateTime?          @db.Timestamptz(3)
+  scheduledEndAt   DateTime?          @db.Timestamptz(3)
+  participants     MatchParticipant[]
+  games            MatchGame[]
+  createdAt        DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime           @updatedAt @db.Timestamptz(3)
 
   @@unique([stageId, sequence])
   @@index([status])
   @@index([winnerEntryId])
+  @@index([courtId, scheduledStartAt])
+  @@index([scheduledStartAt])
   @@map("matches")
 }
 
@@ -267,4 +279,29 @@ model MatchGame {
 
   @@unique([matchId, gameNumber])
   @@map("match_games")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 - court management and match scheduling
+// ---------------------------------------------------------------------------
+
+// A physical court within a tournament. Court numbers are unique per tournament
+// and `status` is the only lifecycle state; "busy" is derived from the matches
+// scheduled on the court. The scheduling overlap invariant (two matches on the
+// same court must not overlap in time) is a PostgreSQL GiST exclusion constraint
+// that Prisma cannot express, added in the `add_courts_scheduling` migration.
+model Court {
+  id           String      @id @default(uuid()) @db.Uuid
+  tournamentId String      @db.Uuid
+  tournament   Tournament  @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+  number       Int         @db.SmallInt
+  name         String
+  status       CourtStatus @default(ACTIVE)
+  matches      Match[]
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @db.Timestamptz(3)
+
+  @@unique([tournamentId, number])
+  @@index([tournamentId, status])
+  @@map("courts")
 }
