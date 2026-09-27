@@ -221,12 +221,26 @@ from the stored games.
 ## 8. Standings calculation
 
 Standings are **derived, never stored**. `StandingsService.getStageStandings`
-reads the completed matches of the stage's category (only GROUP stages have
-standings), resolves participants and games in two batched queries (no N+1) and
-hands the data to the pure `calculateStandings` domain function.
+reads the completed matches of **the requested stage only** (only GROUP stages
+have standings), resolves participants and games in two batched queries (no N+1)
+and hands the data to the pure `calculateStandings` domain function.
 
-Every active category entry appears, even before playing, so the full group is
-visible from the start.
+The table is **scoped to the requested group stage**:
+
+- Completed matches are loaded with `MatchRepository.listCompletedByStage`
+  (`status = COMPLETED AND stageId = :stageId`). Completed matches belonging to
+  other stages of the same category — another GROUP group or a KNOCKOUT stage —
+  are **never** included, so each group table is independent.
+- Only **active** category entries appear. The active set comes from the domain
+  `ACTIVE_ENTRY_STATUSES` definition (`PENDING`, `CONFIRMED`); `WITHDRAWN` and
+  `DISQUALIFIED` entries are excluded. Because the pure function defensively
+  includes any entry it finds in a match, the service filters its output down to
+  the active set — a completed result cannot resurrect a withdrawn competitor.
+- Every active entry appears from zero before it has played, so the full group is
+  visible from the start.
+
+Standings remain **derived and read-only**; they are recomputed from completed
+matches on every request and are not persisted.
 
 Per competitor: `played`, `won`, `lost`, `points` (2 for a win, 1 for a loss),
 `gamesWon`, `gamesLost`, `gameDifference`, `pointsFor`, `pointsAgainst`,

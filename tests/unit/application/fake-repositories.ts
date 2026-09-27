@@ -519,14 +519,9 @@ function buildClient(state: State): RepositoryClient {
     async listByStage(stageId) {
       return [...state.matches.values()].filter((row) => row.stageId === stageId);
     },
-    async listCompletedByCategory(categoryId) {
-      const stageIds = new Set(
-        [...state.stages.values()]
-          .filter((stage) => stage.categoryId === categoryId)
-          .map((stage) => stage.id),
-      );
+    async listCompletedByStage(stageId) {
       return [...state.matches.values()].filter(
-        (row) => row.status === 'COMPLETED' && stageIds.has(row.stageId),
+        (row) => row.status === 'COMPLETED' && row.stageId === stageId,
       );
     },
     async update(id: string, data: UpdateMatchData): Promise<Match> {

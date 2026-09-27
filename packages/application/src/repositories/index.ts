@@ -134,8 +134,8 @@ export interface MatchRepository {
   create(data: CreateMatchData): Promise<Match>;
   findById(id: string): Promise<Match | undefined>;
   listByStage(stageId: string): Promise<readonly Match[]>;
-  /** Completed matches only, for a whole category (drives group standings). */
-  listCompletedByCategory(categoryId: string): Promise<readonly Match[]>;
+  /** Completed matches only, scoped to one stage (drives group standings). */
+  listCompletedByStage(stageId: string): Promise<readonly Match[]>;
   update(id: string, data: UpdateMatchData): Promise<Match>;
   updateStatus(id: string, status: MatchStatus): Promise<Match>;
   /** Writes the derived winner and the terminal status in one update. */

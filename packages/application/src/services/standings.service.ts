@@ -1,4 +1,5 @@
 import {
+  ACTIVE_ENTRY_STATUSES,
   BusinessRuleViolationError,
   calculateStandings,
   NotFoundError,
@@ -14,12 +15,14 @@ import type { RepositoryClient } from '../repositories/index.ts';
  * Group standings service.
  *
  * Standings are derived, never stored: the service reads the completed matches
- * of a stage's category, resolves each match's two participants and its games
- * in two batched queries (no N+1), then hands the data to the pure
+ * **of the requested stage**, resolves each match's two participants and its
+ * games in two batched queries (no N+1), then hands the data to the pure
  * `calculateStandings` domain function.
  *
- * Every active entry in the category appears in the table, even before it has
- * played, so an operator sees the full group from the start.
+ * Only active entries of the stage's category appear in the table - a
+ * withdrawn or disqualified entry is excluded even if it played earlier
+ * matches - and every active entry appears from zero before it has played, so
+ * an operator sees the full group from the start.
  */
 export interface StandingsService {
   /** Standings for a GROUP stage. Throws for a non-group stage. */
@@ -38,11 +41,16 @@ export function createStandingsService(client: RepositoryClient): StandingsServi
       }
 
       const entries = await client.entries.listByCategory(stage.categoryId);
-      const entryIds = entries.map((entry) => entry.id);
+      // Standings are scoped to the stage and its active competitors only: a
+      // withdrawn or disqualified entry no longer occupies a place, so it must
+      // not appear in the table even if it played earlier matches.
+      const activeEntryIds = entries
+        .filter((entry) => ACTIVE_ENTRY_STATUSES.includes(entry.status))
+        .map((entry) => entry.id);
 
-      const completed = await client.matches.listCompletedByCategory(stage.categoryId);
+      const completed = await client.matches.listCompletedByStage(stageId);
       if (completed.length === 0) {
-        return calculateStandings(entryIds, []);
+        return calculateStandings(activeEntryIds, []);
       }
 
       const matchIds = completed.map((match) => match.id);
@@ -57,7 +65,15 @@ export function createStandingsService(client: RepositoryClient): StandingsServi
         games: gamesByMatch.get(match.id) ?? [],
       }));
 
-      return calculateStandings(entryIds, matches);
+      // The pure function defensively includes any entry it finds in a match,
+      // so drop rows for entries that are no longer active - a completed result
+      // must not resurrect a withdrawn competitor in the table.
+      const active = new Set(activeEntryIds);
+      const rows = calculateStandings(activeEntryIds, matches).filter((row) =>
+        active.has(row.entryId),
+      );
+
+      return rows.map((row, index) => ({ ...row, position: index + 1 }));
     },
   };
 }

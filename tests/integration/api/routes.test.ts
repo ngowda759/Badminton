@@ -68,6 +68,52 @@ async function openCategory(
   return category.id;
 }
 
+interface StandingRowResponse {
+  readonly entryId: string;
+  readonly played: number;
+  readonly won: number;
+  readonly lost: number;
+  readonly points: number;
+  readonly gameDifference: number;
+  readonly pointDifference: number;
+}
+
+async function registerPlayer(categoryId: string, name: string): Promise<{ id: string }> {
+  const player = await api.services.players.create({ name });
+  return api.services.entries.register({ categoryId, playerId: player.id });
+}
+
+/**
+ * Registers two fresh competitors, plays them in a new match inside `stageId`
+ * and completes a 2-0 result. Returns the winning and losing entry ids.
+ */
+async function completeGroupMatch(
+  categoryId: string,
+  stageId: string,
+  label: string,
+): Promise<{ winner: string; loser: string }> {
+  const match = await api.services.matches.create(stageId, {
+    sequence: await nextMatchSequence(stageId),
+  });
+  const winner = await registerPlayer(categoryId, `Winner ${label}`);
+  const loser = await registerPlayer(categoryId, `Loser ${label}`);
+  await api.services.matches.addParticipant(match.id, { entryId: winner.id, slot: 1 });
+  await api.services.matches.addParticipant(match.id, { entryId: loser.id, slot: 2 });
+  await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+  await api.services.matchResults.recordResult(match.id, {
+    games: [
+      { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+      { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+    ],
+  });
+  return { winner: winner.id, loser: loser.id };
+}
+
+async function nextMatchSequence(stageId: string): Promise<number> {
+  const existing = await api.services.matches.listByStage(stageId);
+  return existing.length + 1;
+}
+
 describe('/api/v1 tournaments', () => {
   it('creates a tournament and returns 201 with the data envelope', async () => {
     const response = await app.inject({
@@ -1139,6 +1185,140 @@ describe('/api/v1 stage standings', () => {
     }>().data;
     const leader = rows.find((row) => row.entryId === e1.id);
     expect(leader).toMatchObject({ position: 1, played: 1, won: 1, points: 2 });
+  });
+
+  it('isolates standings to the requested stage across the category', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+
+    const stageA = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const stageB = await api.services.stages.create(categoryId, {
+      name: 'Group B',
+      type: 'GROUP',
+      sequence: 2,
+    });
+    const knockout = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 3,
+      drawSize: 4,
+    });
+
+    const playedA = await completeGroupMatch(categoryId, stageA.id, 'A');
+    const playedB = await completeGroupMatch(categoryId, stageB.id, 'B');
+    await completeGroupMatch(categoryId, knockout.id, 'C');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stageA.id}/standings`,
+    });
+    expect(response.statusCode).toBe(200);
+    const rows = response.json<{ data: StandingRowResponse[] }>().data;
+    const byEntry = new Map(rows.map((row) => [row.entryId, row]));
+
+    // Only Stage A's completed match contributes; Stage B and the knockout
+    // match are invisible here.
+    expect(byEntry.get(playedA.winner)).toMatchObject({ played: 1, won: 1, points: 2 });
+    expect(byEntry.get(playedA.loser)).toMatchObject({ played: 1, lost: 1, points: 1 });
+    expect(byEntry.get(playedB.winner)).toMatchObject({ played: 0, won: 0, points: 0 });
+    expect(byEntry.get(playedB.loser)).toMatchObject({ played: 0, lost: 0, points: 0 });
+    expect(rows.reduce((sum, row) => sum + row.played, 0)).toBe(2);
+  });
+
+  it('keeps two GROUP stages in the same category isolated', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stageA = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const stageB = await api.services.stages.create(categoryId, {
+      name: 'Group B',
+      type: 'GROUP',
+      sequence: 2,
+    });
+
+    const playedA = await completeGroupMatch(categoryId, stageA.id, 'A');
+    const playedB = await completeGroupMatch(categoryId, stageB.id, 'B');
+
+    const rowsA = (
+      await app.inject({ method: 'GET', url: `/api/v1/stages/${stageA.id}/standings` })
+    ).json<{ data: StandingRowResponse[] }>().data;
+    const rowsB = (
+      await app.inject({ method: 'GET', url: `/api/v1/stages/${stageB.id}/standings` })
+    ).json<{ data: StandingRowResponse[] }>().data;
+
+    expect(rowsA.find((row) => row.entryId === playedA.winner)).toMatchObject({
+      played: 1,
+      won: 1,
+    });
+    expect(rowsA.find((row) => row.entryId === playedB.winner)).toMatchObject({
+      played: 0,
+      won: 0,
+    });
+    expect(rowsB.find((row) => row.entryId === playedB.winner)).toMatchObject({
+      played: 1,
+      won: 1,
+    });
+    expect(rowsB.find((row) => row.entryId === playedA.winner)).toMatchObject({
+      played: 0,
+      won: 0,
+    });
+  });
+
+  it('lists only active entries: withdrawn and disqualified are excluded', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+
+    // Registration starts PENDING; confirm a couple and terminate others.
+    const confirmed = await registerPlayer(categoryId, 'Confirmed');
+    const pending = await registerPlayer(categoryId, 'Pending');
+    await api.services.entries.confirm(confirmed.id);
+    const withdrawn = await registerPlayer(categoryId, 'Withdrawn');
+    await api.services.entries.withdraw(withdrawn.id);
+    const disqualified = await registerPlayer(categoryId, 'Disqualified');
+    await api.services.entries.disqualify(disqualified.id);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/standings`,
+    });
+    expect(response.statusCode).toBe(200);
+    const ids = response.json<{ data: { entryId: string }[] }>().data.map((row) => row.entryId);
+
+    expect(ids).toContain(confirmed.id);
+    expect(ids).toContain(pending.id);
+    expect(ids).not.toContain(withdrawn.id);
+    expect(ids).not.toContain(disqualified.id);
+  });
+
+  it('excludes a withdrawn entry even after it played a completed match', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+
+    const played = await completeGroupMatch(categoryId, stage.id, 'A');
+    await api.services.entries.withdraw(played.loser);
+
+    const rows = (
+      await app.inject({ method: 'GET', url: `/api/v1/stages/${stage.id}/standings` })
+    ).json<{ data: { entryId: string }[] }>().data;
+
+    expect(rows.map((row) => row.entryId)).toEqual([played.winner]);
   });
 
   it('rejects standings for a non-group stage with 422', async () => {

@@ -51,6 +51,14 @@ async function startedMatch(
   categoryId: string,
 ): Promise<{ matchId: string; slot1: string; slot2: string }> {
   const stageId = await seedStage(repos.client, categoryId);
+  return matchInStage(categoryId, stageId);
+}
+
+/** A started match with two participants inside an existing stage. */
+async function matchInStage(
+  categoryId: string,
+  stageId: string,
+): Promise<{ matchId: string; slot1: string; slot2: string }> {
   const matchId = await seedMatch(repos.client, stageId);
   const slot1 = await entryIn(categoryId, 'Player A');
   const slot2 = await entryIn(categoryId, 'Player B');
@@ -58,6 +66,16 @@ async function startedMatch(
   await matches.addParticipant(matchId, { entryId: slot2, slot: 2 });
   await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
   return { matchId, slot1, slot2 };
+}
+
+/** Completes a fresh 2-0 match in `stageId` and returns the two entry ids. */
+async function resultInStage(
+  categoryId: string,
+  stageId: string,
+): Promise<{ slot1: string; slot2: string }> {
+  const { matchId, slot1, slot2 } = await matchInStage(categoryId, stageId);
+  await results.recordResult(matchId, { games: twoZero });
+  return { slot1, slot2 };
 }
 
 const twoZero = [
@@ -283,6 +301,92 @@ describe('StandingsService.getStageStandings', () => {
     const leader = rows.find((row) => row.entryId === slot1);
     expect(leader).toMatchObject({ position: 1, played: 1, won: 1, lost: 0, points: 2 });
     expect(leader?.gameDifference).toBe(2);
+  });
+
+  it('ignores completed matches from other stages in the same category', async () => {
+    const categoryId = await singlesCategory();
+    const stageA = await seedStage(repos.client, categoryId, { sequence: 1 });
+    const stageB = await seedStage(repos.client, categoryId, { sequence: 2 });
+    const knockout = await repos.client.stages.create({
+      categoryId,
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 3,
+      drawSize: 4,
+      status: 'PENDING',
+    });
+
+    const playedA = await resultInStage(categoryId, stageA);
+    const playedB = await resultInStage(categoryId, stageB);
+    await resultInStage(categoryId, knockout.id);
+
+    const rows = await standings.getStageStandings(stageA);
+    const byEntry = new Map(rows.map((row) => [row.entryId, row]));
+
+    // All six active entries of the category appear...
+    expect(rows).toHaveLength(6);
+    // ...but only Stage A's match counts: its two competitors each played once.
+    expect(byEntry.get(playedA.slot1)).toMatchObject({ played: 1, won: 1, points: 2 });
+    expect(byEntry.get(playedA.slot2)).toMatchObject({ played: 1, lost: 1, points: 1 });
+
+    // Stage B's completed match and the knockout match contribute nothing.
+    expect(byEntry.get(playedB.slot1)).toMatchObject({ played: 0, won: 0, points: 0 });
+    expect(byEntry.get(playedB.slot2)).toMatchObject({ played: 0, won: 0, points: 0 });
+    const totalPlayed = rows.reduce((sum, row) => sum + row.played, 0);
+    expect(totalPlayed).toBe(2);
+  });
+
+  it('keeps two GROUP stages in the same category isolated', async () => {
+    const categoryId = await singlesCategory();
+    const stageA = await seedStage(repos.client, categoryId, { sequence: 1 });
+    const stageB = await seedStage(repos.client, categoryId, { sequence: 2 });
+
+    const playedA = await resultInStage(categoryId, stageA);
+    const playedB = await resultInStage(categoryId, stageB);
+
+    const rowsA = await standings.getStageStandings(stageA);
+    const rowsB = await standings.getStageStandings(stageB);
+
+    const a1 = rowsA.find((row) => row.entryId === playedA.slot1);
+    expect(a1).toMatchObject({ played: 1, won: 1, points: 2, gameDifference: 2 });
+
+    const b1 = rowsB.find((row) => row.entryId === playedB.slot1);
+    expect(b1).toMatchObject({ played: 1, won: 1, points: 2, gameDifference: 2 });
+
+    // Neither stage reflects the other's match: each only has one played game.
+    expect(rowsA.reduce((sum, row) => sum + row.played, 0)).toBe(2);
+    expect(rowsB.reduce((sum, row) => sum + row.played, 0)).toBe(2);
+  });
+
+  it('shows only active entries and hides withdrawn or disqualified ones', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedStage(repos.client, categoryId);
+
+    const confirmed = await entryIn(categoryId, 'Confirmed');
+    const pending = await entryIn(categoryId, 'Pending');
+    const withdrawn = await entryIn(categoryId, 'Withdrawn');
+    await repos.client.entries.updateStatus(withdrawn, 'WITHDRAWN');
+    const disqualified = await entryIn(categoryId, 'Disqualified');
+    await repos.client.entries.updateStatus(disqualified, 'DISQUALIFIED');
+
+    const rows = await standings.getStageStandings(stageId);
+    const ids = rows.map((row) => row.entryId);
+
+    expect(ids).toContain(confirmed);
+    expect(ids).toContain(pending);
+    expect(ids).not.toContain(withdrawn);
+    expect(ids).not.toContain(disqualified);
+  });
+
+  it('excludes a withdrawn entry even after it played a completed match', async () => {
+    const categoryId = await singlesCategory();
+    const { matchId, slot1, slot2 } = await startedMatch(categoryId);
+    const [stage] = await repos.client.stages.listByCategory(categoryId);
+    await results.recordResult(matchId, { games: twoZero });
+    await repos.client.entries.updateStatus(slot2, 'WITHDRAWN');
+
+    const rows = await standings.getStageStandings(stage?.id ?? '');
+    expect(rows.map((row) => row.entryId)).toEqual([slot1]);
   });
 
   it('rejects standings for a non-group stage', async () => {

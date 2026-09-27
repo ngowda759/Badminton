@@ -332,10 +332,10 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
-    async listCompletedByCategory(categoryId: string) {
+    async listCompletedByStage(stageId: string) {
       return translatePersistenceErrors(async () => {
         const rows = await db.match.findMany({
-          where: { status: 'COMPLETED', stage: { categoryId } },
+          where: { status: 'COMPLETED', stageId },
           orderBy: { sequence: 'asc' },
         });
         return rows.map(toMatch);
