@@ -1,37 +1,40 @@
 import type { FastifyInstance } from 'fastify';
 
+import { isApplicationError } from '@badminton/domain';
+
+import { isRequestValidationError } from '../errors/api-error.ts';
+import { mapError } from '../errors/http-error-mapper.ts';
+
 /** Shape of every error the API returns, including unexpected failures. */
 interface ErrorResponseBody {
   readonly error: {
     readonly code: string;
     readonly message: string;
+    readonly details?: readonly { readonly path: string; readonly message: string }[];
   };
 }
 
 /**
- * Converts unhandled failures into a stable, non-leaking error envelope.
+ * Converts thrown failures into a stable, non-leaking error envelope.
  *
- * Stack traces, driver messages, SQL and filesystem paths stay in the log; the
- * client receives only a generic message plus a correlation-friendly code.
+ * Application/domain errors are mapped by the central `mapError` (see
+ * `errors/http-error-mapper.ts`), so a `ConflictError` never surfaces as a 500.
+ * Fastify's own 4xx errors (malformed JSON, unregistered content type) keep
+ * their status. Everything else becomes a generic 500 while the detail stays in
+ * the log: SQL, driver messages, stack traces and file paths never reach the
+ * client.
  */
 export function registerErrorHandler(app: FastifyInstance): void {
   app.setErrorHandler((error, request, reply) => {
-    const statusCode = toStatusCode(error);
+    const mapped = toMappedError(error);
 
-    if (statusCode >= 500) {
+    if (mapped.statusCode >= 500) {
       request.log.error({ err: error }, 'request failed');
     } else {
       request.log.warn({ err: error }, 'request rejected');
     }
 
-    const body: ErrorResponseBody = {
-      error: {
-        code: statusCode >= 500 ? 'INTERNAL_SERVER_ERROR' : toErrorCode(error),
-        message: statusCode >= 500 ? 'An unexpected error occurred.' : toErrorMessage(error),
-      },
-    };
-
-    void reply.status(statusCode).send(body);
+    void reply.status(mapped.statusCode).send(mapped.body);
   });
 
   app.setNotFoundHandler((request, reply) => {
@@ -39,6 +42,30 @@ export function registerErrorHandler(app: FastifyInstance): void {
       error: { code: 'NOT_FOUND', message: `Route ${request.method} ${request.url} not found.` },
     } satisfies ErrorResponseBody);
   });
+}
+
+function toMappedError(error: unknown): {
+  readonly statusCode: number;
+  readonly body: ErrorResponseBody;
+} {
+  if (isApplicationError(error) || isRequestValidationError(error)) {
+    return mapError(error);
+  }
+
+  const statusCode = toStatusCode(error);
+  if (statusCode < 500) {
+    return {
+      statusCode,
+      body: { error: { code: toErrorCode(error), message: toErrorMessage(error) } },
+    };
+  }
+
+  return {
+    statusCode: 500,
+    body: {
+      error: { code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred.' },
+    },
+  };
 }
 
 /** Reads Fastify's HTTP status without trusting the value's type. */

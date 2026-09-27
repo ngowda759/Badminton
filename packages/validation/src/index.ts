@@ -9,6 +9,28 @@ export { parseRequest, toValidationFailure, type ParseResult } from './parse.ts'
 export { healthResponseSchema, parseHealthResponse } from './health.ts';
 
 export {
+  categoryIdParamSchema,
+  idParamSchema,
+  matchIdParamSchema,
+  mergeParams,
+  playerIdParamSchema,
+  stageIdParamSchema,
+  teamMemberParamSchema,
+  tournamentIdParamSchema,
+} from './params.ts';
+
+export {
+  categoryTransitionInputSchema,
+  matchTransitionInputSchema,
+  stageTransitionInputSchema,
+  tournamentTransitionInputSchema,
+  type CategoryTransitionInput,
+  type MatchTransitionInput,
+  type StageTransitionInput,
+  type TournamentTransitionInput,
+} from './tournament/transitions.ts';
+
+export {
   calendarDateSchema,
   nameSchema,
   optionalTextSchema,
@@ -27,6 +49,7 @@ export {
   optionalEmailSchema,
   optionalPhoneSchema,
   registerTournamentEntryInputSchema,
+  registerEntryBodySchema,
   removeTeamMemberInputSchema,
   updateCategoryInputSchema,
   updateMatchInputSchema,

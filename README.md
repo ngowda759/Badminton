@@ -3,9 +3,11 @@
 A badminton tournament management platform, rebuilt from scratch as a typed full-stack
 monorepo.
 
-**This repository currently contains Phase 1 only — the foundation.** The monorepo,
-API, database layer, configuration, testing setup and CI are complete and verified.
-Tournament features are intentionally absent; see [Phase 1 scope](#phase-1-scope) and
+**Phases 1, 2 and 3 are implemented:** the foundation (Phase 1), the tournament
+database/domain/application layers (Phase 2), and the REST API layer (Phase 3). The
+API exposes the Phase 2 application services under `/api/v1`; see
+[docs/phase-3-rest-api.md](docs/phase-3-rest-api.md). UI tournament screens, draw
+generation, scoring and scheduling are intentionally absent; see
 [Future phases](#future-phases).
 
 ---
@@ -19,19 +21,29 @@ and a React component never talks to the database.
 React / Vite  (apps/web)
       |
       v
-Fastify API   (apps/api)
+Fastify API   (apps/api/src/http — routes, validation, error mapping)
       |
       v
-Domain / Services  (packages/domain, apps/api/src/services)
+Application services  (packages/application)
       |
       v
-Prisma        (packages/database)
+Domain rules  (packages/domain)
+      |
+      v
+Repository ports  (packages/application)
+      |
+      v
+Prisma infrastructure  (packages/infrastructure)
       |
       v
 PostgreSQL
 ```
 
-Concretely, `GET /health` flows like this:
+Application services depend only on repository ports; Prisma lives in
+`packages/infrastructure`. Routes parse, validate with Zod, delegate to a service and
+map the result — business rules stay in the domain/application layer.
+
+`GET /health` predates the domain services and is unchanged:
 
 ```
 health.route.ts            parses nothing, serialises the result, picks the HTTP status
@@ -52,9 +64,9 @@ Prisma + @prisma/adapter-pg
 PostgreSQL
 ```
 
-The payoff is testability: `buildApp()` accepts its probes as arguments, so the
-integration tests exercise the real Fastify pipeline through `app.inject()` with no
-database and no bound socket.
+The payoff is testability: `buildApp()` accepts its probes and `ApiServices` as
+arguments, so tests exercise the real Fastify pipeline through `app.inject()` — with
+fakes and no socket, or against real PostgreSQL for the vertical-slice suite.
 
 ## Repository structure
 
@@ -65,9 +77,12 @@ Badminton/
 │   │   ├── src/
 │   │   │   ├── app.ts           buildApp() factory — wired, not listening
 │   │   │   ├── server.ts        process entry point: config, listen, shutdown
+│   │   │   ├── composition/     service composition root (Prisma → services)
 │   │   │   ├── config/          validated runtime configuration
-│   │   │   ├── routes/          HTTP surface, no business logic
-│   │   │   ├── services/        business rules
+│   │   │   ├── http/            REST surface: routes, request/response helpers
+│   │   │   ├── errors/          API error model and HTTP error mapping
+│   │   │   ├── routes/          the Phase 1 health route
+│   │   │   ├── services/        the Phase 1 health service
 │   │   │   ├── plugins/         CORS, error handling
 │   │   │   └── infrastructure/  adapters (logger, database checks)
 │   │   └── package.json
@@ -84,15 +99,21 @@ Badminton/
 ├── packages/
 │   ├── domain/                  framework-free types and contracts
 │   ├── validation/              shared Zod schemas and request validation
+│   ├── application/             services, repository ports, unit of work
+│   ├── infrastructure/          Prisma repository adapters
 │   ├── database/                Prisma client, connection and probe abstraction
 │   └── config/                  environment loading and Zod validation
+├── docs/
+│   ├── phase-2-domain-design.md  authoritative domain design
+│   ├── phase-2-2-architecture.md Phase 2.2 service/port architecture
+│   └── phase-3-rest-api.md       REST API reference
 ├── prisma/
 │   ├── schema.prisma            infrastructure model only
 │   ├── migrations/              committed SQL migrations
 │   └── seed.ts                  deterministic, idempotent seed
 ├── tests/
 │   ├── unit/                    pure logic, stubbed dependencies
-│   └── integration/             real Fastify instance via app.inject()
+│   └── integration/             app.inject(); API + real-PostgreSQL suites
 ├── e2e/                         Playwright specs
 ├── .github/workflows/ci.yml     continuous integration
 ├── docker-compose.yml           local PostgreSQL
@@ -199,6 +220,41 @@ npm run dev:web
 curl http://localhost:3000/health
 ```
 
+## REST API
+
+The API exposes the tournament domain under `/api/v1`. `GET /health` is unchanged.
+PostgreSQL must be running and migrated; start it with `docker compose up -d postgres`
+then `npm run db:migrate`.
+
+- **Base URL:** `http://localhost:3000`
+- **Health:** `GET /health` → `{ "status": "ok", "database": "connected" }`
+- **Version:** `/api/v1`
+
+Endpoint groups:
+
+| Group              | Example                                                                                                                               |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Tournaments        | `POST /api/v1/tournaments`, `GET/PATCH /api/v1/tournaments/:id`, `POST /api/v1/tournaments/:id/transition`                            |
+| Categories         | `POST /api/v1/tournaments/:tournamentId/categories`, `GET/PATCH /api/v1/categories/:id`, `POST /api/v1/categories/:id/transition`     |
+| Players            | `POST /api/v1/players`, `GET/PATCH /api/v1/players/:id`                                                                               |
+| Teams and members  | `POST /api/v1/teams`, `GET /api/v1/teams/:id/members`, `POST /api/v1/teams/:id/members`, `DELETE /api/v1/teams/:id/members/:playerId` |
+| Entries            | `POST /api/v1/categories/:categoryId/entries`, `GET /api/v1/entries/:id`, `POST /api/v1/entries/:id/{confirm,withdraw,disqualify}`    |
+| Stages and matches | `POST /api/v1/categories/:categoryId/stages`, `POST /api/v1/stages/:stageId/matches`, `POST /api/v1/matches/:id/transition`           |
+| Participants       | `GET/POST /api/v1/matches/:matchId/participants`                                                                                      |
+
+Conventions:
+
+- Success is `{ "data": <resource> }` or `{ "data": [...] }`; create returns `201`,
+  read/update/transition `200`, member removal `204`.
+- Errors share one envelope: `{ "error": { "code", "message", "details"? } }`.
+  Validation is `400`, missing resources `404`, conflicts and illegal lifecycle
+  transitions `409`, cross-record rule violations `422`, unexpected failures `500`.
+- Every body and path parameter is validated with the shared Zod schemas before any
+  service runs. Business rules stay in the application/domain layer.
+
+The full endpoint table, error mapping and validation notes are in
+[docs/phase-3-rest-api.md](docs/phase-3-rest-api.md).
+
 ## Tests
 
 ```bash
@@ -262,9 +318,9 @@ are applied with `prisma migrate deploy` before the tests. No secrets live in th
 workflow: the CI database URL is an inline throwaway credential for a container that
 only exists for the duration of the job.
 
-## Phase 1 scope
+## Phase scope
 
-Implemented:
+Phase 1 — foundation:
 
 - npm workspaces monorepo with a shared strict TypeScript configuration
 - React 19 + Vite + Tailwind CSS v4 + shadcn/ui foundation
@@ -276,19 +332,39 @@ Implemented:
 - Vitest unit and integration suites, Playwright E2E
 - ESLint, Prettier, EditorConfig, GitHub Actions
 
-Intentionally **not** implemented: tournament CRUD, player registration, teams, match
-scheduling, groups, knockout brackets, scoring, ranking, court management, live scoring,
-realtime subscriptions and tournament dashboards.
+Phase 2 — tournament domain and data:
+
+- Tournaments, categories, players, teams, entries, stages, matches and match
+  participants in the Prisma schema, with migrations, constraints and indexes
+- Framework-free domain rules (lifecycles, normalization, invariants) in
+  `@badminton/domain`
+- Application services and repository ports in `@badminton/application`
+- Prisma repository adapters and Prisma-error translation in `@badminton/infrastructure`
+
+Phase 3 — REST API:
+
+- Fastify composition (`buildApp`) exposing the application services under `/api/v1`
+- Zod validation for every body and path parameter at the boundary
+- One centralized HTTP error mapper and a single error/response envelope
+- Route handlers with no Prisma, no transactions and no business logic
+- API route tests over fakes and HTTP-to-PostgreSQL vertical-slice tests
+- `/health` preserved unchanged
+
+Intentionally **not** implemented: authentication and authorization, tournament setup
+UI, draw generation, match scheduling, groups, knockout brackets, scoring, ranking,
+court management, live scoring, realtime subscriptions, dashboards, payments and
+notifications. No API OpenAPI/Swagger surface; the REST API is documented in Markdown.
 
 ## Future phases
 
 | Phase | Scope                              |
 | ----- | ---------------------------------- |
 | 1     | Foundation ✅                      |
-| 2     | Tournament domain and database     |
-| 3     | Tournament setup UI                |
-| 4     | Group-stage scheduling and scoring |
-| 5     | Knockout engine                    |
-| 6     | Live courts and dashboard          |
-| 7     | Multi-device and realtime          |
-| 8     | Deployment (Supabase + free tier)  |
+| 2     | Tournament domain and database ✅  |
+| 3     | REST API layer ✅                  |
+| 4     | Tournament setup UI                |
+| 5     | Group-stage scheduling and scoring |
+| 6     | Knockout engine                    |
+| 7     | Live courts and dashboard          |
+| 8     | Multi-device and realtime          |
+| 9     | Deployment (Supabase + free tier)  |

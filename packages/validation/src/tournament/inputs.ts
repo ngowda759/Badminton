@@ -129,6 +129,14 @@ export const registerTournamentEntryInputSchema = z.object({
   seed: positiveIntegerSchema.optional(),
 });
 
+/**
+ * Registration body for `POST /categories/:categoryId/entries`, where the
+ * category is supplied by the path rather than the body.
+ */
+export const registerEntryBodySchema = registerTournamentEntryInputSchema.omit({
+  categoryId: true,
+});
+
 export const updateTournamentEntryInputSchema = z.object({
   seed: positiveIntegerSchema.nullable().optional(),
 });
