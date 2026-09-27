@@ -813,6 +813,8 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
           'match_participants_entryId_idx',
           'match_games_matchId_gameNumber_key',
           'matches_winnerEntryId_idx',
+          'realtime_events_tournamentId_createdAt_idx',
+          'realtime_events_publishedAt_idx',
         ];
 
         expect(required.filter((name) => !names.has(name))).toEqual([]);
@@ -833,6 +835,7 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
           'match_participants',
           'matches',
           'players',
+          'realtime_events',
           'system_metadata',
           'team_members',
           'teams',

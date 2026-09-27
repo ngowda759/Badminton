@@ -162,6 +162,7 @@ export async function openTestDatabase(suffix = '_test'): Promise<TestDatabase |
  * starts from a known empty state. `system_metadata` is left untouched.
  */
 export async function resetTournamentData(prisma: PrismaClient): Promise<void> {
+  await prisma.realtimeEvent.deleteMany();
   await prisma.matchParticipant.deleteMany();
   await prisma.match.deleteMany();
   await prisma.tournamentStage.deleteMany();

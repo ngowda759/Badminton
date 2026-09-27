@@ -9,6 +9,7 @@
   "dependencies": {
     "@badminton/application": "*",
     "@badminton/database": "*",
-    "@badminton/domain": "*"
+    "@badminton/domain": "*",
+    "pg": "8.16.3"
   }
 }

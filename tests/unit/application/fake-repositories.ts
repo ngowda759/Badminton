@@ -10,6 +10,7 @@ import type {
   CreateMatchGameData,
   CreateMatchParticipantData,
   CreatePlayerData,
+  CreateRealtimeEventData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
@@ -20,6 +21,7 @@ import type {
   MatchRepository,
   MatchScheduleData,
   PlayerRepository,
+  RealtimeEventRepository,
   RepositoryClient,
   TeamMemberRepository,
   TeamRepository,
@@ -48,6 +50,7 @@ import {
   type MatchSlot,
   type MatchStatus,
   type Player,
+  type RealtimeEvent,
   type StageStatus,
   type Team,
   type TeamMember,
@@ -78,6 +81,7 @@ interface State {
   matchParticipants: Map<string, MatchParticipant>;
   matchGames: Map<string, FakeMatchGame>;
   courts: Map<string, Court>;
+  realtimeEvents: Map<string, RealtimeEvent>;
 }
 
 /** A stored game; the domain `MatchGame` has no owner field, so the fake adds one. */
@@ -157,6 +161,7 @@ function emptyState(): State {
     matchParticipants: new Map(),
     matchGames: new Map(),
     courts: new Map(),
+    realtimeEvents: new Map(),
   };
 }
 
@@ -173,6 +178,7 @@ function cloneState(state: State): State {
     matchParticipants: new Map(state.matchParticipants),
     matchGames: new Map(state.matchGames),
     courts: new Map(state.courts),
+    realtimeEvents: new Map(state.realtimeEvents),
   };
 }
 
@@ -838,6 +844,36 @@ function buildClient(state: State): RepositoryClient {
     },
   };
 
+  const realtimeEvents: RealtimeEventRepository = {
+    async create(data: CreateRealtimeEventData): Promise<RealtimeEvent> {
+      const row: RealtimeEvent = {
+        id: nextId('event'),
+        tournamentId: data.tournamentId,
+        eventType: data.eventType,
+        aggregateType: data.aggregateType,
+        aggregateId: data.aggregateId,
+        payload: data.payload ?? null,
+        occurredAt: now(),
+        publishedAt: null,
+      };
+      state.realtimeEvents.set(row.id, row);
+      return row;
+    },
+    async getPendingEvents(limit) {
+      return [...state.realtimeEvents.values()]
+        .filter((row) => row.publishedAt === null)
+        .sort((left, right) => left.occurredAt.getTime() - right.occurredAt.getTime())
+        .slice(0, limit);
+    },
+    async markPublished(id) {
+      const current = state.realtimeEvents.get(id);
+      if (!current || current.publishedAt !== null) {
+        return;
+      }
+      state.realtimeEvents.set(id, { ...current, publishedAt: now() });
+    },
+  };
+
   return {
     tournaments,
     categories,
@@ -850,6 +886,7 @@ function buildClient(state: State): RepositoryClient {
     matchParticipants,
     matchGames,
     courts,
+    realtimeEvents,
   };
 }
 

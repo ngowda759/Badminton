@@ -23,6 +23,10 @@ export interface ApiConfig {
    * forge its own IP and protocol.
    */
   readonly trustProxy: boolean;
+  /** Dispatcher outbox poll cadence (ms). */
+  readonly realtimePollIntervalMs: number;
+  /** SSE heartbeat interval (ms); configurable rather than hard-coded. */
+  readonly realtimeHeartbeatIntervalMs: number;
 }
 
 export function createApiConfig(env: ServerEnv): ApiConfig {
@@ -32,5 +36,7 @@ export function createApiConfig(env: ServerEnv): ApiConfig {
     logger: createLoggerOptions({ level: env.LOG_LEVEL, enabled: true }),
     databaseUrl: env.DATABASE_URL,
     trustProxy: env.TRUST_PROXY,
+    realtimePollIntervalMs: env.REALTIME_POLL_INTERVAL_MS,
+    realtimeHeartbeatIntervalMs: env.REALTIME_HEARTBEAT_INTERVAL_MS,
   };
 }

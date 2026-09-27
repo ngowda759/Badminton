@@ -16,6 +16,7 @@ export type {
   MatchGame as PrismaMatchGame,
   MatchParticipant as PrismaMatchParticipant,
   Player as PrismaPlayer,
+  RealtimeEvent as PrismaRealtimeEvent,
   Team as PrismaTeam,
   TeamMember as PrismaTeamMember,
   Tournament as PrismaTournament,

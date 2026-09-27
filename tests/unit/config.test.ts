@@ -23,6 +23,29 @@ describe('server environment validation', () => {
     expect(parseServerEnv({ ...VALID_ENV, TRUST_PROXY: 'false' }).TRUST_PROXY).toBe(false);
   });
 
+  it('applies realtime interval defaults and coerces supplied values', () => {
+    const defaults = parseServerEnv({ ...VALID_ENV });
+    expect(defaults.REALTIME_POLL_INTERVAL_MS).toBe(1000);
+    expect(defaults.REALTIME_HEARTBEAT_INTERVAL_MS).toBe(15000);
+
+    const env = parseServerEnv({
+      ...VALID_ENV,
+      REALTIME_POLL_INTERVAL_MS: '250',
+      REALTIME_HEARTBEAT_INTERVAL_MS: '30000',
+    });
+    expect(env.REALTIME_POLL_INTERVAL_MS).toBe(250);
+    expect(env.REALTIME_HEARTBEAT_INTERVAL_MS).toBe(30000);
+  });
+
+  it('rejects a non-positive realtime interval', () => {
+    expect(
+      serverEnvSchema.safeParse({ ...VALID_ENV, REALTIME_POLL_INTERVAL_MS: '0' }).success,
+    ).toBe(false);
+    expect(
+      serverEnvSchema.safeParse({ ...VALID_ENV, REALTIME_HEARTBEAT_INTERVAL_MS: '-1' }).success,
+    ).toBe(false);
+  });
+
   it('rejects a TRUST_PROXY value that is not exactly "true" or "false"', () => {
     // A typo must fail loudly rather than silently leaving a security-relevant
     // flag in an unexpected state.

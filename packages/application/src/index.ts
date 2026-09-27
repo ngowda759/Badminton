@@ -19,6 +19,7 @@ export type {
   MatchWithParticipants,
   MatchParticipantRepository,
   MatchGameRepository,
+  RealtimeEventRepository,
 } from './repositories/index.ts';
 export type {
   CreateCategoryData,
@@ -27,6 +28,7 @@ export type {
   CreateMatchData,
   CreateMatchGameData,
   CreateMatchParticipantData,
+  CreateRealtimeEventData,
   MatchGameWithMatch,
   MatchScheduleData,
   CreatePlayerData,
@@ -43,6 +45,22 @@ export type {
   UpdateTournamentData,
 } from './repositories/data.ts';
 export type { UnitOfWork } from './repositories/unit-of-work.ts';
+
+export { createRealtimeEventService, type RealtimeEventService } from './realtime/event.service.ts';
+export {
+  createRealtimeEventPublisher,
+  type RealtimeEventPublisher,
+  type RealtimeEventPublisherOptions,
+  type RealtimeSubscriberSink,
+} from './realtime/publisher.ts';
+export {
+  createRealtimeDispatcher,
+  type RealtimeDispatcher,
+  type RealtimeDispatcherOptions,
+  type RealtimeDispatcherScheduler,
+  type RealtimeDispatcherTimer,
+} from './realtime/dispatcher.ts';
+export { REALTIME_NOTIFY_CHANNEL, type RealtimeEventNotifier } from './realtime/notifier.ts';
 
 export type {
   AddMatchParticipantCommand,

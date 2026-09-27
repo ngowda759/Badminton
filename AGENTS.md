@@ -8,20 +8,26 @@ Badminton V2 — a badminton tournament management platform. **Phases 1 (foundat
 2 (tournament database/domain/application/infrastructure), 3 (REST API layer),
 4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
 stage, bracket management and progression) and 7 (court management, match
-scheduling and tournament dashboard) are implemented.**
+scheduling and tournament dashboard) are implemented. Phase 8.1 (the realtime
+transactional outbox) is implemented; Phase 8.2–8.6 (SSE transport, application
+event publishing, web realtime client, live UI sync and multi-device hardening)
+are not implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
-setup UI, group-stage match scoring/standings, the knockout bracket workflow and
-the Phase 7 operational layer (courts, scheduling, court board and dashboard)
-exist. **Automatic draw/seeding, rankings, authentication, authorization,
-result-correction workflows and realtime are not implemented.** Do not add
-those unless the task explicitly asks for a later phase. The authoritative design is
-`docs/phase-2-domain-design.md`; the Phase 2.2 architecture is
-`docs/phase-2-2-architecture.md`; the REST API reference is
+setup UI, group-stage match scoring/standings, the knockout bracket workflow,
+the Phase 7 operational layer (courts, scheduling, court board and dashboard) and
+the Phase 8.1 realtime outbox (event catalogue, repository port, Prisma adapter,
+publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up) exist.
+**Automatic draw/seeding, rankings, authentication, authorization,
+result-correction workflows and realtime _transport_ (SSE) are not implemented.**
+Do not add those unless the task explicitly asks for a later phase. The
+authoritative design is `docs/phase-2-domain-design.md`; the Phase 2.2
+architecture is `docs/phase-2-2-architecture.md`; the REST API reference is
 `docs/phase-3-rest-api.md`; Phase 5 scoring is `docs/phase-5-group-scoring.md`;
 Phase 6 knockout is `docs/phase-6-knockout.md`; Phase 7 courts/scheduling/dashboard
-is `docs/phase-7-courts-dashboard.md`.
+is `docs/phase-7-courts-dashboard.md`; Phase 8 realtime is
+`docs/phase-8-realtime.md`.
 
 ## Layout
 
@@ -123,3 +129,22 @@ database — integration tests use `app.inject()` with stub probes.
   persist anything and must not fan out into per-match queries — competitor names come from
   two batched `listByIds` reads, and matches/courts/categories/stages/entries are each
   loaded once per tournament.
+- Phase 8 realtime is a **notification** channel, never a second business-logic path: REST
+  changes state, PostgreSQL stores it, the outbox records what changed, SSE (Phase 8.2)
+  tells clients to refetch. Realtime never mutates state and payloads are small flat maps,
+  never a read model.
+- Business change + outbox event are written in the **same** `UnitOfWork.runInTransaction`
+  block via `RealtimeEventService.record(client, …)`; a rollback must write neither, and a
+  multi-event operation (e.g. `MATCH_COMPLETED` + `KNOCKOUT_MATCH_POPULATED`) commits them
+  together. Services never publish to SSE directly — only the dispatcher forwards committed
+  rows through the publisher.
+- The `realtime_events` outbox is the source of truth for delivery. PostgreSQL
+  `LISTEN`/`NOTIFY` (trigger `realtime_events_notify` → `pg_notify('realtime_events', …)`)
+  is a wake-up only: a lost notification costs latency, never correctness, because the
+  dispatcher also polls and stamps `publishedAt` only after delivery (at-least-once). Do
+  not turn NOTIFY into a lossy delivery path or drop the poll.
+- The notifier uses a dedicated `pg` connection outside the Prisma pool so a long-lived
+  `LISTEN` never occupies a pooled client. The `realtime_events` migration is forward-only;
+  do not modify historical migrations.
+- `REALTIME_POLL_INTERVAL_MS` and `REALTIME_HEARTBEAT_INTERVAL_MS` are server-only config
+  read through `getServerEnv()`; keep the intervals configurable rather than hard-coded.

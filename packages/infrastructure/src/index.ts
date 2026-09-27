@@ -7,3 +7,7 @@
  */
 export { createPrismaUnitOfWork, createRepositoryClient } from './repositories.ts';
 export { toApplicationError, translatePersistenceErrors } from './errors.ts';
+export {
+  createPostgresRealtimeEventNotifier,
+  type PostgresNotifierOptions,
+} from './realtime-notifier.ts';

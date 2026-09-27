@@ -8,6 +8,7 @@ import type {
   MatchParticipant,
   MatchStatus,
   Player,
+  RealtimeEvent,
   StageStatus,
   Team,
   TeamMember,
@@ -25,6 +26,7 @@ import type {
   CreateMatchGameData,
   CreateMatchParticipantData,
   CreatePlayerData,
+  CreateRealtimeEventData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
@@ -66,6 +68,22 @@ export interface RepositoryClient {
   readonly matchParticipants: MatchParticipantRepository;
   readonly matchGames: MatchGameRepository;
   readonly courts: CourtRepository;
+  readonly realtimeEvents: RealtimeEventRepository;
+}
+
+/**
+ * Transactional outbox port.
+ *
+ * `create` is always called with the caller's transactional client so the event
+ * and the business change commit together. `getPendingEvents` and
+ * `markPublished` are dispatcher-side operations and run on the default client.
+ */
+export interface RealtimeEventRepository {
+  create(data: CreateRealtimeEventData): Promise<RealtimeEvent>;
+  /** Unpublished events, oldest first, bounded by `limit`. */
+  getPendingEvents(limit: number): Promise<readonly RealtimeEvent[]>;
+  /** Stamps `publishedAt`; a no-op when the row is already published. */
+  markPublished(id: string): Promise<void>;
 }
 
 export interface CourtRepository {

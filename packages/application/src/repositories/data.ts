@@ -7,6 +7,8 @@ import type {
   MatchGame,
   MatchSlot,
   MatchStatus,
+  RealtimeAggregateType,
+  RealtimeEventType,
   StageStatus,
   StageType,
   TournamentStatus,
@@ -152,6 +154,21 @@ export interface CreateMatchGameData {
   readonly participant1Points: number;
   readonly participant2Points: number;
   readonly winnerSlot: MatchSlot;
+}
+
+/**
+ * Payload for a new outbox event.
+ *
+ * The repository assigns `id`, `createdAt` and `publishedAt`; the caller
+ * supplies only what changed. `payload` is a small, flat map (or absent), never
+ * a read model.
+ */
+export interface CreateRealtimeEventData {
+  readonly tournamentId: string;
+  readonly eventType: RealtimeEventType;
+  readonly aggregateType: RealtimeAggregateType;
+  readonly aggregateId: string;
+  readonly payload?: Readonly<Record<string, unknown>> | null;
 }
 
 /**

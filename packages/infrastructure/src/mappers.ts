@@ -4,6 +4,7 @@ import type {
   PrismaMatchGame,
   PrismaMatchParticipant,
   PrismaPlayer,
+  PrismaRealtimeEvent,
   PrismaTournament,
   PrismaTournamentCategory,
   PrismaTournamentEntry,
@@ -11,13 +12,20 @@ import type {
   PrismaTeam,
   PrismaTeamMember,
 } from '@badminton/database';
-import { PersistenceError, type MatchGame } from '@badminton/domain';
+import {
+  PersistenceError,
+  RealtimeEventValidationError,
+  isRealtimeAggregateType,
+  isRealtimeEventType,
+  type MatchGame,
+} from '@badminton/domain';
 import type {
   Court,
   Match,
   MatchParticipant,
   MatchSlot,
   Player,
+  RealtimeEvent,
   Team,
   TeamMember,
   Tournament,
@@ -177,4 +185,39 @@ function toMatchSlot(value: number): MatchSlot {
     return value;
   }
   throw new PersistenceError();
+}
+
+/**
+ * Maps an outbox row onto the domain event.
+ *
+ * The catalogue columns are validated on the way out: a row written outside the
+ * domain (or a hand-edited table) fails loudly rather than streaming an unknown
+ * event type to a browser. An empty JSON object is normalised back to `null`.
+ */
+export function toRealtimeEvent(row: PrismaRealtimeEvent): RealtimeEvent {
+  if (!isRealtimeEventType(row.eventType)) {
+    throw new RealtimeEventValidationError(`Unknown realtime event type: ${row.eventType}`);
+  }
+  if (!isRealtimeAggregateType(row.aggregateType)) {
+    throw new RealtimeEventValidationError(`Unknown realtime aggregate type: ${row.aggregateType}`);
+  }
+
+  return {
+    id: row.id,
+    tournamentId: row.tournamentId,
+    eventType: row.eventType,
+    aggregateType: row.aggregateType,
+    aggregateId: row.aggregateId,
+    occurredAt: row.createdAt,
+    payload: toRealtimePayload(row.payload),
+    publishedAt: row.publishedAt,
+  };
+}
+
+function toRealtimePayload(value: unknown): Readonly<Record<string, unknown>> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const entries = Object.entries(value);
+  return entries.length === 0 ? null : Object.fromEntries(entries);
 }
