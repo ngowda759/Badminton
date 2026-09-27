@@ -4,19 +4,23 @@ Repository guidance for automated agents working on Badminton V2.
 
 ## What this repository is
 
-Badminton V2 — a badminton tournament management platform. **Phase 1 (foundation) is
-complete; Phase 2.1 (tournament database foundation) is implemented: the Prisma
-schema, migration, constraints, indexes, seed and database tests exist. Tournament
-repositories, services, API routes, algorithms and UI are not implemented.** Do not add
-those unless the task explicitly asks for a later phase. The authoritative design is
-`docs/phase-2-domain-design.md`.
+Badminton V2 — a badminton tournament management platform. **Phase 1 (foundation),
+Phase 2.1 (tournament database foundation) and Phase 2.2 (domain/application layer) are
+implemented.** The Prisma schema, migrations, constraints, indexes, seed, database tests,
+domain types/rules, application services, repository ports, Prisma repository adapters
+and application/domain error model exist. **API routes, algorithms, scoring, draw
+generation and UI are not implemented.** Do not add those unless the task explicitly asks
+for a later phase. The authoritative design is `docs/phase-2-domain-design.md`; the
+Phase 2.2 architecture is `docs/phase-2-2-architecture.md`.
 
 ## Layout
 
 - `apps/api` — Fastify API. `app.ts` is the factory, `server.ts` owns `listen`.
 - `apps/web` — React 19 + Vite + Tailwind v4 + shadcn/ui.
-- `packages/domain` — types/contracts only, no runtime dependencies.
-- `packages/validation` — shared Zod schemas and `parseRequest`.
+- `packages/domain` — pure types, lifecycle tables, normalization, dates, errors. No runtime deps.
+- `packages/validation` — shared Zod schemas, `parseRequest` and tournament input schemas.
+- `packages/application` — services, repository ports and the `UnitOfWork` transaction port.
+- `packages/infrastructure` — Prisma repository adapters and Prisma-error translation.
 - `packages/database` — Prisma client lifecycle, `DatabaseProbe` port, health check.
 - `packages/config` — `.env` loading, Zod-validated server and client config.
 - `prisma/` — schema, migrations, idempotent seed. Root `prisma.config.ts` owns the CLI config.
@@ -30,6 +34,16 @@ those unless the task explicitly asks for a later phase. The authoritative desig
 - Business logic never lives in route handlers or React components. Routes delegate to
   services; components delegate to hooks/clients in `lib/`.
 - Route handlers must not import Prisma. Go through `packages/database` ports.
+- Application services depend only on repository ports; they never import Prisma, Fastify or
+  HTTP types. Prisma lives in `packages/infrastructure` (and `packages/database`). Keep
+  business rules in services/domain, not in repositories.
+- Services take a plain `RepositoryClient` for reads and single writes and receive
+  `UnitOfWork` only when they own a multi-row atomic operation. Do not open an interactive
+  transaction for a read or a single write; add a transaction only where atomicity requires
+  it, and cover the boundary with `tests/unit/application/transaction-boundaries.test.ts`.
+- Repositories translate known Prisma constraint failures into `@badminton/domain` errors
+  (never leak SQL, constraint names or stack traces). The database stays the final
+  consistency boundary; pre-checks alone are not enough.
 - Never log or return connection strings, credentials, SQL errors or stack traces.
 - Server-only config is read via `getServerEnv()`. Only `VITE_`-prefixed variables reach
   the browser bundle.

@@ -1,0 +1,186 @@
+import {
+  isValidCategoryCode,
+  normalizeCategoryCode,
+  normalizeEmail,
+  normalizeOptionalContact,
+  normalizePhone,
+} from '@badminton/domain';
+import { z } from 'zod';
+
+import { calendarDateSchema, nameSchema, optionalTextSchema, timezoneSchema } from './common.ts';
+
+/**
+ * Application input schemas for the Phase 2 aggregates.
+ *
+ * Each schema validates shape/format, trims strings and normalizes values the
+ * domain treats as canonical (category code to upper case, email to lower case,
+ * phone to digits with an optional leading `+`). Cross-record rules - date
+ * ordering, category format versus entry owner - are enforced by the services.
+ */
+
+/** A normalized category code: `^[A-Z0-9-]{1,8}$`. */
+export const categoryCodeSchema = z
+  .string()
+  .transform(normalizeCategoryCode)
+  .refine(isValidCategoryCode, 'Category code must be 1-8 characters of A-Z, 0-9 or hyphen.');
+
+/** A 1-based positive ordinal (sequence, position, round number). */
+const positiveIntegerSchema = z.coerce
+  .number()
+  .int('Must be a whole number.')
+  .positive('Must be a positive number.');
+
+const emailSchema = z.email('Enter a valid email address.');
+
+/** An optional email, lower-cased; blank input normalizes to `null`. */
+export const optionalEmailSchema = z
+  .string()
+  .trim()
+  .transform((value) => normalizeOptionalContact(value, normalizeEmail))
+  .refine((value) => value === null || emailSchema.safeParse(value).success, {
+    message: 'Enter a valid email address.',
+  })
+  .nullable()
+  .optional();
+
+const phonePattern = /^\+?\d{7,15}$/;
+
+/** An optional phone number, reduced to digits; blank input normalizes to `null`. */
+export const optionalPhoneSchema = z
+  .string()
+  .trim()
+  .transform((value) => normalizeOptionalContact(value, normalizePhone))
+  .refine((value) => value === null || phonePattern.test(value), {
+    message: 'Enter a valid phone number (7-15 digits, optional leading +).',
+  })
+  .nullable()
+  .optional();
+
+export const createTournamentInputSchema = z.object({
+  name: nameSchema,
+  description: optionalTextSchema(2000),
+  startDate: calendarDateSchema,
+  endDate: calendarDateSchema,
+  location: optionalTextSchema(200),
+  timezone: timezoneSchema,
+});
+
+export const updateTournamentInputSchema = z
+  .object({
+    name: nameSchema,
+    description: optionalTextSchema(2000),
+    startDate: calendarDateSchema,
+    endDate: calendarDateSchema,
+    location: optionalTextSchema(200),
+  })
+  .partial();
+
+export const createCategoryInputSchema = z.object({
+  name: nameSchema,
+  code: categoryCodeSchema,
+  format: z.enum(['SINGLES', 'DOUBLES']),
+  gender: z.enum(['MALE', 'FEMALE', 'MIXED', 'OPEN']).nullable().optional(),
+});
+
+export const updateCategoryInputSchema = z
+  .object({
+    name: nameSchema,
+    format: z.enum(['SINGLES', 'DOUBLES']),
+    gender: z.enum(['MALE', 'FEMALE', 'MIXED', 'OPEN']).nullable(),
+  })
+  .partial();
+
+export const createPlayerInputSchema = z.object({
+  name: nameSchema,
+  email: optionalEmailSchema,
+  phone: optionalPhoneSchema,
+});
+
+export const updatePlayerInputSchema = z
+  .object({
+    name: nameSchema,
+    email: optionalEmailSchema,
+    phone: optionalPhoneSchema,
+  })
+  .partial();
+
+export const createTeamInputSchema = z.object({
+  name: z.string().trim().min(1, 'Team name must not be empty.').max(200),
+  memberPlayerIds: z.array(z.uuid()).max(8).optional(),
+});
+
+export const updateTeamInputSchema = z.object({
+  name: z.string().trim().min(1, 'Team name must not be empty.').max(200),
+});
+
+export const addTeamMemberInputSchema = z.object({
+  playerId: z.uuid(),
+  position: positiveIntegerSchema.optional(),
+});
+
+export const removeTeamMemberInputSchema = z.object({
+  playerId: z.uuid(),
+});
+
+export const registerTournamentEntryInputSchema = z.object({
+  categoryId: z.uuid(),
+  playerId: z.uuid().optional(),
+  teamId: z.uuid().optional(),
+  seed: positiveIntegerSchema.optional(),
+});
+
+export const updateTournamentEntryInputSchema = z.object({
+  seed: positiveIntegerSchema.nullable().optional(),
+});
+
+export const createStageInputSchema = z.object({
+  name: nameSchema,
+  type: z.enum(['GROUP', 'KNOCKOUT']),
+  sequence: positiveIntegerSchema,
+  drawSize: positiveIntegerSchema.optional(),
+});
+
+export const updateStageInputSchema = z
+  .object({
+    name: nameSchema,
+    sequence: positiveIntegerSchema,
+    drawSize: positiveIntegerSchema.nullable(),
+  })
+  .partial();
+
+export const createMatchInputSchema = z.object({
+  sequence: positiveIntegerSchema,
+  roundNumber: positiveIntegerSchema.optional(),
+  matchNumber: positiveIntegerSchema.optional(),
+});
+
+export const updateMatchInputSchema = z
+  .object({
+    sequence: positiveIntegerSchema,
+    roundNumber: positiveIntegerSchema.nullable(),
+    matchNumber: positiveIntegerSchema.nullable(),
+  })
+  .partial();
+
+export const addMatchParticipantInputSchema = z.object({
+  entryId: z.uuid(),
+  slot: z.union([z.literal(1), z.literal(2)]),
+});
+
+export type CreateTournamentInput = z.input<typeof createTournamentInputSchema>;
+export type UpdateTournamentInput = z.input<typeof updateTournamentInputSchema>;
+export type CreateCategoryInput = z.input<typeof createCategoryInputSchema>;
+export type UpdateCategoryInput = z.input<typeof updateCategoryInputSchema>;
+export type CreatePlayerInput = z.input<typeof createPlayerInputSchema>;
+export type UpdatePlayerInput = z.input<typeof updatePlayerInputSchema>;
+export type CreateTeamInput = z.input<typeof createTeamInputSchema>;
+export type UpdateTeamInput = z.input<typeof updateTeamInputSchema>;
+export type AddTeamMemberInput = z.input<typeof addTeamMemberInputSchema>;
+export type RemoveTeamMemberInput = z.input<typeof removeTeamMemberInputSchema>;
+export type RegisterTournamentEntryInput = z.input<typeof registerTournamentEntryInputSchema>;
+export type UpdateTournamentEntryInput = z.input<typeof updateTournamentEntryInputSchema>;
+export type CreateStageInput = z.input<typeof createStageInputSchema>;
+export type UpdateStageInput = z.input<typeof updateStageInputSchema>;
+export type CreateMatchInput = z.input<typeof createMatchInputSchema>;
+export type UpdateMatchInput = z.input<typeof updateMatchInputSchema>;
+export type AddMatchParticipantInput = z.input<typeof addMatchParticipantInputSchema>;

@@ -12,6 +12,8 @@
     "apps/api/tests",
     "packages/domain/src",
     "packages/validation/src",
+    "packages/application/src",
+    "packages/infrastructure/src",
     "packages/database/src",
     "packages/config/src",
     "prisma",

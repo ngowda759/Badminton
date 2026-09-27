@@ -30,17 +30,12 @@ function overrideDatabase(url: URL, database: string): string {
 }
 
 /** Resolves the test database URL, deriving it from `DATABASE_URL` when not supplied. */
-export function resolveTestDatabaseUrl(): string | undefined {
+export function resolveTestDatabaseUrl(suffix = '_test'): string | undefined {
   // Vitest does not load `.env` for us; the repository loader keeps this
   // consistent with `npm run db:*` and the API.
   loadEnvironmentFiles();
 
-  const explicit = process.env.TEST_DATABASE_URL;
-  if (explicit) {
-    return explicit;
-  }
-
-  const configured = process.env.DATABASE_URL;
+  const configured = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
   if (!configured) {
     return undefined;
   }
@@ -48,7 +43,7 @@ export function resolveTestDatabaseUrl(): string | undefined {
   try {
     const url = new URL(configured);
     const database = url.pathname.replace(/^\//, '');
-    const testDatabase = database.endsWith('_test') ? database : `${database}_test`;
+    const testDatabase = database.endsWith(suffix) ? database : `${database}${suffix}`;
     return overrideDatabase(url, testDatabase);
   } catch {
     return undefined;
@@ -96,15 +91,21 @@ async function prepareTestDatabase(testUrl: string): Promise<void> {
   });
 }
 
-let prepared: Promise<void> | undefined;
+const prepared = new Map<string, Promise<void>>();
 
-/** Runs `prepareTestDatabase` at most once per process. */
+/** Runs `prepareTestDatabase` at most once per database URL per process. */
 function ensureTestDatabase(testUrl: string): Promise<void> {
-  prepared ??= prepareTestDatabase(testUrl).catch((error: unknown) => {
-    prepared = undefined;
+  const existing = prepared.get(testUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const pending = prepareTestDatabase(testUrl).catch((error: unknown) => {
+    prepared.delete(testUrl);
     throw error;
   });
-  return prepared;
+  prepared.set(testUrl, pending);
+  return pending;
 }
 
 /** An open connection to the migrated test database. */
@@ -117,9 +118,13 @@ export interface TestDatabase {
  * Opens a connection to the test database. Returns `undefined` (so the suite
  * skips) when PostgreSQL is absent and the run does not require it; throws when
  * the run requires a database but one cannot be prepared.
+ *
+ * `suffix` selects the database name derived from `DATABASE_URL`; suites that
+ * mutate the same tables in parallel should pass a distinct suffix so they do
+ * not interfere with each other.
  */
-export async function openTestDatabase(): Promise<TestDatabase | undefined> {
-  const url = resolveTestDatabaseUrl();
+export async function openTestDatabase(suffix = '_test'): Promise<TestDatabase | undefined> {
+  const url = resolveTestDatabaseUrl(suffix);
   if (!url) {
     if (databaseTestsRequired()) {
       throw new Error('DATABASE_URL is required to run the database integration tests.');
