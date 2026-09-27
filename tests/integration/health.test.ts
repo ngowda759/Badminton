@@ -57,6 +57,20 @@ describe('GET /health', () => {
     });
   });
 
+  // Regression: with no probes registered the service used to answer
+  // `{ status: 'ok', database: 'disconnected' }` with HTTP 200, because
+  // `Array.prototype.every` is true for an empty array. Status and body must
+  // agree, and the route must surface 503.
+  it('returns 503, not 200, when no database check is registered', async () => {
+    const response = await createTestApp([]).inject({ method: 'GET', url: '/health' });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json<HealthResponse>()).toEqual({
+      status: 'degraded',
+      database: 'disconnected',
+    });
+  });
+
   it('satisfies the shared contract consumed by the web client', async () => {
     const response = await createTestApp([stubCheck('up')]).inject({
       method: 'GET',

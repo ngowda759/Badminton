@@ -33,9 +33,23 @@ describe('createHealthService', () => {
     const service = createHealthService([]);
 
     await expect(service.getHealth()).resolves.toEqual({
-      status: 'ok',
+      status: 'degraded',
       database: 'disconnected',
     });
+  });
+
+  // Regression test for the fail-open bug. Before the fix the service used
+  // `services.every(...)` over the registered probes, and `Array.prototype.every`
+  // returns true for an empty array, so this exact input produced
+  // `{ status: 'ok', database: 'disconnected' }` - a contradictory payload that
+  // also mapped to HTTP 200. Assert each field separately so a regression names
+  // the field it broke.
+  it('reports degraded, not ok, when no database check is registered', async () => {
+    const health = await createHealthService([]).getHealth();
+
+    expect(health.database).toBe('disconnected');
+    expect(health.status).toBe('degraded');
+    expect(health.status).not.toBe('ok');
   });
 
   it('never propagates an exception thrown by a probe', async () => {
