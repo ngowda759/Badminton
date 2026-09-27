@@ -1,12 +1,16 @@
-// Badminton V2 - foundation schema.
+// Badminton V2 schema.
 //
-// Intentionally minimal. Tournament entities (Tournament, Player, Team, Match,
-// Group, Court, Score, Fixture, Ranking) belong to later phases and must not
-// be added here.
+// Phase 1 (`SystemMetadata`) is infrastructure bookkeeping that proves the
+// PostgreSQL connection end to end and is deliberately unchanged.
 //
-// `SystemMetadata` exists only to give Prisma something concrete to migrate and
-// seed, proving the PostgreSQL connection end to end. It is infrastructure
-// bookkeeping, not a domain model.
+// Phase 2 adds the tournament domain: Tournament, TournamentCategory, Player,
+// Team, TeamMember, TournamentEntry, TournamentStage, Match and
+// MatchParticipant. The model follows `docs/phase-2-domain-design.md`.
+//
+// Prisma cannot express every constraint the design requires (row-local CHECKs
+// and partial unique indexes). Those are added as hand-written SQL in the
+// `add_tournament_domain` migration. Cross-table business rules are owned by
+// the future service layer - no database triggers.
 
 generator client {
   provider = "prisma-client"
@@ -17,6 +21,10 @@ datasource db {
   provider = "postgresql"
 }
 
+// ---------------------------------------------------------------------------
+// Phase 1 - foundation
+// ---------------------------------------------------------------------------
+
 model SystemMetadata {
   id        String   @id @default(uuid())
   key       String   @unique
@@ -25,4 +33,209 @@ model SystemMetadata {
   updatedAt DateTime @updatedAt
 
   @@map("system_metadata")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 - tournament domain
+// ---------------------------------------------------------------------------
+
+enum TournamentStatus {
+  DRAFT
+  REGISTRATION_OPEN
+  REGISTRATION_CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum CategoryFormat {
+  SINGLES
+  DOUBLES
+}
+
+enum CategoryGender {
+  MALE
+  FEMALE
+  MIXED
+  OPEN
+}
+
+enum CategoryStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  COMPLETED
+  CANCELLED
+}
+
+enum EntryStatus {
+  PENDING
+  CONFIRMED
+  WITHDRAWN
+  DISQUALIFIED
+}
+
+enum StageType {
+  GROUP
+  KNOCKOUT
+}
+
+enum StageStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+}
+
+enum MatchStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Tournament {
+  id          String               @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  startDate   DateTime             @db.Date
+  endDate     DateTime             @db.Date
+  location    String?
+  timezone    String
+  status      TournamentStatus     @default(DRAFT)
+  categories  TournamentCategory[]
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@index([status])
+  @@index([startDate])
+  @@map("tournaments")
+}
+
+model TournamentCategory {
+  id           String            @id @default(uuid()) @db.Uuid
+  tournamentId String            @db.Uuid
+  tournament   Tournament        @relation(fields: [tournamentId], references: [id], onDelete: Restrict)
+  name         String
+  code         String
+  format       CategoryFormat
+  gender       CategoryGender?
+  status       CategoryStatus    @default(DRAFT)
+  entries      TournamentEntry[]
+  stages       TournamentStage[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@unique([tournamentId, code])
+  @@map("tournament_categories")
+}
+
+model Player {
+  id          String            @id @default(uuid()) @db.Uuid
+  name        String
+  email       String?
+  phone       String?
+  entries     TournamentEntry[]
+  teamMembers TeamMember[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([name])
+  @@map("players")
+}
+
+model Team {
+  id        String            @id @default(uuid()) @db.Uuid
+  name      String
+  members   TeamMember[]
+  entries   TournamentEntry[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@map("teams")
+}
+
+model TeamMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  teamId    String   @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  playerId  String   @db.Uuid
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  position  Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, playerId])
+  @@index([playerId])
+  @@map("team_members")
+}
+
+model TournamentEntry {
+  id           String             @id @default(uuid()) @db.Uuid
+  categoryId   String             @db.Uuid
+  category     TournamentCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  playerId     String?            @db.Uuid
+  player       Player?            @relation(fields: [playerId], references: [id], onDelete: Restrict)
+  teamId       String?            @db.Uuid
+  team         Team?              @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  seed         Int?
+  status       EntryStatus        @default(PENDING)
+  registeredAt DateTime           @default(now())
+  participants MatchParticipant[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([categoryId])
+  @@index([playerId])
+  @@index([teamId])
+  @@map("tournament_entries")
+}
+
+model TournamentStage {
+  id         String             @id @default(uuid()) @db.Uuid
+  categoryId String             @db.Uuid
+  category   TournamentCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name       String
+  type       StageType
+  sequence   Int
+  drawSize   Int?
+  status     StageStatus        @default(PENDING)
+  matches    Match[]
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([categoryId, sequence])
+  @@map("tournament_stages")
+}
+
+model Match {
+  id           String             @id @default(uuid()) @db.Uuid
+  stageId      String             @db.Uuid
+  stage        TournamentStage    @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  sequence     Int
+  roundNumber  Int?
+  matchNumber  Int?
+  status       MatchStatus        @default(SCHEDULED)
+  participants MatchParticipant[]
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@unique([stageId, sequence])
+  @@index([status])
+  @@map("matches")
+}
+
+model MatchParticipant {
+  id        String          @id @default(uuid()) @db.Uuid
+  matchId   String          @db.Uuid
+  match     Match           @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  entryId   String          @db.Uuid
+  entry     TournamentEntry @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  slot      Int
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@unique([matchId, slot])
+  @@unique([matchId, entryId])
+  @@index([entryId])
+  @@map("match_participants")
 }
