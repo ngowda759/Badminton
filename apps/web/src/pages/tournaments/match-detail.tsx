@@ -2,7 +2,7 @@ import { useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { MatchDto, MatchParticipantDto, MatchResultDto } from '@/api/types.ts';
+import type { MatchDto, MatchParticipantDto, MatchResultDto, StageDto } from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { LoadingState } from '@/components/states.tsx';
@@ -52,6 +52,16 @@ export function MatchDetailPage() {
   const mutation = useMutation<unknown>();
 
   const { nameFor } = useEntryNames(category.id);
+
+  // A knockout match's participants are filled by bracket generation and
+  // progression, so they are read-only here; a group match stays manually
+  // assignable as in Phase 5.
+  const matchStageId = matchQuery.state.status === 'loaded' ? matchQuery.state.data.stageId : '';
+  const stageQuery = useApiQuery<StageDto | null>(['match-stage', matchStageId], (signal) =>
+    matchStageId ? api.stages.get(matchStageId, signal) : Promise.resolve(null),
+  );
+  const isKnockout =
+    stageQuery.state.status === 'loaded' && stageQuery.state.data?.type === 'KNOCKOUT';
 
   if (matchQuery.state.status === 'loading') {
     return <LoadingState label="Loading match…" rows={3} />;
@@ -131,7 +141,14 @@ export function MatchDetailPage() {
           <CardTitle>Edit match</CardTitle>
         </CardHeader>
         <CardContent>
-          <EditMatchForm match={match} onSaved={matchQuery.refetch} />
+          {isKnockout ? (
+            <p className="text-muted-foreground text-sm">
+              A knockout match's round, number and sequence are fixed by the bracket and cannot be
+              edited.
+            </p>
+          ) : (
+            <EditMatchForm match={match} onSaved={matchQuery.refetch} />
+          )}
         </CardContent>
       </Card>
 
@@ -156,6 +173,7 @@ export function MatchDetailPage() {
               participants={participantQuery.state.data}
               nameFor={nameFor}
               onChanged={participantQuery.refetch}
+              readOnly={isKnockout}
             />
           ) : null}
         </CardContent>
@@ -183,6 +201,11 @@ export function MatchDetailPage() {
                 slot1Label={slot1Label}
                 slot2Label={slot2Label}
               />
+            ) : null}
+            {isKnockout ? (
+              <p className="text-muted-foreground text-sm">
+                The winner has advanced to the next knockout round.
+              </p>
             ) : null}
           </CardContent>
         </Card>
@@ -319,11 +342,14 @@ function ParticipantSlots({
   participants,
   nameFor,
   onChanged,
+  readOnly = false,
 }: {
   readonly match: MatchDto;
   readonly participants: readonly MatchParticipantDto[];
   readonly nameFor: (entryId: string) => string;
   readonly onChanged: () => void;
+  /** Knockout participants are bracket-controlled and cannot be assigned here. */
+  readonly readOnly?: boolean;
 }) {
   const api = useApi();
   const [slot1Entry, setSlot1Entry] = useState('');
@@ -355,76 +381,93 @@ function ParticipantSlots({
         <div className="rounded-md border p-3">
           <dt className="text-muted-foreground text-xs uppercase">Slot 1</dt>
           <dd className="mt-1 text-sm">
-            {slot1 ? nameFor(slot1.entryId) : <span className="text-muted-foreground">Empty</span>}
+            {slot1 ? (
+              nameFor(slot1.entryId)
+            ) : (
+              <span className="text-muted-foreground italic">{readOnly ? 'TBD' : 'Empty'}</span>
+            )}
           </dd>
         </div>
         <div className="rounded-md border p-3">
           <dt className="text-muted-foreground text-xs uppercase">Slot 2</dt>
           <dd className="mt-1 text-sm">
-            {slot2 ? nameFor(slot2.entryId) : <span className="text-muted-foreground">Empty</span>}
+            {slot2 ? (
+              nameFor(slot2.entryId)
+            ) : (
+              <span className="text-muted-foreground italic">{readOnly ? 'TBD' : 'Empty'}</span>
+            )}
           </dd>
         </div>
       </dl>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            assign(1, slot1Entry);
-          }}
-        >
-          <FormField label="Slot 1 entry ID" htmlFor="slot-1-entry" className="flex-1">
-            {({ id }) => (
-              <Input
-                id={id}
-                value={slot1Entry}
-                disabled={Boolean(slot1)}
-                placeholder={slot1 ? 'Slot filled' : 'Entry UUID'}
-                onChange={(event) => {
-                  setSlot1Entry(event.target.value);
-                }}
-              />
-            )}
-          </FormField>
-          <Button type="submit" disabled={mutation.pending || Boolean(slot1)}>
-            Assign
-          </Button>
-        </form>
+      {readOnly ? (
+        <p className="text-muted-foreground text-sm">
+          Participants are set by the bracket and advance automatically when results are recorded.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                assign(1, slot1Entry);
+              }}
+            >
+              <FormField label="Slot 1 entry ID" htmlFor="slot-1-entry" className="flex-1">
+                {({ id }) => (
+                  <Input
+                    id={id}
+                    value={slot1Entry}
+                    disabled={Boolean(slot1)}
+                    placeholder={slot1 ? 'Slot filled' : 'Entry UUID'}
+                    onChange={(event) => {
+                      setSlot1Entry(event.target.value);
+                    }}
+                  />
+                )}
+              </FormField>
+              <Button type="submit" disabled={mutation.pending || Boolean(slot1)}>
+                Assign
+              </Button>
+            </form>
 
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            assign(2, slot2Entry);
-          }}
-        >
-          <FormField label="Slot 2 entry ID" htmlFor="slot-2-entry" className="flex-1">
-            {({ id }) => (
-              <Input
-                id={id}
-                value={slot2Entry}
-                disabled={Boolean(slot2)}
-                placeholder={slot2 ? 'Slot filled' : 'Entry UUID'}
-                onChange={(event) => {
-                  setSlot2Entry(event.target.value);
-                }}
-              />
-            )}
-          </FormField>
-          <Button type="submit" disabled={mutation.pending || Boolean(slot2)}>
-            Assign
-          </Button>
-        </form>
-      </div>
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                assign(2, slot2Entry);
+              }}
+            >
+              <FormField label="Slot 2 entry ID" htmlFor="slot-2-entry" className="flex-1">
+                {({ id }) => (
+                  <Input
+                    id={id}
+                    value={slot2Entry}
+                    disabled={Boolean(slot2)}
+                    placeholder={slot2 ? 'Slot filled' : 'Entry UUID'}
+                    onChange={(event) => {
+                      setSlot2Entry(event.target.value);
+                    }}
+                  />
+                )}
+              </FormField>
+              <Button type="submit" disabled={mutation.pending || Boolean(slot2)}>
+                Assign
+              </Button>
+            </form>
+          </div>
+
+          <p className="text-muted-foreground text-xs">
+            Only entries from this category that are still active can take a slot; the API enforces
+            this.
+          </p>
+        </>
+      )}
 
       {mutation.error ? (
         <ErrorState error={mutation.error} title="Could not assign participant" />
       ) : null}
-      <p className="text-muted-foreground text-xs">
-        Only entries from this category that are still active can take a slot; the API enforces
-        this.
-      </p>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type {
+  KnockoutBracketService,
   MatchResultService,
   MatchService,
   PlayerService,
@@ -28,4 +29,5 @@ export interface ApiServices {
   readonly matches: MatchService;
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
+  readonly knockout: KnockoutBracketService;
 }

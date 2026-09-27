@@ -136,10 +136,21 @@ export interface MatchRepository {
   listByStage(stageId: string): Promise<readonly Match[]>;
   /** Completed matches only, scoped to one stage (drives group standings). */
   listCompletedByStage(stageId: string): Promise<readonly Match[]>;
+  /**
+   * Every match of a stage together with its participants, in one batched read
+   * (no N+1). Drives knockout bracket retrieval.
+   */
+  listByStageWithParticipants(stageId: string): Promise<readonly MatchWithParticipants[]>;
   update(id: string, data: UpdateMatchData): Promise<Match>;
   updateStatus(id: string, status: MatchStatus): Promise<Match>;
   /** Writes the derived winner and the terminal status in one update. */
   complete(id: string, winnerEntryId: string): Promise<Match>;
+}
+
+/** A match read together with its participants, for batched bracket reads. */
+export interface MatchWithParticipants {
+  readonly match: Match;
+  readonly participants: readonly MatchParticipant[];
 }
 
 export interface MatchParticipantRepository {
@@ -149,6 +160,12 @@ export interface MatchParticipantRepository {
   listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchParticipant[]>;
   findSlot(matchId: string, slot: number): Promise<MatchParticipant | undefined>;
   findEntry(matchId: string, entryId: string): Promise<MatchParticipant | undefined>;
+  /**
+   * Fills the entry occupying a slot, creating the slot when it is still empty.
+   * Used by knockout progression to fill a later-round slot; the unique indexes
+   * remain the final consistency boundary.
+   */
+  upsertSlot(matchId: string, slot: number, entryId: string): Promise<MatchParticipant>;
 }
 
 export interface MatchGameRepository {

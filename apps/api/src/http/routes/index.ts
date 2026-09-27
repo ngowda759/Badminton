@@ -33,6 +33,7 @@ export function createApiV1Routes(services: ApiServices): FastifyPluginAsync {
       matches: services.matches,
       matchResults: services.matchResults,
       standings: services.standings,
+      knockout: services.knockout,
     });
   };
 }

@@ -151,6 +151,41 @@ export interface StandingRowDto {
   readonly position: number;
 }
 
+/** One participant slot of a knockout match; `entryId` is null until filled. */
+export interface BracketParticipantDto {
+  readonly slot: MatchSlot;
+  readonly entryId: string | null;
+}
+
+/** One match in a knockout bracket. */
+export interface BracketMatchDto {
+  readonly matchId: string;
+  readonly matchNumber: number;
+  readonly sequence: number;
+  readonly status: MatchStatus;
+  readonly participant1: BracketParticipantDto;
+  readonly participant2: BracketParticipantDto;
+  readonly winnerEntryId: string | null;
+}
+
+/** One round of a knockout bracket. */
+export interface BracketRoundDto {
+  readonly roundNumber: number;
+  readonly name: string;
+  readonly matches: readonly BracketMatchDto[];
+}
+
+/** The full bracket returned by `GET /stages/:id/bracket`. */
+export interface BracketDto {
+  readonly stageId: string;
+  readonly stageName: string;
+  readonly status: StageStatus;
+  readonly bracketSize: number;
+  readonly roundCount: number;
+  readonly rounds: readonly BracketRoundDto[];
+  readonly complete: boolean;
+}
+
 /* ------------------------------------------------------------------ */
 /* Request payloads                                                    */
 /* ------------------------------------------------------------------ */
@@ -259,4 +294,9 @@ export interface RecordMatchGameInput {
 
 export interface RecordMatchResultInput {
   readonly games: readonly RecordMatchGameInput[];
+}
+
+/** Generates a knockout bracket from a caller-supplied entry ordering. */
+export interface GenerateKnockoutBracketInput {
+  readonly entryIds: readonly string[];
 }

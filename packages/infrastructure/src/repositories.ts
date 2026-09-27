@@ -341,6 +341,21 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
+    async listByStageWithParticipants(stageId: string) {
+      return translatePersistenceErrors(async () => {
+        // One query with an include: participants arrive nested, so a bracket
+        // read never issues a query per match.
+        const rows = await db.match.findMany({
+          where: { stageId },
+          orderBy: { sequence: 'asc' },
+          include: { participants: { orderBy: { slot: 'asc' } } },
+        });
+        return rows.map((row) => ({
+          match: toMatch(row),
+          participants: row.participants.map(toMatchParticipant),
+        }));
+      });
+    },
     update(id: string, data: UpdateMatchData) {
       return translatePersistenceErrors(async () =>
         toMatch(await db.match.update({ where: { id }, data })),
@@ -441,6 +456,17 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
         });
         return row ? toMatchParticipant(row) : undefined;
       });
+    },
+    async upsertSlot(matchId, slot, entryId) {
+      return translatePersistenceErrors(async () =>
+        toMatchParticipant(
+          await db.matchParticipant.upsert({
+            where: { matchId_slot: { matchId, slot } },
+            create: { matchId, slot, entryId },
+            update: { entryId },
+          }),
+        ),
+      );
     },
   };
 }

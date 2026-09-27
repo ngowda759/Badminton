@@ -90,6 +90,20 @@ export type {
 export { calculateStandings, STANDING_WIN_POINTS, STANDING_LOSS_POINTS } from './standings.ts';
 export type { StandingsMatch, StandingsParticipant, StandingRow } from './standings.ts';
 export {
+  SUPPORTED_BRACKET_SIZES,
+  isSupportedBracketSize,
+  calculateRoundCount,
+  calculateMatchesInRound,
+  calculateTotalMatches,
+  calculateNextRoundNumber,
+  calculateNextMatchNumber,
+  calculateNextSlot,
+  calculateNextBracketPosition,
+  calculateSequence,
+  bracketRoundName,
+} from './bracket.ts';
+export type { BracketSize, NextBracketPosition } from './bracket.ts';
+export {
   APPLICATION_ERROR_CODES,
   ApplicationError,
   ValidationError,

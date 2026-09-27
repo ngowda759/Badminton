@@ -1,4 +1,5 @@
 import type {
+  KnockoutBracketService,
   MatchResultService,
   MatchService,
   StandingsService,
@@ -9,6 +10,7 @@ import {
   categoryIdParamSchema,
   createMatchInputSchema,
   createStageInputSchema,
+  generateKnockoutBracketInputSchema,
   idParamSchema,
   matchIdParamSchema,
   matchTransitionInputSchema,
@@ -28,6 +30,7 @@ export interface StageMatchRoutesOptions {
   readonly matches: MatchService;
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
+  readonly knockout: KnockoutBracketService;
 }
 
 /**
@@ -38,7 +41,7 @@ export interface StageMatchRoutesOptions {
  * handlers validate, delegate and serialise.
  */
 export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = (app, options) => {
-  const { stages, matches, matchResults, standings } = options;
+  const { stages, matches, matchResults, standings, knockout } = options;
 
   app.get('/categories/:categoryId/stages', async (request) => {
     const { categoryId } = validate(categoryIdParamSchema, request.params);
@@ -129,5 +132,19 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
   app.get('/stages/:id/standings', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     return data(await standings.getStageStandings(id));
+  });
+
+  // Knockout bracket. Generation is a single transactional application call;
+  // the route only validates the request shape and serialises the result.
+  app.post('/stages/:id/bracket', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    const body = validate(generateKnockoutBracketInputSchema, request.body);
+    const bracket = await knockout.generateBracket(id, body);
+    return reply.status(201).send(data(bracket));
+  });
+
+  app.get('/stages/:id/bracket', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    return data(await knockout.getBracket(id));
   });
 };

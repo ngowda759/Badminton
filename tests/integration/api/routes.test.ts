@@ -1406,3 +1406,184 @@ describe('API envelope and error conventions', () => {
     await failingApp.close();
   });
 });
+
+/**
+ * Knockout bracket HTTP contract.
+ *
+ * These assert routing, Zod validation, status codes and the response envelope
+ * for the two Phase 6 endpoints; the bracket and progression rules themselves
+ * are covered by the application suite.
+ */
+describe('/api/v1 knockout bracket', () => {
+  it('creates a bracket and returns 201 with the data envelope', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Bracket A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Bracket B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{ data: { bracketSize: number; rounds: unknown[] } }>();
+    expect(body.data.bracketSize).toBe(2);
+    expect(body.data.rounds).toHaveLength(1);
+  });
+
+  it('reads the bracket and returns 200', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Bracket A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Bracket B');
+    await api.services.knockout.generateBracket(stage.id, { entryIds: [entryA, entryB] });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: { stageId: string } }>().data.stageId).toBe(stage.id);
+  });
+
+  it('rejects a malformed body with 400', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: ['not-a-uuid'] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<ErrorBody>().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 404 for a missing stage', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/stages/11111111-1111-4111-8111-111111111111/bracket',
+    });
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('returns 400 for a non-uuid stage id', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/stages/not-a-uuid/bracket',
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('maps a non-knockout stage to 422', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const group = await api.services.stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Group A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Group B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${group.id}/bracket`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('maps a duplicate generation to 409', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Bracket A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Bracket B');
+    await api.services.knockout.generateBracket(stage.id, { entryIds: [entryA, entryB] });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(409);
+  });
+
+  it('records a knockout result and advances the winner with 201', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Bracket A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Bracket B');
+    const { id: entryC } = await registerPlayer(categoryId, 'Bracket C');
+    const { id: entryD } = await registerPlayer(categoryId, 'Bracket D');
+    const bracket = await api.services.knockout.generateBracket(stage.id, {
+      entryIds: [entryA, entryB, entryC, entryD],
+    });
+    const semi1 = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${semi1}/transition`,
+      payload: { status: 'IN_PROGRESS' },
+    });
+    const recorded = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${semi1}/result`,
+      payload: {
+        games: [
+          { gameNumber: 1, participant1Points: 21, participant2Points: 12 },
+          { gameNumber: 2, participant1Points: 21, participant2Points: 14 },
+        ],
+      },
+    });
+
+    expect(recorded.statusCode).toBe(201);
+    const winner = recorded.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId;
+
+    const after = await app.inject({ method: 'GET', url: `/api/v1/stages/${stage.id}/bracket` });
+    const finalMatch = after
+      .json<{
+        data: {
+          rounds: readonly {
+            roundNumber: number;
+            matches: readonly {
+              participant1: { entryId: string | null };
+            }[];
+          }[];
+        };
+      }>()
+      .data.rounds.find((round) => round.roundNumber === 2)?.matches[0];
+    expect(finalMatch?.participant1.entryId).toBe(winner);
+  });
+});

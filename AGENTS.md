@@ -6,17 +6,19 @@ Repository guidance for automated agents working on Badminton V2.
 
 Badminton V2 — a badminton tournament management platform. **Phases 1 (foundation),
 2 (tournament database/domain/application/infrastructure), 3 (REST API layer),
-4 (tournament setup UI) and 5 (group-stage scheduling and scoring) are implemented.**
+4 (tournament setup UI), 5 (group-stage scheduling and scoring) and 6 (knockout
+stage, bracket management and progression) are implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
-setup UI and group-stage match scoring/standings exist. **Draw generation, knockout
-advancement, rankings, scheduling/court/venue management, authentication and
-result-correction workflows are not implemented.** Do not add those unless the task
-explicitly asks for a later phase. The authoritative design is
+setup UI, group-stage match scoring/standings and the knockout bracket workflow
+exist. **Automatic draw/seeding, rankings, scheduling/court/venue management,
+authentication and result-correction workflows are not implemented.** Do not add
+those unless the task explicitly asks for a later phase. The authoritative design is
 `docs/phase-2-domain-design.md`; the Phase 2.2 architecture is
 `docs/phase-2-2-architecture.md`; the REST API reference is
-`docs/phase-3-rest-api.md`; Phase 5 scoring is `docs/phase-5-group-scoring.md`.
+`docs/phase-3-rest-api.md`; Phase 5 scoring is `docs/phase-5-group-scoring.md`;
+Phase 6 knockout is `docs/phase-6-knockout.md`.
 
 ## Layout
 

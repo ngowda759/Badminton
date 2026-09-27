@@ -151,3 +151,19 @@ export interface TransitionStageStatusCommand {
 export interface TransitionMatchStatusCommand {
   readonly status: MatchStatus;
 }
+
+/**
+ * Generates a single-elimination bracket for a KNOCKOUT stage.
+ *
+ * `entryIds` is the caller-controlled ordering: entries are paired in the
+ * supplied order (1 vs 2, 3 vs 4, ...) into round 1. There is deliberately no
+ * automatic seeding or ranking - the caller decides the order.
+ */
+export interface GenerateKnockoutBracketCommand {
+  readonly entryIds: readonly string[];
+}
+
+/** Reads a knockout bracket, optionally refreshing stage completion. */
+export interface GetKnockoutBracketQuery {
+  readonly stageId: string;
+}

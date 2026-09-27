@@ -12,6 +12,7 @@ import {
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { RecordMatchResultCommand } from './commands.ts';
+import type { KnockoutProgressionService } from './knockout-progression.service.ts';
 
 /**
  * Match result and scoring service.
@@ -21,6 +22,10 @@ import type { RecordMatchResultCommand } from './commands.ts';
  * the games are scored by the domain rules, the result is persisted and the
  * match is moved to `COMPLETED` - all inside one unit of work, so a failure
  * leaves no partial result.
+ *
+ * For a KNOCKOUT match the same unit of work also propagates the winner into the
+ * next round (Phase 6), so the result, the recorded winner and the bracket
+ * progression commit atomically or not at all.
  *
  * The service depends only on repository ports and the pure domain rules; it
  * knows nothing about HTTP or React.
@@ -34,6 +39,7 @@ export interface MatchResultService {
 export function createMatchResultService(
   client: RepositoryClient,
   unitOfWork: UnitOfWork,
+  progression?: KnockoutProgressionService,
 ): MatchResultService {
   return {
     async recordResult(matchId, command): Promise<MatchResult> {
@@ -77,6 +83,14 @@ export function createMatchResultService(
         const loserEntryId = outcome.winnerSlot === 1 ? slot2.entryId : slot1.entryId;
 
         const completed = await tx.matches.complete(matchId, winnerEntryId);
+
+        // Knockout progression runs inside the same unit of work (and sees the
+        // completed match) so the result and the next-round slot cannot diverge.
+        // The final has no successor - `progress` returns false.
+        if (progression) {
+          await progression.progress(tx, matchId, winnerEntryId);
+        }
+
         return toResult(completed, winnerEntryId, loserEntryId, savedGames);
       });
     },

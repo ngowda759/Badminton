@@ -15,6 +15,7 @@ export type {
   TournamentEntryRepository,
   TournamentStageRepository,
   MatchRepository,
+  MatchWithParticipants,
   MatchParticipantRepository,
   MatchGameRepository,
 } from './repositories/index.ts';
@@ -48,6 +49,8 @@ export type {
   CreateStageCommand,
   CreateTeamCommand,
   CreateTournamentCommand,
+  GenerateKnockoutBracketCommand,
+  GetKnockoutBracketQuery,
   RecordMatchGameCommand,
   RecordMatchResultCommand,
   RegisterEntryCommand,
@@ -84,3 +87,17 @@ export {
   type MatchResultService,
 } from './services/match-result.service.ts';
 export { createStandingsService, type StandingsService } from './services/standings.service.ts';
+export {
+  createKnockoutBracketService,
+  type KnockoutBracketService,
+} from './services/knockout-bracket.service.ts';
+export {
+  createKnockoutProgressionService,
+  type KnockoutProgressionService,
+} from './services/knockout-progression.service.ts';
+export type {
+  Bracket,
+  BracketMatch,
+  BracketParticipant,
+  BracketRound,
+} from './services/knockout.ts';

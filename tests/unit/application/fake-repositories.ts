@@ -524,6 +524,17 @@ function buildClient(state: State): RepositoryClient {
         (row) => row.status === 'COMPLETED' && row.stageId === stageId,
       );
     },
+    async listByStageWithParticipants(stageId) {
+      return [...state.matches.values()]
+        .filter((row) => row.stageId === stageId)
+        .sort((left, right) => left.sequence - right.sequence)
+        .map((match) => ({
+          match,
+          participants: [...state.matchParticipants.values()]
+            .filter((participant) => participant.matchId === match.id)
+            .sort((left, right) => left.slot - right.slot),
+        }));
+    },
     async update(id: string, data: UpdateMatchData): Promise<Match> {
       const current = state.matches.get(id);
       if (!current) {
@@ -634,6 +645,26 @@ function buildClient(state: State): RepositoryClient {
       return [...state.matchParticipants.values()].find(
         (row) => row.matchId === matchId && row.entryId === entryId,
       );
+    },
+    async upsertSlot(matchId, slot, entryId) {
+      const current = [...state.matchParticipants.values()].find(
+        (row) => row.matchId === matchId && row.slot === slot,
+      );
+      if (!current) {
+        const created: MatchParticipant = {
+          id: nextId('participant'),
+          matchId,
+          slot: slot === 2 ? 2 : 1,
+          entryId,
+          createdAt: now(),
+          updatedAt: now(),
+        };
+        state.matchParticipants.set(created.id, created);
+        return created;
+      }
+      const updated: MatchParticipant = { ...current, entryId, updatedAt: now() };
+      state.matchParticipants.set(updated.id, updated);
+      return updated;
     },
   };
 
