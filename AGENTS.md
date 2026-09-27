@@ -60,7 +60,9 @@ database — integration tests use `app.inject()` with stub probes.
   `CORS_ORIGINS`; if you change one, change the other or E2E will report `Unreachable`.
 - Phase 2 constraints Prisma cannot express (row-local `CHECK`s and partial unique
   indexes) live in the `add_tournament_domain` migration. Do not re-add conflicting
-  Prisma `@unique` attributes for those columns.
+  Prisma `@unique` attributes for those columns. Phase 2 timestamps are `timestamptz`
+  (`@db.Timestamptz(3)`) and ordinal columns (`sequence`, `slot`, `position`, `drawSize`,
+  `roundNumber`) are `smallint` (`@db.SmallInt`); `seed` and `matchNumber` stay `integer`.
 - The database integration tests (`tests/integration/database/`) run against real
   PostgreSQL in a dedicated `<database>_test` database, created and migrated on first
   use. They skip when no database is reachable, but fail the run when `CI` is set or
@@ -71,7 +73,10 @@ database — integration tests use `app.inject()` with stub probes.
 - Server-only config is read via `getServerEnv()`. Only `VITE_`-prefixed variables reach
   the browser bundle.
 - Prisma 7 resolves `env('DATABASE_URL')` eagerly when `prisma.config.ts` is imported, so
-  that file loads `dotenv` itself before calling `defineConfig`.
+  that file loads `dotenv` itself before calling `defineConfig`. Migrations prefer
+  `DIRECT_URL` over `DATABASE_URL`; local Docker sets only `DATABASE_URL`, Supabase sets
+  both (pooled runtime URL plus a direct DDL URL). Never commit either.
 - Prisma generates into `packages/database/generated/prisma`, which is gitignored. Run
   `npm run db:generate` after a fresh clone.
-- The seed is idempotent (upserts on `key`); never replace it with `create`.
+- The seed is idempotent: Phase 2 fixtures upsert on fixed UUIDs and metadata on its key.
+  Running it twice must not duplicate rows; never replace the upserts with `create`.

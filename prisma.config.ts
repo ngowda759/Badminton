@@ -10,8 +10,16 @@ import { defineConfig, env } from 'prisma/config';
  *
  * The `datasource` block is intentionally not defined in `schema.prisma`;
  * Prisma 7 takes the connection URL from here.
+ *
+ * Migrations prefer `DIRECT_URL` when present. Supabase (and other poolers) hand
+ * out a transaction-pooled endpoint as `DATABASE_URL`, which cannot run DDL, plus
+ * a direct endpoint as `DIRECT_URL`. Local Docker only defines `DATABASE_URL`, so
+ * the fallback keeps the Phase 1 convention working unchanged.
  */
 loadEnv({ path: ['.env.local', '.env'], quiet: true });
+
+const migrationUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
+
 export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: {
@@ -19,6 +27,6 @@ export default defineConfig({
     seed: 'tsx prisma/seed.ts',
   },
   datasource: {
-    url: env('DATABASE_URL'),
+    url: migrationUrl ?? env('DATABASE_URL'),
   },
 });
