@@ -21,7 +21,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspace @badminton/web",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
+    "test": "vitest run && npm run test --workspace @badminton/web",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
