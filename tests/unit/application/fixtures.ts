@@ -110,3 +110,20 @@ export async function seedMatch(
   });
   return match.id;
 }
+
+/** A KNOCKOUT stage; `drawSize` stays null until a bracket is generated. */
+export async function seedKnockoutStage(
+  client: RepositoryClient,
+  categoryId: string,
+  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE' } = {},
+): Promise<string> {
+  const stage = await client.stages.create({
+    categoryId,
+    name: 'Knockout',
+    type: 'KNOCKOUT',
+    sequence: input.sequence ?? 1,
+    drawSize: null,
+    status: input.status ?? 'PENDING',
+  });
+  return stage.id;
+}

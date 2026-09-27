@@ -1,4 +1,5 @@
 import {
+  createKnockoutBracketService,
   createMatchService,
   createPlayerService,
   createTeamService,
@@ -14,6 +15,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createFakeRepositories, type FakeRepositories } from './fake-repositories.ts';
 import {
   seedCategory,
+  seedKnockoutStage,
   seedMatch,
   seedPlayer,
   seedStage,
@@ -240,5 +242,27 @@ describe('atomic operations open exactly one transaction', () => {
         matches.addParticipant(doublesMatch, { entryId: doublesEntry.id, slot: 1 }),
       ),
     ).toBe(1);
+  });
+
+  it('wraps knockout bracket generation in a single transaction', async () => {
+    const { entries, stages } = services();
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const playerA = await seedPlayer(repos.client, 'A');
+    const playerB = await seedPlayer(repos.client, 'B');
+    const entryA = await entries.register({ categoryId, playerId: playerA });
+    const entryB = await entries.register({ categoryId, playerId: playerB });
+    await stages.transitionStatus(stageId, { status: 'ACTIVE' });
+
+    const knockout = createKnockoutBracketService(repos.client, counter.unitOfWork);
+    expect(
+      await transactionsUsed(() =>
+        knockout.generateBracket(stageId, { entryIds: [entryA.id, entryB.id] }),
+      ),
+    ).toBe(1);
+
+    // A read of the bracket opens no transaction.
+    expect(await transactionsUsed(() => knockout.getBracket(stageId))).toBe(0);
   });
 });

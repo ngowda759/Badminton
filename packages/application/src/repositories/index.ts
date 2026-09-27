@@ -136,10 +136,21 @@ export interface MatchRepository {
   listByStage(stageId: string): Promise<readonly Match[]>;
   /** Completed matches only, scoped to one stage (drives group standings). */
   listCompletedByStage(stageId: string): Promise<readonly Match[]>;
+  /**
+   * Every match of a stage together with its participants, in one batched read
+   * (no N+1). Drives knockout bracket retrieval.
+   */
+  listByStageWithParticipants(stageId: string): Promise<readonly MatchWithParticipants[]>;
   update(id: string, data: UpdateMatchData): Promise<Match>;
   updateStatus(id: string, status: MatchStatus): Promise<Match>;
   /** Writes the derived winner and the terminal status in one update. */
   complete(id: string, winnerEntryId: string): Promise<Match>;
+}
+
+/** A match read together with its participants, for batched bracket reads. */
+export interface MatchWithParticipants {
+  readonly match: Match;
+  readonly participants: readonly MatchParticipant[];
 }
 
 export interface MatchParticipantRepository {
@@ -149,6 +160,16 @@ export interface MatchParticipantRepository {
   listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchParticipant[]>;
   findSlot(matchId: string, slot: number): Promise<MatchParticipant | undefined>;
   findEntry(matchId: string, entryId: string): Promise<MatchParticipant | undefined>;
+  /**
+   * Fills an *empty* slot with an entry; creates the participant row.
+   *
+   * Deliberately not an upsert: knockout progression must never overwrite an
+   * occupied slot. `fillSlot` is create-only, so a taken slot raises a conflict
+   * (via the compound unique index) rather than silently replacing a different
+   * entry. Callers that need idempotency check the current slot first with
+   * `findSlot`.
+   */
+  fillSlot(matchId: string, slot: number, entryId: string): Promise<MatchParticipant>;
 }
 
 export interface MatchGameRepository {

@@ -380,4 +380,438 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     const stored = await prisma.tournament.findUniqueOrThrow({ where: { id: tournamentId } });
     expect(stored.status).toBe('REGISTRATION_OPEN');
   });
+
+  it('drives a full knockout bracket from setup to champion', async () => {
+    const tournament = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tournaments',
+      payload: {
+        name: 'Knockout Slice',
+        startDate: '2027-05-01',
+        endDate: '2027-05-03',
+        timezone: 'Asia/Kolkata',
+      },
+    });
+    const tournamentId = tournament.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/tournaments/${tournamentId}/transition`,
+      payload: { status: 'REGISTRATION_OPEN' },
+    });
+
+    const category = await app.inject({
+      method: 'POST',
+      url: `/api/v1/tournaments/${tournamentId}/categories`,
+      payload: { name: 'Mens Singles', code: 'MS', format: 'SINGLES' },
+    });
+    const categoryId = category.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/transition`,
+      payload: { status: 'OPEN' },
+    });
+
+    const entryIds: string[] = [];
+    for (let index = 1; index <= 4; index += 1) {
+      const playerId = await createPlayerThroughApi(`Knockout Player ${String(index)}`);
+      const entry = await app.inject({
+        method: 'POST',
+        url: `/api/v1/categories/${categoryId}/entries`,
+        payload: { playerId },
+      });
+      expect(entry.statusCode).toBe(201);
+      entryIds.push(entry.json<{ data: { id: string } }>().data.id);
+    }
+
+    const stage = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Knockout', type: 'KNOCKOUT', sequence: 1 },
+    });
+    expect(stage.statusCode).toBe(201);
+    const stageId = stage.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stageId}/transition`,
+      payload: { status: 'ACTIVE' },
+    });
+
+    // Generate the 4-entry bracket in the caller-supplied order.
+    const generated = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stageId}/bracket`,
+      payload: { entryIds },
+    });
+    expect(generated.statusCode).toBe(201);
+
+    type BracketResponse = {
+      readonly data: {
+        readonly bracketSize: number;
+        readonly complete: boolean;
+        readonly status: string;
+        readonly rounds: readonly {
+          readonly roundNumber: number;
+          readonly matches: readonly {
+            readonly matchId: string;
+            readonly matchNumber: number;
+            readonly participant1: { readonly entryId: string | null };
+            readonly participant2: { readonly entryId: string | null };
+            readonly winnerEntryId: string | null;
+          }[];
+        }[];
+      };
+    };
+
+    const read = async (): Promise<BracketResponse['data']> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/stages/${stageId}/bracket`,
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json<BracketResponse>().data;
+    };
+
+    const first = await read();
+    expect(first.bracketSize).toBe(4);
+    expect(first.rounds.map((round) => round.matches.length)).toEqual([2, 1]);
+    const semi1 = first.rounds[0]?.matches[0];
+    const semi2 = first.rounds[0]?.matches[1];
+    expect(semi1?.participant1.entryId).toBe(entryIds[0]);
+    expect(semi1?.participant2.entryId).toBe(entryIds[1]);
+    expect(semi2?.participant1.entryId).toBe(entryIds[2]);
+    expect(semi2?.participant2.entryId).toBe(entryIds[3]);
+    // The final starts unresolved - no placeholder ids.
+    expect(first.rounds[1]?.matches[0]?.participant1.entryId).toBeNull();
+    expect(first.rounds[1]?.matches[0]?.participant2.entryId).toBeNull();
+
+    // A later-round match cannot start before its slots are filled.
+    const premature = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${first.rounds[1]?.matches[0]?.matchId ?? ''}/transition`,
+      payload: { status: 'IN_PROGRESS' },
+    });
+    expect(premature.statusCode).toBe(422);
+
+    const play = async (matchId: string): Promise<string> => {
+      const start = await app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/transition`,
+        payload: { status: 'IN_PROGRESS' },
+      });
+      expect(start.statusCode).toBe(200);
+      const result = await app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/result`,
+        payload: { games: twoZero },
+      });
+      expect(result.statusCode).toBe(201);
+      return result.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId;
+    };
+
+    const semi1Winner = await play(semi1?.matchId ?? '');
+    const afterSemi1 = await read();
+    expect(afterSemi1.rounds[1]?.matches[0]?.participant1.entryId).toBe(semi1Winner);
+    expect(afterSemi1.rounds[1]?.matches[0]?.participant2.entryId).toBeNull();
+    // Stage stays active until the final is decided.
+    expect(afterSemi1.status).toBe('ACTIVE');
+
+    const semi2Winner = await play(semi2?.matchId ?? '');
+    const beforeFinal = await read();
+    const final = beforeFinal.rounds[1]?.matches[0];
+    expect(final?.participant1.entryId).toBe(semi1Winner);
+    expect(final?.participant2.entryId).toBe(semi2Winner);
+
+    const champion = await play(final?.matchId ?? '');
+    expect([semi1Winner, semi2Winner]).toContain(champion);
+
+    const completed = await read();
+    expect(completed.complete).toBe(true);
+    expect(completed.status).toBe('COMPLETED');
+
+    // The progression is persisted, not just reported.
+    const finalRow = await prisma.match.findUniqueOrThrow({ where: { id: final?.matchId ?? '' } });
+    expect(finalRow.status).toBe('COMPLETED');
+    expect(finalRow.winnerEntryId).toBe(champion);
+    expect(await prisma.matchGame.count({ where: { matchId: final?.matchId ?? '' } })).toBe(2);
+  });
+
+  it('rejects an unsupported bracket size against the real database', async () => {
+    const tournament = await services.tournaments.create({
+      name: 'Bracket Size Slice',
+      startDate: new Date('2027-06-01T00:00:00.000Z'),
+      endDate: new Date('2027-06-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const ids: string[] = [];
+    for (let index = 0; index < 3; index += 1) {
+      const player = await services.players.create({ name: `Size ${String(index)}` });
+      const entry = await services.entries.register({
+        categoryId: category.id,
+        playerId: player.id,
+      });
+      ids.push(entry.id);
+    }
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: ids },
+    });
+    expect(response.statusCode).toBe(422);
+    expect(await prisma.match.count({ where: { stageId: stage.id } })).toBe(0);
+  });
+
+  it('rejects a withdrawn entry and a duplicate bracket generation', async () => {
+    const tournament = await services.tournaments.create({
+      name: 'Bracket Guard Slice',
+      startDate: new Date('2027-07-01T00:00:00.000Z'),
+      endDate: new Date('2027-07-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const one = await services.players.create({ name: 'Guard One' });
+    const two = await services.players.create({ name: 'Guard Two' });
+    const three = await services.players.create({ name: 'Guard Three' });
+    const entryOne = await services.entries.register({ categoryId: category.id, playerId: one.id });
+    const entryTwo = await services.entries.register({ categoryId: category.id, playerId: two.id });
+    const entryThree = await services.entries.register({
+      categoryId: category.id,
+      playerId: three.id,
+    });
+    await services.entries.withdraw(entryTwo.id);
+
+    const rejected = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: [entryOne.id, entryTwo.id] },
+    });
+    expect(rejected.statusCode).toBe(422);
+    expect(await prisma.match.count({ where: { stageId: stage.id } })).toBe(0);
+
+    // A valid bracket then rejects a second generation as a conflict.
+    const valid = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: [entryOne.id, entryThree.id] },
+    });
+    expect(valid.statusCode).toBe(201);
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/bracket`,
+      payload: { entryIds: [entryOne.id, entryThree.id] },
+    });
+    expect(duplicate.statusCode).toBe(409);
+  });
+
+  it('keeps a knockout result and its progression atomic under concurrency', async () => {
+    const tournament = await services.tournaments.create({
+      name: 'Bracket Concurrency',
+      startDate: new Date('2027-08-01T00:00:00.000Z'),
+      endDate: new Date('2027-08-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const player = await services.players.create({ name: `Concurrent ${String(index)}` });
+      const entry = await services.entries.register({
+        categoryId: category.id,
+        playerId: player.id,
+      });
+      ids.push(entry.id);
+    }
+    const bracket = await services.knockout.generateBracket(stage.id, { entryIds: ids });
+    const semi1 = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+    const finalMatchId = bracket.rounds[1]?.matches[0]?.matchId ?? '';
+    await services.matches.transitionStatus(semi1, { status: 'IN_PROGRESS' });
+
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${semi1}/result`,
+        payload: { games: twoZero },
+      }),
+      app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${semi1}/result`,
+        payload: { games: twoZero },
+      }),
+    ]);
+
+    expect([first.statusCode, second.statusCode].sort()).toEqual([201, 409]);
+    expect(await prisma.matchGame.count({ where: { matchId: semi1 } })).toBe(2);
+    // The winner reached the final exactly once - no duplicate slot rows.
+    const finalSlots = await prisma.matchParticipant.findMany({
+      where: { matchId: finalMatchId },
+    });
+    expect(finalSlots).toHaveLength(1);
+    expect(finalSlots[0]?.slot).toBe(1);
+  });
+
+  it('never overwrites an occupied bracket slot (fill-only progression)', async () => {
+    const tournament = await services.tournaments.create({
+      name: 'Fill Only',
+      startDate: new Date('2027-09-01T00:00:00.000Z'),
+      endDate: new Date('2027-09-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const ids: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const player = await services.players.create({ name: `Fill ${String(index)}` });
+      const entry = await services.entries.register({
+        categoryId: category.id,
+        playerId: player.id,
+      });
+      ids.push(entry.id);
+    }
+    const bracket = await services.knockout.generateBracket(stage.id, { entryIds: ids });
+    const semi1 = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+    const semi2 = bracket.rounds[0]?.matches[1]?.matchId ?? '';
+    const finalMatchId = bracket.rounds[1]?.matches[0]?.matchId ?? '';
+
+    // First semifinal completes and claims final slot 1.
+    await services.matches.transitionStatus(semi1, { status: 'IN_PROGRESS' });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${semi1}/result`,
+      payload: { games: twoZero },
+    });
+    const slotOne = await client.matchParticipants.listByMatch(finalMatchId);
+    const occupant = slotOne.find((slot) => slot.slot === 1)?.entryId;
+    expect(occupant).toBeDefined();
+
+    // The repository fill-only primitive refuses a second writer into the same
+    // real slot (compound unique index) instead of replacing the winner.
+    const intruder = ids.find((id) => id !== occupant) ?? '';
+    await expect(client.matchParticipants.fillSlot(finalMatchId, 1, intruder)).rejects.toThrow();
+
+    const after = await client.matchParticipants.listByMatch(finalMatchId);
+    expect(after.find((slot) => slot.slot === 1)?.entryId).toBe(occupant);
+    expect(await prisma.matchParticipant.count({ where: { matchId: finalMatchId } })).toBe(1);
+
+    // The second semifinal fills slot 2 normally.
+    await services.matches.transitionStatus(semi2, { status: 'IN_PROGRESS' });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${semi2}/result`,
+      payload: { games: twoZero },
+    });
+    expect(await prisma.matchParticipant.count({ where: { matchId: finalMatchId } })).toBe(2);
+  });
+
+  it('refuses to force-complete a knockout stage before the final is decided', async () => {
+    const tournament = await services.tournaments.create({
+      name: 'Stage Integrity',
+      startDate: new Date('2027-10-01T00:00:00.000Z'),
+      endDate: new Date('2027-10-02T00:00:00.000Z'),
+      timezone: 'Asia/Kolkata',
+    });
+    await services.tournaments.transitionStatus(tournament.id, { status: 'REGISTRATION_OPEN' });
+    const category = await services.categories.create(tournament.id, {
+      name: 'Mens Singles',
+      code: 'MS',
+      format: 'SINGLES',
+    });
+    await services.categories.transitionStatus(category.id, { status: 'OPEN' });
+    const stage = await services.stages.create(category.id, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const ids: string[] = [];
+    for (let index = 0; index < 2; index += 1) {
+      const player = await services.players.create({ name: `Integrity ${String(index)}` });
+      const entry = await services.entries.register({
+        categoryId: category.id,
+        playerId: player.id,
+      });
+      ids.push(entry.id);
+    }
+    const bracket = await services.knockout.generateBracket(stage.id, { entryIds: ids });
+    const finalMatchId = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+    await services.stages.transitionStatus(stage.id, { status: 'ACTIVE' });
+
+    // The final is unresolved: a forced completion is a business-rule violation.
+    const forced = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/transition`,
+      payload: { status: 'COMPLETED' },
+    });
+    expect(forced.statusCode).toBe(422);
+    expect(
+      (await prisma.tournamentStage.findUniqueOrThrow({ where: { id: stage.id } })).status,
+    ).toBe('ACTIVE');
+
+    // Bracket size is immutable once generated.
+    const resized = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/stages/${stage.id}`,
+      payload: { drawSize: 4 },
+    });
+    expect(resized.statusCode).toBe(422);
+
+    // Once the final is completed the derived completion is persisted.
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${finalMatchId}/transition`,
+      payload: { status: 'IN_PROGRESS' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${finalMatchId}/result`,
+      payload: { games: twoZero },
+    });
+    const read = await app.inject({ method: 'GET', url: `/api/v1/stages/${stage.id}/bracket` });
+    expect(read.json<{ data: { status: string; complete: boolean } }>().data).toMatchObject({
+      status: 'COMPLETED',
+      complete: true,
+    });
+  });
 });

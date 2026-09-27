@@ -6,6 +6,8 @@ import { vi, type Mock } from 'vitest';
 import { ApiProvider } from '@/api/context.tsx';
 import type { BadmintonApi } from '@/api/services.ts';
 import type {
+  BracketDto,
+  BracketMatchDto,
   CategoryDto,
   EntryDto,
   MatchDto,
@@ -187,6 +189,32 @@ export function makeStandingRow(overrides: Partial<StandingRowDto> = {}): Standi
   };
 }
 
+export function makeBracketMatch(overrides: Partial<BracketMatchDto> = {}): BracketMatchDto {
+  return {
+    matchId: '88888888-8888-4888-8888-888888888888',
+    matchNumber: 1,
+    sequence: 1,
+    status: 'SCHEDULED',
+    participant1: { slot: 1, entryId: '66666666-6666-4666-8666-666666666666' },
+    participant2: { slot: 2, entryId: '66666666-6666-4666-8666-666666666667' },
+    winnerEntryId: null,
+    ...overrides,
+  };
+}
+
+export function makeBracket(overrides: Partial<BracketDto> = {}): BracketDto {
+  return {
+    stageId: '77777777-7777-4777-8777-777777777777',
+    stageName: 'Knockout',
+    status: 'PENDING',
+    bracketSize: 2,
+    roundCount: 1,
+    rounds: [{ roundNumber: 1, name: 'Final', matches: [makeBracketMatch()] }],
+    complete: false,
+    ...overrides,
+  };
+}
+
 /**
  * Builds a fully-typed stub API.
  *
@@ -249,6 +277,8 @@ export function createStubApi(): Mocked<BadmintonApi> {
       update: vi.fn(() => Promise.resolve(makeStage())),
       transition: vi.fn(() => Promise.resolve(makeStage())),
       standings: vi.fn(() => Promise.resolve([] as readonly StandingRowDto[])),
+      getBracket: vi.fn(() => Promise.resolve(makeBracket())),
+      generateBracket: vi.fn(() => Promise.resolve(makeBracket())),
     },
     matches: {
       listByStage: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),

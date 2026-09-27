@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
+import { BracketSection } from '@/components/tournaments/knockout-bracket.tsx';
 import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
@@ -64,6 +65,8 @@ export function StageDetailPage() {
   );
   const { nameFor } = useEntryNames(category.id);
   const mutation = useMutation<unknown>();
+  // Bumping this token refetches the bracket after a result is recorded.
+  const [bracketToken, setBracketToken] = useState(0);
 
   if (stageQuery.state.status === 'loading') {
     return <LoadingState label="Loading stage…" rows={3} />;
@@ -82,6 +85,12 @@ export function StageDetailPage() {
   // Matches are siblings of stages under the category route (see routes.tsx),
   // not nested beneath the stage, so the match link omits the stage segment.
   const categoryBase = `/tournaments/${tournament.id}/categories/${category.id}`;
+  // A bracket exists once its matches have been generated; the backend then
+  // rejects any change to the bracket size, so the field is locked here too.
+  const bracketGenerated =
+    stage.type === 'KNOCKOUT' &&
+    matchQuery.state.status === 'loaded' &&
+    matchQuery.state.data.length > 0;
 
   return (
     <div className="space-y-6">
@@ -132,6 +141,7 @@ export function StageDetailPage() {
         <CardContent>
           <EditStageForm
             stage={stage}
+            drawSizeLocked={bracketGenerated}
             onSaved={() => {
               stageQuery.refetch();
               matchQuery.refetch();
@@ -145,7 +155,14 @@ export function StageDetailPage() {
           <CardTitle>Matches</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <CreateMatchForm stageId={stage.id} onCreated={matchQuery.refetch} />
+          {stage.type === 'GROUP' ? (
+            <CreateMatchForm stageId={stage.id} onCreated={matchQuery.refetch} />
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              Knockout matches are created with the bracket; use the bracket above to view and open
+              them.
+            </p>
+          )}
 
           {matchQuery.state.status === 'loading' ? <LoadingState label="Loading matches…" /> : null}
           {matchQuery.state.status === 'error' ? (
@@ -158,7 +175,11 @@ export function StageDetailPage() {
           {matchQuery.state.status === 'loaded' && matchQuery.state.data.length === 0 ? (
             <EmptyState
               title="No matches yet"
-              description="Create a match to assign participants."
+              description={
+                stage.type === 'GROUP'
+                  ? 'Create a match to assign participants.'
+                  : 'Generate the bracket to create the knockout matches.'
+              }
             />
           ) : null}
           {matchQuery.state.status === 'loaded' && matchQuery.state.data.length > 0 ? (
@@ -203,6 +224,44 @@ export function StageDetailPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {stage.type === 'KNOCKOUT' ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Knockout bracket</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <BracketSection
+              stageId={stage.id}
+              categoryId={category.id}
+              matchHref={(matchId) => `${categoryBase}/matches/${matchId}`}
+              refreshToken={bracketToken}
+              onGenerated={() => {
+                setBracketToken((token) => token + 1);
+                stageQuery.refetch();
+                matchQuery.refetch();
+              }}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-muted-foreground text-xs">
+                Winners advance automatically when a match result is recorded. Unfilled later-round
+                slots show as TBD.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setBracketToken((token) => token + 1);
+                  matchQuery.refetch();
+                }}
+              >
+                Refresh bracket
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {stage.type === 'GROUP' ? (
         <Card>
@@ -286,9 +345,11 @@ function MatchResultCell({
 
 function EditStageForm({
   stage,
+  drawSizeLocked,
   onSaved,
 }: {
   readonly stage: StageDto;
+  readonly drawSizeLocked: boolean;
   readonly onSaved: () => void;
 }) {
   const api = useApi();
@@ -302,7 +363,9 @@ function EditStageForm({
     event.preventDefault();
     const nextErrors = compactErrors({
       sequence: validatePositiveInteger(sequence, 'Sequence'),
-      drawSize: validateOptionalPositiveInteger(drawSize, 'Draw size'),
+      // The bracket size is fixed once the bracket exists, so it is not
+      // validated or sent at all in that state.
+      drawSize: drawSizeLocked ? undefined : validateOptionalPositiveInteger(drawSize, 'Draw size'),
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -313,7 +376,7 @@ function EditStageForm({
       await api.stages.update(stage.id, {
         name: name.trim(),
         sequence: Number(sequence),
-        drawSize: drawSize.trim() ? Number(drawSize) : null,
+        ...(drawSizeLocked ? {} : { drawSize: drawSize.trim() ? Number(drawSize) : null }),
       });
       onSaved();
     });
@@ -354,6 +417,7 @@ function EditStageForm({
             id={id}
             type="number"
             min={1}
+            disabled={drawSizeLocked}
             {...(describedBy ? { 'aria-describedby': describedBy } : {})}
             aria-invalid={errors.drawSize ? true : undefined}
             value={drawSize}
@@ -363,6 +427,11 @@ function EditStageForm({
           />
         )}
       </FormField>
+      {drawSizeLocked ? (
+        <p className="text-muted-foreground text-xs sm:col-span-3">
+          The bracket size is fixed once the bracket has been generated.
+        </p>
+      ) : null}
       <div className="sm:col-span-3">
         <Button type="submit" disabled={mutation.pending}>
           {mutation.pending ? 'Saving…' : 'Save changes'}

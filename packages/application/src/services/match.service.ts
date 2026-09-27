@@ -130,6 +130,13 @@ export function createMatchService(client: RepositoryClient, unitOfWork: UnitOfW
         );
       }
 
+      // A knockout match cannot start until both slots hold eligible entries;
+      // later-round slots stay empty until progression fills them. Group
+      // matches are unaffected.
+      if (to === 'IN_PROGRESS') {
+        await assertKnockoutReadyToStart(client, current);
+      }
+
       return client.matches.updateStatus(id, to);
     },
 
@@ -215,6 +222,50 @@ async function requireMatch(client: RepositoryClient, id: string): Promise<Match
     throw new NotFoundError('Match', id);
   }
   return match;
+}
+
+/**
+ * Guards the `SCHEDULED → IN_PROGRESS` transition for a KNOCKOUT match.
+ *
+ * A knockout match may only start once both slots hold valid, active entries of
+ * the stage's category. A group match keeps its existing (manually assigned)
+ * behaviour, so Phase 5 is not changed.
+ */
+async function assertKnockoutReadyToStart(client: RepositoryClient, match: Match): Promise<void> {
+  const stage = await client.stages.findById(match.stageId);
+  if (stage?.type !== 'KNOCKOUT') {
+    return;
+  }
+
+  const participants = await client.matchParticipants.listByMatch(match.id);
+  const slot1 = participants.find((participant) => participant.slot === 1);
+  const slot2 = participants.find((participant) => participant.slot === 2);
+  if (!slot1 || !slot2) {
+    throw new BusinessRuleViolationError(
+      'A knockout match cannot start until both participant slots are filled.',
+    );
+  }
+
+  const slot1Entry = await client.entries.findById(slot1.entryId);
+  const slot2Entry = await client.entries.findById(slot2.entryId);
+  if (!slot1Entry || !slot2Entry) {
+    throw new BusinessRuleViolationError('A knockout match participant entry was not found.');
+  }
+  if (!ACTIVE_ENTRY_STATUSES.includes(slot1Entry.status)) {
+    throw new BusinessRuleViolationError(
+      'A knockout match cannot start while a participant entry is not active.',
+    );
+  }
+  if (!ACTIVE_ENTRY_STATUSES.includes(slot2Entry.status)) {
+    throw new BusinessRuleViolationError(
+      'A knockout match cannot start while a participant entry is not active.',
+    );
+  }
+  if (slot1Entry.categoryId !== stage.categoryId || slot2Entry.categoryId !== stage.categoryId) {
+    throw new BusinessRuleViolationError(
+      'A knockout match participant does not belong to the stage category.',
+    );
+  }
 }
 
 function assertPositive(value: number, field: string): void {

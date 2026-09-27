@@ -1,5 +1,6 @@
 import type { ApiClient } from './client.ts';
 import type {
+  BracketDto,
   CategoryDto,
   CreateCategoryInput,
   CreateMatchInput,
@@ -8,6 +9,7 @@ import type {
   CreateTeamInput,
   CreateTournamentInput,
   EntryDto,
+  GenerateKnockoutBracketInput,
   MatchDto,
   MatchParticipantDto,
   MatchResultDto,
@@ -92,6 +94,14 @@ export interface StageApi {
   update(id: string, input: UpdateStageInput, signal?: AbortSignal): Promise<StageDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<StageDto>;
   standings(id: string, signal?: AbortSignal): Promise<readonly StandingRowDto[]>;
+  /** Reads the knockout bracket for a KNOCKOUT stage. */
+  getBracket(id: string, signal?: AbortSignal): Promise<BracketDto>;
+  /** Generates the bracket from a caller-controlled entry ordering. */
+  generateBracket(
+    id: string,
+    input: GenerateKnockoutBracketInput,
+    signal?: AbortSignal,
+  ): Promise<BracketDto>;
 }
 
 export interface MatchApi {
@@ -184,6 +194,9 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       transition: (id, status, signal) =>
         client.post(`/api/v1/stages/${id}/transition`, { status }, signal),
       standings: (id, signal) => client.get(`/api/v1/stages/${id}/standings`, signal),
+      getBracket: (id, signal) => client.get(`/api/v1/stages/${id}/bracket`, signal),
+      generateBracket: (id, input, signal) =>
+        client.post(`/api/v1/stages/${id}/bracket`, input, signal),
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),

@@ -176,6 +176,18 @@ export const addMatchParticipantInputSchema = z.object({
 });
 
 /**
+ * Bracket generation request.
+ *
+ * Only the request *shape* is validated here: a non-empty list of entry UUIDs.
+ * Whether the count is a supported bracket size, whether the entries belong to
+ * the stage's category and whether they are active are application/domain rules
+ * enforced by `KnockoutBracketService`, not by Zod.
+ */
+export const generateKnockoutBracketInputSchema = z.object({
+  entryIds: z.array(z.uuid('Each entry id must be a UUID.')).min(1, 'Provide at least one entry.'),
+});
+
+/**
  * A single game in a match result.
  *
  * Only the request *shape* is validated here: the game number is 1-3 (best of
@@ -224,3 +236,4 @@ export type UpdateMatchInput = z.input<typeof updateMatchInputSchema>;
 export type AddMatchParticipantInput = z.input<typeof addMatchParticipantInputSchema>;
 export type RecordMatchGameInput = z.input<typeof recordMatchGameInputSchema>;
 export type RecordMatchResultInput = z.input<typeof recordMatchResultInputSchema>;
+export type GenerateKnockoutBracketInput = z.input<typeof generateKnockoutBracketInputSchema>;

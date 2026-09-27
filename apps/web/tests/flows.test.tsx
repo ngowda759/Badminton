@@ -9,6 +9,8 @@ import { ApiError } from '@/api/client.ts';
 
 import {
   createStubApi,
+  makeBracket,
+  makeBracketMatch,
   makeCategory,
   makeEntry,
   makeMatch,
@@ -444,6 +446,172 @@ describe('tournament setup flows', () => {
     });
 
     expect(await screen.findByText('Could not load standings')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Knockout bracket UI.
+ *
+ * A KNOCKOUT stage shows bracket setup instead of standings: the operator picks
+ * and orders active entries, confirms, and the generated bracket renders as
+ * round columns with TBD slots and winners. The API boundary is stubbed; the
+ * components, hooks and validation run for real.
+ */
+describe('knockout bracket flows', () => {
+  it('generates a bracket from ordered entries after confirmation', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'KNOCKOUT', name: 'Knockout' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+    // First read is empty (setup); after generation it returns the bracket.
+    api.stages.getBracket
+      .mockResolvedValueOnce(makeBracket({ rounds: [] }))
+      .mockResolvedValue(makeBracket());
+    api.stages.generateBracket.mockResolvedValue(makeBracket());
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    // No standings table for a knockout stage.
+    expect(await screen.findByText('No bracket yet')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Standings' })).not.toBeInTheDocument();
+
+    await screen.findByText('Alice');
+    await user.click(screen.getByRole('checkbox', { name: /Alice/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Bob/ }));
+    expect(screen.getByTestId('bracket-shape')).toHaveTextContent('Final (1)');
+
+    await user.click(screen.getByRole('button', { name: 'Generate bracket' }));
+    // Confirmation is required before the mutation runs.
+    expect(api.stages.generateBracket).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Generate bracket' }));
+
+    await waitFor(() => {
+      expect(api.stages.generateBracket).toHaveBeenCalledWith('s1', { entryIds: ['e1', 'e2'] });
+    });
+  });
+
+  it('renders the bracket with participants, TBD slots and the winner', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'KNOCKOUT', name: 'Knockout' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e3', playerId: 'p3', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e4', playerId: 'p4', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(
+        makePlayer({
+          id,
+          name: { p1: 'Alice', p2: 'Bob', p3: 'Cara', p4: 'Dana' }[id] ?? id,
+        }),
+      ),
+    );
+    api.stages.getBracket.mockResolvedValue(
+      makeBracket({
+        bracketSize: 4,
+        roundCount: 2,
+        rounds: [
+          {
+            roundNumber: 1,
+            name: 'Semifinals',
+            matches: [
+              makeBracketMatch({
+                matchId: 'm1',
+                matchNumber: 1,
+                status: 'COMPLETED',
+                winnerEntryId: 'e1',
+                participant1: { slot: 1, entryId: 'e1' },
+                participant2: { slot: 2, entryId: 'e2' },
+              }),
+              makeBracketMatch({
+                matchId: 'm2',
+                matchNumber: 2,
+                participant1: { slot: 1, entryId: 'e3' },
+                participant2: { slot: 2, entryId: 'e4' },
+              }),
+            ],
+          },
+          {
+            roundNumber: 2,
+            name: 'Final',
+            matches: [
+              makeBracketMatch({
+                matchId: 'm3',
+                matchNumber: 1,
+                participant1: { slot: 1, entryId: 'e1' },
+                participant2: { slot: 2, entryId: null },
+              }),
+            ],
+          },
+        ],
+      }),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    expect(await screen.findByText(/4-entry bracket/)).toBeInTheDocument();
+    expect(screen.getByText('Semifinals')).toBeInTheDocument();
+    expect(screen.getByText('Final')).toBeInTheDocument();
+    // Alice reached the final, so her name appears in both rounds.
+    expect(await screen.findAllByText('Alice')).not.toHaveLength(0);
+    expect(screen.getByText('Cara')).toBeInTheDocument();
+    // The unresolved final slot is shown as TBD.
+    expect(screen.getByText('TBD')).toBeInTheDocument();
+    // The completed semifinal marks its winner.
+    expect(screen.getByText('Winner')).toBeInTheDocument();
+    // Setup is gone once a bracket exists.
+    expect(screen.queryByRole('button', { name: 'Generate bracket' })).not.toBeInTheDocument();
+  });
+
+  it('locks the bracket size once a knockout bracket has been generated', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(
+      makeStage({ id: 's1', type: 'KNOCKOUT', name: 'Knockout', drawSize: 2 }),
+    );
+    api.matches.listByStage.mockResolvedValue([
+      makeMatch({ id: 'm1', stageId: 's1', roundNumber: 1, matchNumber: 1 }),
+    ]);
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.stages.getBracket.mockResolvedValue(makeBracket({ bracketSize: 2 }));
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    expect(
+      await screen.findByText('The bracket size is fixed once the bracket has been generated.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Draw size')).toBeDisabled();
+
+    // Saving name/sequence must not send a drawSize that the API would reject.
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => {
+      expect(api.stages.update).toHaveBeenCalledWith('s1', { name: 'Knockout', sequence: 1 });
+    });
   });
 });
 

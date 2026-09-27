@@ -341,6 +341,21 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
+    async listByStageWithParticipants(stageId: string) {
+      return translatePersistenceErrors(async () => {
+        // One query with an include: participants arrive nested, so a bracket
+        // read never issues a query per match.
+        const rows = await db.match.findMany({
+          where: { stageId },
+          orderBy: { sequence: 'asc' },
+          include: { participants: { orderBy: { slot: 'asc' } } },
+        });
+        return rows.map((row) => ({
+          match: toMatch(row),
+          participants: row.participants.map(toMatchParticipant),
+        }));
+      });
+    },
     update(id: string, data: UpdateMatchData) {
       return translatePersistenceErrors(async () =>
         toMatch(await db.match.update({ where: { id }, data })),
@@ -441,6 +456,14 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
         });
         return row ? toMatchParticipant(row) : undefined;
       });
+    },
+    async fillSlot(matchId, slot, entryId) {
+      // Create-only: the compound unique index on (matchId, slot) is the final
+      // guard, so a race that fills the slot first surfaces as a ConflictError
+      // instead of overwriting the winner already there.
+      return translatePersistenceErrors(async () =>
+        toMatchParticipant(await db.matchParticipant.create({ data: { matchId, slot, entryId } })),
+      );
     },
   };
 }
