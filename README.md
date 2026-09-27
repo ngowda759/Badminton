@@ -3,11 +3,12 @@
 A badminton tournament management platform, rebuilt from scratch as a typed full-stack
 monorepo.
 
-**Phases 1, 2 and 3 are implemented:** the foundation (Phase 1), the tournament
-database/domain/application layers (Phase 2), and the REST API layer (Phase 3). The
-API exposes the Phase 2 application services under `/api/v1`; see
-[docs/phase-3-rest-api.md](docs/phase-3-rest-api.md). UI tournament screens, draw
-generation, scoring and scheduling are intentionally absent; see
+**Phases 1, 2, 3 and 4 are implemented:** the foundation (Phase 1), the tournament
+database/domain/application layers (Phase 2), the REST API layer (Phase 3), and the
+tournament setup UI (Phase 4). The API exposes the Phase 2 application services under
+`/api/v1` ([docs/phase-3-rest-api.md](docs/phase-3-rest-api.md)); the web application
+drives them through a typed API client ([docs/phase-4-tournament-ui.md](docs/phase-4-tournament-ui.md)).
+Draw generation, scoring and scheduling are intentionally absent; see
 [Future phases](#future-phases).
 
 ---
@@ -88,11 +89,15 @@ Badminton/
 │   │   └── package.json
 │   └── web/                     React + Vite client
 │       ├── src/
-│       │   ├── app.tsx          application shell
-│       │   ├── components/      presentational components + shadcn/ui primitives
-│       │   ├── hooks/           React state wiring
-│       │   ├── lib/             API clients and pure presentation logic
+│       │   ├── app.tsx          root: providers, error boundary, router
+│       │   ├── routes.tsx       route tree
+│       │   ├── api/             typed API client, services, DTOs, provider
+│       │   ├── pages/           route screens (tournaments, players, teams)
+│       │   ├── components/      shared components + shadcn/ui primitives
+│       │   ├── hooks/           query/mutation/recent hooks
+│       │   ├── lib/             pure logic (errors, lifecycle, validation, format)
 │       │   └── config/          validated client configuration
+│       ├── tests/               stub API + flow tests
 │       ├── index.html
 │       ├── vite.config.ts
 │       └── package.json
@@ -258,14 +263,16 @@ The full endpoint table, error mapping and validation notes are in
 ## Tests
 
 ```bash
-npm test          # Vitest: unit + integration
-npm run test:e2e  # Playwright
+npm test                          # Vitest: backend unit + integration, then web
+npm run test --workspace @badminton/web   # web only
+npm run test:e2e                  # Playwright
 ```
 
 `npm test` covers environment validation, the database health abstraction, the health
 service, the shared Zod schemas and the health endpoint itself. Integration tests build
 a real Fastify instance with `buildApp()` and drive it with `app.inject()`, so no server
-or database process is needed.
+or database process is needed. The web suite runs afterwards in jsdom with Testing
+Library, mocking only the API boundary, so it needs no database either.
 
 `npm run test:e2e` starts the API and the web dev server automatically via Playwright's
 `webServer` configuration — nothing needs to be started by hand. PostgreSQL must be
@@ -350,10 +357,21 @@ Phase 3 — REST API:
 - API route tests over fakes and HTTP-to-PostgreSQL vertical-slice tests
 - `/health` preserved unchanged
 
-Intentionally **not** implemented: authentication and authorization, tournament setup
-UI, draw generation, match scheduling, groups, knockout brackets, scoring, ranking,
-court management, live scoring, realtime subscriptions, dashboards, payments and
-notifications. No API OpenAPI/Swagger surface; the REST API is documented in Markdown.
+Phase 4 — tournament setup UI:
+
+- React Router route tree and a reusable application shell (responsive navigation)
+- A centralized, typed API client over `/api/v1` with a structured `ApiError`
+- Tournament, category, player, team, entry, stage and match screens
+- Lifecycle actions derived from the shared domain transition tables
+- Registration for singles (player) and doubles (team) entries
+- Loading, empty and error states, confirmation dialogs and accessible forms
+- Vitest component/page tests against a stub API, plus a Playwright setup flow
+- See [docs/phase-4-tournament-ui.md](docs/phase-4-tournament-ui.md)
+
+Intentionally **not** implemented: authentication and authorization, draw generation,
+match scheduling, groups, knockout brackets, scoring, ranking, court management, live
+scoring, realtime subscriptions, dashboards, payments and notifications. No API
+OpenAPI/Swagger surface; the REST API is documented in Markdown.
 
 ## Future phases
 
@@ -362,7 +380,7 @@ notifications. No API OpenAPI/Swagger surface; the REST API is documented in Mar
 | 1     | Foundation ✅                      |
 | 2     | Tournament domain and database ✅  |
 | 3     | REST API layer ✅                  |
-| 4     | Tournament setup UI                |
+| 4     | Tournament setup UI ✅             |
 | 5     | Group-stage scheduling and scoring |
 | 6     | Knockout engine                    |
 | 7     | Live courts and dashboard          |
