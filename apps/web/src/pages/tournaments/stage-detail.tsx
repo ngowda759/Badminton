@@ -35,12 +35,17 @@ import {
   validatePositiveInteger,
   type FieldErrors,
 } from '@/lib/form-validation.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Stage detail: metadata, lifecycle and its matches.
  *
  * Matches are created manually; there is no draw or bracket generation. Match
- * participants are assigned on the match page.
+ * participants are assigned on the match page. Phase 8.5 refetches the stage,
+ * its matches, its standings and its bracket whenever a tournament realtime
+ * event arrives, so a result recorded on another device updates this screen
+ * without a manual refresh - the standings and bracket come from REST, never
+ * from the event.
  */
 export function StageDetailPage() {
   const api = useApi();
@@ -67,6 +72,13 @@ export function StageDetailPage() {
   const mutation = useMutation<unknown>();
   // Bumping this token refetches the bracket after a result is recorded.
   const [bracketToken, setBracketToken] = useState(0);
+
+  useTournamentRefresh(() => {
+    stageQuery.refetch();
+    matchQuery.refetch();
+    standingsQuery.refetch();
+    setBracketToken((token) => token + 1);
+  });
 
   if (stageQuery.state.status === 'loading') {
     return <LoadingState label="Loading stage…" rows={3} />;

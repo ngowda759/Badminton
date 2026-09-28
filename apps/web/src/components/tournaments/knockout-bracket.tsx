@@ -12,6 +12,7 @@ import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { bracketShapeSummary, nextSupportedSizeLabel } from '@/lib/bracket.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Knockout bracket setup.
@@ -276,6 +277,10 @@ export function BracketSection({
   const query = useApiQuery<BracketDto | null>(['bracket', stageId, refreshToken], (signal) =>
     api.stages.getBracket(stageId, signal),
   );
+
+  // A knockout progression event refetches the authoritative bracket over REST;
+  // the event never names the slot to fill.
+  useTournamentRefresh(query.refetch);
 
   if (query.state.status === 'loading') {
     return <EmptyState title="Loading bracket…" />;

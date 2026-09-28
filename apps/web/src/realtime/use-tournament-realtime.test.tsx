@@ -26,8 +26,19 @@ class FakeEventSource implements RealtimeEventSource {
   public onerror: ((event: Event) => void) | null = null;
   public onmessage: ((event: MessageEvent) => void) | null = null;
   public closeCalls = 0;
+  private readonly named = new Map<string, Set<(event: MessageEvent) => void>>();
 
   public constructor(public readonly url: string) {}
+
+  public addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    const set = this.named.get(type) ?? new Set();
+    set.add(listener);
+    this.named.set(type, set);
+  }
+
+  public removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.named.get(type)?.delete(listener);
+  }
 
   public close(): void {
     this.closeCalls += 1;
@@ -44,7 +55,23 @@ class FakeEventSource implements RealtimeEventSource {
     this.onerror?.(new Event('error'));
   }
 
+  /** Emits a frame exactly as the server frames it: named, with a JSON body. */
   public message(data: string): void {
+    let type: string | undefined;
+    try {
+      const parsed: unknown = JSON.parse(data);
+      if (parsed && typeof parsed === 'object' && 'event' in parsed) {
+        type = String(parsed.event);
+      }
+    } catch {
+      type = undefined;
+    }
+    if (type && type.length > 0 && this.named.has(type)) {
+      for (const listener of this.named.get(type) ?? []) {
+        listener(new MessageEvent(type, { data }));
+      }
+      return;
+    }
     this.onmessage?.(new MessageEvent('message', { data }));
   }
 }

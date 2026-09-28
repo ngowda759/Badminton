@@ -73,6 +73,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
           ...(options.realtime ? { realtime: options.realtime } : {}),
           realtimeHeartbeatIntervalMs:
             options.realtimeHeartbeatIntervalMs ?? DEFAULT_REALTIME_HEARTBEAT_INTERVAL_MS,
+          corsOrigins: options.corsOrigins,
         }),
         { prefix: API_V1_PREFIX },
       );

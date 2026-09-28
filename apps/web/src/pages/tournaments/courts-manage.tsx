@@ -29,13 +29,16 @@ import {
   validateRequired,
   type FieldErrors,
 } from '@/lib/form-validation.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Court management for one tournament.
  *
  * Courts are operator-facing venues, unique by number within their tournament.
  * Activating/deactivating a court does not delete historical schedules: an
- * inactive court simply cannot receive new matches.
+ * inactive court simply cannot receive new matches. The list refetches on any
+ * tournament realtime event (Phase 8.5), so a court added or toggled on another
+ * device appears here without a manual refresh.
  */
 export function CourtsManagePage() {
   const api = useApi();
@@ -44,6 +47,8 @@ export function CourtsManagePage() {
   const { state, refetch } = useApiQuery<readonly CourtDto[]>(['courts', tournament.id], (signal) =>
     api.courts.listByTournament(tournament.id, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   return (
     <div className="space-y-6">

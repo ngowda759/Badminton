@@ -15,13 +15,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.t
 import { useTournament } from '@/components/tournaments/context.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { formatCalendarDate, formatDateTime, orDash } from '@/lib/format.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Tournament operational dashboard.
  *
  * One aggregated read: the server returns the summary, courts and bounded
- * match slices together, so the client never fans out per match. Refresh is
- * manual - Phase 7 deliberately has no polling or realtime.
+ * match slices together, so the client never fans out per match. The screen
+ * loads over REST and can be refreshed manually; Phase 8.5 additionally
+ * refetches it whenever the tournament's realtime stream reports a change, so a
+ * change made on another device appears without a manual refresh.
  */
 export function TournamentDashboardPage() {
   const api = useApi();
@@ -31,6 +34,10 @@ export function TournamentDashboardPage() {
     ['dashboard', tournament.id],
     (signal) => api.dashboard.get(tournament.id, signal),
   );
+
+  // Realtime is a notification only: an event (or a reconnect) invalidates this
+  // authoritative dashboard query. The event payload is never read.
+  useTournamentRefresh(refetch);
 
   return (
     <div className="space-y-6">

@@ -27,13 +27,17 @@ import {
   validatePositiveInteger,
   type FieldErrors,
 } from '@/lib/form-validation.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Match detail: metadata, lifecycle, participant assignment and scoring.
  *
  * Only two slots exist (1 and 2). Scoring is available once the match is in
  * progress; the winner is always derived from the scores by the API, never
- * chosen here. A completed result is shown read-only.
+ * chosen here. A completed result is shown read-only. Phase 8.5 refetches every
+ * query on this screen when a tournament realtime event arrives, so an opponent
+ * scoring the same match on another device is reflected without a manual
+ * refresh.
  */
 export function MatchDetailPage() {
   const api = useApi();
@@ -51,6 +55,13 @@ export function MatchDetailPage() {
     api.matches.getResult(matchId, signal),
   );
   const mutation = useMutation<unknown>();
+
+  const refreshMatch = (): void => {
+    matchQuery.refetch();
+    participantQuery.refetch();
+    resultQuery.refetch();
+  };
+  useTournamentRefresh(refreshMatch);
 
   const { nameFor } = useEntryNames(category.id);
 

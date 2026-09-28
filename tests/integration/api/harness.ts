@@ -37,6 +37,8 @@ export interface TestApi {
 export interface TestApiOptions {
   /** Overrides the SSE heartbeat interval so tests need not wait the default. */
   readonly realtimeHeartbeatIntervalMs?: number;
+  /** Browser origins the app treats as allowed; defaults to none. */
+  readonly corsOrigins?: readonly string[];
 }
 
 /** Builds a Fastify app whose `/api/v1` services run over fake repositories. */
@@ -46,7 +48,7 @@ export function createTestApi(options: TestApiOptions = {}): TestApi {
   const realtime: ApiRealtime = { publisher: createRealtimeEventPublisher() };
   const app = buildApp({
     checks: [stubHealthCheck()],
-    corsOrigins: [],
+    corsOrigins: options.corsOrigins ?? [],
     services,
     realtime,
     ...(options.realtimeHeartbeatIntervalMs === undefined

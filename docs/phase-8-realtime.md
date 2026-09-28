@@ -1,14 +1,15 @@
 # Phase 8 — Multi-device & realtime
 
 Status: **Phase 8.1 (transactional outbox), Phase 8.2 (SSE transport), Phase 8.3
-(application event publishing) and Phase 8.4 (browser realtime client) implemented
-on `main`; Phase 8.5–8.6 designed, not yet built.**
+(application event publishing), Phase 8.4 (browser realtime client) and Phase 8.5
+(live UI synchronization) implemented on `main`; Phase 8.6 designed, not yet
+built.**
 
 - Phase 8.1 — Transactional Outbox — **IMPLEMENTED**
 - Phase 8.2 — SSE Transport — **IMPLEMENTED**
 - Phase 8.3 — Application event publishing — **IMPLEMENTED**
 - Phase 8.4 — Web realtime client (`EventSource`) — **IMPLEMENTED**
-- Phase 8.5 — Live UI sync — NOT IMPLEMENTED
+- Phase 8.5 — Live UI sync — **IMPLEMENTED**
 - Phase 8.6 — Multi-device hardening — NOT IMPLEMENTED
 
 This document covers the realtime layer that keeps several tournament devices
@@ -28,14 +29,15 @@ something changed, and clients refetch authoritative state.
   dispatcher, a PostgreSQL `LISTEN`/`NOTIFY` wake-up, the SSE transport endpoint
   (`GET /api/v1/tournaments/:tournamentId/events`) — Phase 8.1 + 8.2 — the
   application-service event publishing that writes the outbox rows — Phase 8.3 —
-  and the browser `EventSource` client that subscribes to that endpoint — Phase
-  8.4.
+  the browser `EventSource` client that subscribes to that endpoint — Phase 8.4 —
+  and the live UI synchronization that turns a delivered event into an
+  authoritative REST refetch — Phase 8.5.
 - **Out:** WebSockets, Redis, Kafka, RabbitMQ, background job platforms, event
   replay, authentication, and any client-side business logic. SSE is the only
-  transport; the browser refetches REST for state. The Phase 8.4 client only
-  exposes the connection state and the event _signal_; it does not yet refetch
-  or refresh any UI, so manual refresh still works and REST remains the only read
-  path until Phase 8.5 lands.
+  transport; the browser refetches REST for state. Phase 8.5 consumes the Phase
+  8.4 signal to invalidate/refetch the REST queries the screens already own; it
+  never derives state from an event payload, and a realtime outage leaves REST
+  and manual refresh working.
 
 ## 2. Layering
 
@@ -507,20 +509,97 @@ reconstructed — a reconnect is only a signal for a consumer to refetch REST.
 
 ### Relationship to Phase 8.5
 
-Phase 8.4 deliberately stops at the signal. It performs **no** REST refetch, no
-query invalidation and no UI update; `apps/web/src/pages/tournaments/dashboard.tsx`
-is unchanged and still refreshes manually. Phase 8.5 will consume `onEvent` /
-`status` from this hook and turn the signal into an authoritative REST refetch.
+Phase 8.4 deliberately stops at the signal. `apps/web/src/realtime/tournament-refresh.tsx`
+(Phase 8.5) is the consumer that turns `onEvent` / `status` into an authoritative
+REST refetch. Because the server frames every event with a named `event:` field,
+the client subscribes to each catalogue type with `addEventListener`; a named
+frame is never delivered to `onmessage`, so a single `onmessage` handler would
+silently receive nothing from the real server.
 
-## 8. Phase 8.5–8.6 (planned)
+## 8. Phase 8.5 — Live UI synchronization (implemented)
 
-- **8.5** live synchronization for dashboard, court board, scoring, standings and
-  bracket — consuming the Phase 8.4 signal to invalidate/refetch REST; no
-  duplicate domain logic. Not implemented: the Phase 8.4 client provides the
-  signal but nothing consumes it to update business UI yet.
+Phase 8.5 connects the Phase 8.4 signal to the REST queries the screens already
+own. It is the only place a realtime event is allowed to affect the UI, and it
+does so by invalidating/refetching REST — never by reading `event.payload` as a
+read model.
+
+```
+SSE event  ─┐
+            ├─► TournamentRealtimeProvider ─► refresh bus ─► useTournamentRefresh(refetch)
+reconnect  ─┘                                                    │
+                                                                 ▼
+                                             existing REST query (useApiQuery) refetches
+                                                                 │
+                                                                 ▼
+                                                       React re-renders REST data
+```
+
+### Location and layering
+
+`apps/web/src/realtime/tournament-refresh.tsx`:
+
+- `TournamentRealtimeProvider` — one per open tournament, mounted by
+  `TournamentLayout`. It is the **single** `useTournamentRealtime` consumer for
+  the whole subtree, so exactly one `EventSource` is opened no matter how many
+  screens register a query. It owns two refresh triggers and nothing else: a
+  delivered event, and a reconnect after the connection was lost.
+- `useTournamentRefresh(refetch)` — called by each screen with the `refetch` of
+  the query that owns its authoritative data. It registers the listener with a
+  stable callback that reads the latest `refetch` from a ref, so a rerender with
+  a new inline function never re-subscribes and Strict Mode's double effect only
+  subscribes/unsubscribes once.
+- `RealtimeStatusIndicator` — a small non-blocking hint (`Live`,
+  `Reconnecting…`, `Offline`); it renders nothing outside a tournament stream.
+
+The bus is deliberately **not a store**: it holds no tournament state, never
+inspects an event payload and never merges an event into a read model. An event
+and a reconnect both resolve to the same action — "refetch REST" — so the REST
+response stays the single source of truth and the client never needs to
+understand the domain event catalogue. Any valid tournament event refreshes the
+affected query; there is no `switch (event.event)` and no per-event business
+logic, which keeps the frontend forward-compatible with future event types.
+
+### Request coalescing
+
+One user action can emit several events in the same committed transaction
+(recording a result emits `MATCH_RESULT_RECORDED` + `MATCH_COMPLETED`, often with
+`KNOCKOUT_MATCH_POPULATED`), delivered as several SSE frames. A single
+`DEFAULT_REFRESH_COALESCE_MS` (60 ms) window collapses the burst into one
+authoritative refetch. The window is **not** reset by later events, so a
+sustained stream still bounds latency to one window; the pending flush is
+cancelled on unmount, so nothing refetches after the screen is gone.
+
+### Reconnect
+
+The first `CONNECTED` is the initial subscription, and the screen already has its
+authoritative REST data from the initial load, so it does **not** refetch (this
+avoids duplicating the initial request). Any later `CONNECTED` follows a
+`RECONNECTING`/`DISCONNECTED`, where events may have been missed; because Phase
+8.2 does not replay, that reconnect triggers an authoritative refresh. Missed
+events are never reconstructed from the stream.
+
+### Failure isolation and scope
+
+Realtime is optional from a business perspective: the initial REST load,
+manual refresh, and every REST path work with the stream unavailable. A
+malformed frame is dropped by Phase 8.4 and never reaches the UI. A failed
+realtime-triggered refetch surfaces through the screen's existing error state —
+no new global error system. Invalidation is tournament-scoped (one provider per
+tournament, one `EventSource` per provider), so an event for tournament A never
+refreshes tournament B; there is no global `invalidateQueries()`.
+
+### Screens synchronized
+
+`useTournamentRefresh` is wired into the dashboard, court board, courts
+management, match detail / scoring, stage detail (group standings), the knockout
+bracket, categories, stages and entries — each through its own existing
+`useApiQuery` REST read. No screen computes standings, scores, winners or bracket
+progression in the browser.
+
+## 9. Phase 8.6 (planned)
+
 - **8.6** multi-device/reconnect/missed-event/restart E2E hardening.
 
-Until 8.5 lands, nothing changes for existing clients: manual refresh continues
-to work and REST remains the only read path. Phase 8.4 only means a browser can
-now open a tournament-scoped realtime stream and observe the connection state
-and events; no screen consumes that signal yet.
+Realtime remains a notification channel only: REST changes state, PostgreSQL
+stores it, the outbox records what changed, SSE tells clients to refetch, and the
+browser renders the authoritative REST response.

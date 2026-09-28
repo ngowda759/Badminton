@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/table.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { humanizeEnum, orDash } from '@/lib/format.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /** Lists a tournament's categories with links into each category. */
 export function CategoriesPage() {
@@ -31,6 +32,8 @@ export function CategoriesPage() {
     ['categories', tournament.id],
     (signal) => api.categories.listByTournament(tournament.id, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   return (
     <div className="space-y-6">
