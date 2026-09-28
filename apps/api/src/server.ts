@@ -38,6 +38,8 @@ async function start(): Promise<void> {
     checks: createDatabaseHealthChecks(database),
     corsOrigins: config.corsOrigins,
     services,
+    realtime,
+    realtimeHeartbeatIntervalMs: config.realtimeHeartbeatIntervalMs,
     logger: config.logger,
     trustProxy: config.trustProxy,
   });

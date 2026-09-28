@@ -2,6 +2,7 @@ import type { HealthCheck } from '@badminton/domain';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 
 import { API_V1_PREFIX, createApiV1Routes } from './http/routes/index.ts';
+import type { ApiRealtime } from './http/api-realtime.ts';
 import type { ApiServices } from './http/api-services.ts';
 import { registerCors } from './plugins/cors.ts';
 import { registerErrorHandler } from './plugins/error-handler.ts';
@@ -23,6 +24,14 @@ export interface BuildAppOptions {
    * health-only composition (and its tests) keeps working unchanged.
    */
   readonly services?: ApiServices;
+  /**
+   * Realtime publisher the SSE transport subscribes to. Optional so a
+   * health-only or fake-service build without realtime still works; the SSE
+   * endpoint then reports the transport as unavailable.
+   */
+  readonly realtime?: ApiRealtime;
+  /** SSE heartbeat interval (ms). Defaults to a gentle 15s when not supplied. */
+  readonly realtimeHeartbeatIntervalMs?: number;
   readonly logger?: FastifyServerOptions['logger'];
   /**
    * Whether to trust `X-Forwarded-*` headers. Defaults to `false` so that a
@@ -31,6 +40,9 @@ export interface BuildAppOptions {
    */
   readonly trustProxy?: boolean;
 }
+
+/** Fallback SSE heartbeat, matching `REALTIME_HEARTBEAT_INTERVAL_MS`'s default. */
+const DEFAULT_REALTIME_HEARTBEAT_INTERVAL_MS = 15_000;
 
 /**
  * Application factory: creates a fully wired Fastify instance.
@@ -42,6 +54,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger: options.logger ?? false,
     trustProxy: options.trustProxy ?? false,
+    // Close idle keep-alive sockets on shutdown; a live SSE stream is ended by
+    // the realtime routes' `preClose` hook before this runs.
+    forceCloseConnections: 'idle',
   });
 
   registerErrorHandler(app);
@@ -53,7 +68,14 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     await instance.register(healthRoutes, { healthService });
 
     if (options.services) {
-      await instance.register(createApiV1Routes(options.services), { prefix: API_V1_PREFIX });
+      await instance.register(
+        createApiV1Routes(options.services, {
+          ...(options.realtime ? { realtime: options.realtime } : {}),
+          realtimeHeartbeatIntervalMs:
+            options.realtimeHeartbeatIntervalMs ?? DEFAULT_REALTIME_HEARTBEAT_INTERVAL_MS,
+        }),
+        { prefix: API_V1_PREFIX },
+      );
     }
   });
 
