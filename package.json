@@ -13,6 +13,7 @@
   ],
   "scripts": {
     "dev": "concurrently --names api,web --prefix-colors cyan,magenta --kill-others-on-fail \"npm:dev:api\" \"npm:dev:web\"",
+    "start:local": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-local.ps1",
     "dev:api": "npm run dev --workspace @badminton/api",
     "dev:web": "npm run dev --workspace @badminton/web",
     "build": "npm run build --workspace @badminton/api && npm run build --workspace @badminton/web",
