@@ -1,16 +1,25 @@
 # Phase 8 — Multi-device & realtime
 
 Status: **Phase 8.1 (transactional outbox), Phase 8.2 (SSE transport), Phase 8.3
-(application event publishing), Phase 8.4 (browser realtime client) and Phase 8.5
-(live UI synchronization) implemented on `main`; Phase 8.6 designed, not yet
-built.**
+(application event publishing), Phase 8.4 (browser realtime client), Phase 8.5
+(live UI synchronization) and Phase 8.6 (multi-device hardening and realtime
+validation) implemented.**
 
 - Phase 8.1 — Transactional Outbox — **IMPLEMENTED**
 - Phase 8.2 — SSE Transport — **IMPLEMENTED**
 - Phase 8.3 — Application event publishing — **IMPLEMENTED**
 - Phase 8.4 — Web realtime client (`EventSource`) — **IMPLEMENTED**
 - Phase 8.5 — Live UI sync — **IMPLEMENTED**
-- Phase 8.6 — Multi-device hardening — NOT IMPLEMENTED
+- Phase 8.6 — Multi-device hardening — **IMPLEMENTED**
+
+Phase 8.6 adds no new architecture. It hardens and validates the Phase 8.1–8.5
+implementation for tournament-day use across multiple devices and under
+failure/concurrency: it fixes one connection-teardown race, adds structured
+realtime logging, and adds deterministic automated and real-browser tests for
+multi-client sync, tournament isolation, reconnect/missed-event recovery,
+duplicate/out-of-order events, bursts, slow clients, dispatcher/NOTIFY fallback,
+outbox atomicity and REST independence. The layering, ports and wire format are
+unchanged.
 
 This document covers the realtime layer that keeps several tournament devices
 (laptop, tablet, phone) in sync while a tournament is operated. The authoritative
@@ -596,10 +605,82 @@ bracket, categories, stages and entries — each through its own existing
 `useApiQuery` REST read. No screen computes standings, scores, winners or bracket
 progression in the browser.
 
-## 9. Phase 8.6 (planned)
+## 9. Phase 8.6 — Multi-device hardening (implemented)
 
-- **8.6** multi-device/reconnect/missed-event/restart E2E hardening.
+Phase 8.6 validates and hardens the existing implementation for tournament-day
+use across several browsers/devices and under failure/concurrency. It introduces
+**no new architecture**: REST still changes state, PostgreSQL stores it, the
+outbox records what changed, SSE notifies, and the browser refetches. No Redis,
+Kafka, RabbitMQ, BullMQ, WebSockets, external realtime service, authentication or
+event replay is added, and no historical migration is modified.
+
+### Fixes
+
+- **Route teardown race (real defect).** `openSseConnection` may close
+  *synchronously during setup* when the client is already gone, so its
+  `onCleanup` could fire while the route was still evaluating
+  `const connection = openSseConnection(...)`. Reading that binding inside
+  `onCleanup` then threw a temporal-dead-zone `ReferenceError`, which the error
+  handler turned into a `500` for a client that had simply disconnected. The
+  route now holds the connection in a small mutable box and registers cleanup
+  before opening the stream, so a setup-time close is removed from the live set
+  without touching an uninitialised binding. Covered by
+  `tests/unit/api/realtime-routes.test.ts`, which fails with the
+  `ReferenceError` against the pre-fix route.
+- **Realtime observability.** The SSE route logs `SSE connection opened` /
+  `SSE connection closed` (tournament id only), the API logs
+  `realtime dispatcher started` with the poll interval, and dispatcher/publisher/
+  notifier failures (including a `LISTEN` connection error) are routed to the
+  app's redacting logger as `realtime error`. No payloads, request bodies or
+  credentials are logged.
+
+### Validated properties (and where they are pinned)
+
+| Property                                | Evidence                                                                    |
+| --------------------------------------- | --------------------------------------------------------------------------- |
+| Multi-client synchronization            | `e2e/phase8-live-sync.spec.ts`; publisher fan-out in `realtime.test.ts`     |
+| Tournament isolation                    | `e2e/phase8-6-hardening.spec.ts`, SSE route + publisher tests, web tests    |
+| Reconnect → REST refresh                | `e2e/phase8-6-hardening.spec.ts`, `live-sync-hardening.test.tsx`            |
+| Missed events → authoritative recovery  | `e2e/phase8-6-hardening.spec.ts`, `live-sync-hardening.test.tsx`            |
+| Duplicate / out-of-order events         | `live-sync-hardening.test.tsx`                                              |
+| Rapid event bursts (request storm)      | `e2e/phase8-6-hardening.spec.ts`, `live-sync-hardening.test.tsx`            |
+| Slow-client isolation (bounded buffer)  | `sse-connection.test.ts`                                                    |
+| REST failure after a realtime event     | `live-sync-hardening.test.tsx`                                              |
+| Realtime unavailable → REST unaffected  | `e2e/phase8-6-hardening.spec.ts`, `live-sync-hardening.test.tsx`            |
+| SSE cleanup / no leaks                  | `sse-connection.test.ts`, SSE route tests, `live-sync-hardening.test.tsx`   |
+| Dispatcher recovery / NOTIFY fallback   | `realtime-hardening.test.ts`, `realtime-outbox-database.test.ts`            |
+| Outbox durability / atomicity           | `realtime.test.ts`, `realtime-outbox-database.test.ts`                      |
+| Concurrent drains, load, indexes        | `realtime-hardening-database.test.ts`                                       |
+| React Strict Mode single connection     | `use-tournament-realtime.test.tsx`                                          |
+
+### Notes and deliberate limits
+
+- **Duplicate delivery is harmless by design.** The dispatcher serialises drains
+  and stamps `publishedAt` only after delivery; it is at-least-once. A duplicate
+  event only causes another authoritative REST refetch, which is idempotent
+  (coalesced and payload-independent), so no client-side domain logic is added.
+- **Ordering is not client state.** The provider never reads an event payload,
+  never sequences events and never reconstructs state, so an out-of-order
+  redelivery cannot corrupt the UI. No `sequenceNumber`/`previousEventId`/
+  replay system is introduced.
+- **NOTIFY is a wake-up, not transport.** A missed notification is recovered by
+  the poll (`realtime-hardening.test.ts` proves processing with no `wake()`);
+  the durable row remains the source of truth.
+- **Slow-client backpressure** stays at the existing 1 MiB bounded buffer; the
+  Phase 8.6 slow-client tests pass against it, so no change was warranted.
+- **Database indexes** `(tournamentId, createdAt)` and `(publishedAt)` already
+  cover the only two realtime query paths (pending drain and tournament
+  history), so no new index or migration was added. The presence of both indexes
+  is asserted in `realtime-hardening-database.test.ts`.
+- **Server restart** is covered as far as the local infrastructure allows: the
+  dispatcher's pending-row recovery on `start()` is tested at the application and
+  database level, and the browser reconnect path is tested in a real browser.
+  Playwright's `webServer` cannot restart the API mid-test, so a true
+  process-restart E2E is not automated; the reconnect test exercises the same
+  client recovery (lost stream → native retry → authoritative refetch) that a
+  restart produces, and missed events are recovered by the reconnect refetch.
 
 Realtime remains a notification channel only: REST changes state, PostgreSQL
 stores it, the outbox records what changed, SSE tells clients to refetch, and the
-browser renders the authoritative REST response.
+browser renders the authoritative REST response. If SSE fails, REST and manual
+refresh keep working.

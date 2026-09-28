@@ -86,6 +86,19 @@ export const realtimeRoutes: FastifyPluginCallback<RealtimeRoutesOptions> = (app
 
     const response = hijackForSse(reply, request.headers.origin, options.corsOrigins);
 
+    // `openSseConnection` can close synchronously during setup (a client that is
+    // already gone), so its `onCleanup` may run before the assignment below.
+    // Hold the connection in a mutable box and register cleanup *before* opening
+    // it, so the callback never touches an uninitialised binding and a
+    // setup-time close is still removed from the live set.
+    const box: { connection?: SseConnection } = {};
+    const onCleanup = (): void => {
+      if (box.connection) {
+        connections.delete(box.connection);
+      }
+      request.log.info({ tournamentId }, 'SSE connection closed');
+    };
+
     // The adapter registers disconnect detection before it subscribes or starts
     // the heartbeat, so a client that leaves during setup still ends with no
     // subscription and no timer. It reports cleanup here so shutdown can end it.
@@ -104,15 +117,16 @@ export const realtimeRoutes: FastifyPluginCallback<RealtimeRoutesOptions> = (app
           request.log.warn(details, message);
         },
       },
-      onCleanup: () => {
-        connections.delete(connection);
-      },
+      onCleanup,
     });
+
+    box.connection = connection;
 
     // `openSseConnection` may have closed (and thus cleaned up) before returning
     // if the client was already gone; only track a connection that is still live.
     if (!connection.isClosed()) {
       connections.add(connection);
+      request.log.info({ tournamentId }, 'SSE connection opened');
     }
   });
 };

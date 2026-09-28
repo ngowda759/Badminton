@@ -88,7 +88,9 @@ export function createRealtimeDispatcher(options: RealtimeDispatcherOptions): Re
         delivered = true;
       } catch (error: unknown) {
         // The publisher isolates individual sinks; this catch is for a
-        // repository/publisher-level failure. The row stays pending.
+        // repository/publisher-level failure. The row stays pending and the
+        // remaining rows are still attempted, so one failing row cannot stall
+        // the durable outbox behind it.
         options.onError?.(error);
       }
       if (delivered) {
