@@ -1,6 +1,7 @@
 import {
   createMatchResultService,
   createMatchService,
+  createRealtimeEventService,
   createStandingsService,
 } from '@badminton/application';
 import { BusinessRuleViolationError, ConflictError, NotFoundError } from '@badminton/domain';
@@ -24,8 +25,8 @@ let standings: ReturnType<typeof createStandingsService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  matches = createMatchService(repos.client, repos.unitOfWork);
-  results = createMatchResultService(repos.client, repos.unitOfWork);
+  matches = createMatchService(repos.client, repos.unitOfWork, createRealtimeEventService());
+  results = createMatchResultService(repos.client, repos.unitOfWork, createRealtimeEventService());
   standings = createStandingsService(repos.client);
 });
 

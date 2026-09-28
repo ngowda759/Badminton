@@ -1,4 +1,8 @@
-import { createCourtService, createMatchSchedulingService } from '@badminton/application';
+import {
+  createCourtService,
+  createMatchSchedulingService,
+  createRealtimeEventService,
+} from '@badminton/application';
 import {
   BusinessRuleViolationError,
   ConflictError,
@@ -25,8 +29,12 @@ let scheduling: ReturnType<typeof createMatchSchedulingService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  courts = createCourtService(repos.client);
-  scheduling = createMatchSchedulingService(repos.client);
+  courts = createCourtService(repos.client, repos.unitOfWork, createRealtimeEventService());
+  scheduling = createMatchSchedulingService(
+    repos.client,
+    repos.unitOfWork,
+    createRealtimeEventService(),
+  );
 });
 
 const start = new Date('2026-10-05T10:00:00.000Z');

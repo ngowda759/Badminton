@@ -25,6 +25,11 @@ import type { RepositoryClient } from '../repositories/index.ts';
  *
  * This is safe to call from `MatchResultService` for every match: a match in a
  * non-KNOCKOUT stage is simply not part of a bracket and returns `false`.
+ *
+ * The boolean return value is exactly the "did something change" signal the
+ * caller needs to decide whether a `KNOCKOUT_MATCH_POPULATED` outbox event is
+ * warranted: a no-op progression must not produce a duplicate event, and this
+ * service stays a pure bracket operation rather than becoming an event writer.
  */
 export interface KnockoutProgressionService {
   /**

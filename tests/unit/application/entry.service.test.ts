@@ -1,4 +1,4 @@
-import { createTournamentEntryService } from '@badminton/application';
+import { createRealtimeEventService, createTournamentEntryService } from '@badminton/application';
 import {
   BusinessRuleViolationError,
   ConflictError,
@@ -24,7 +24,11 @@ let service: ReturnType<typeof createTournamentEntryService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentEntryService(repos.client, repos.unitOfWork);
+  service = createTournamentEntryService(
+    repos.client,
+    repos.unitOfWork,
+    createRealtimeEventService(),
+  );
 });
 
 async function openSingles(): Promise<string> {

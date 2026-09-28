@@ -1,5 +1,6 @@
 import {
   createMatchSchedulingService,
+  createRealtimeEventService,
   createTournamentDashboardService,
 } from '@badminton/application';
 import { NotFoundError } from '@badminton/domain';
@@ -33,7 +34,7 @@ function dashboard() {
 }
 
 function scheduling() {
-  return createMatchSchedulingService(repos.client);
+  return createMatchSchedulingService(repos.client, repos.unitOfWork, createRealtimeEventService());
 }
 
 beforeEach(() => {

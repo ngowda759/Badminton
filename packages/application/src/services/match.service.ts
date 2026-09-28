@@ -13,6 +13,8 @@ import {
   type MatchStatus,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
@@ -21,6 +23,7 @@ import type {
   TransitionMatchStatusCommand,
   UpdateMatchCommand,
 } from './commands.ts';
+import { resolveMatchTournamentId } from './resolve-tournament.ts';
 
 /**
  * Match service.
@@ -33,6 +36,11 @@ import type {
  * The `sequence`, `roundNumber` and `matchNumber` fields are ordinal; the last
  * two are optional because group matches have no round and numbering is only a
  * display aid.
+ *
+ * Starting and cancelling a match are live-tournament state changes, so they
+ * write their `MATCH_STARTED` / `MATCH_CANCELLED` outbox event in the same
+ * transaction as the status write. Completion is not handled here - it is
+ * reached only through `MatchResultService`, which owns `MATCH_COMPLETED`.
  */
 export interface MatchService {
   create(stageId: string, command: CreateMatchCommand): Promise<Match>;
@@ -44,7 +52,11 @@ export interface MatchService {
   listParticipants(matchId: string): Promise<readonly MatchParticipant[]>;
 }
 
-export function createMatchService(client: RepositoryClient, unitOfWork: UnitOfWork): MatchService {
+export function createMatchService(
+  client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
+): MatchService {
   return {
     async create(stageId: string, command: CreateMatchCommand): Promise<Match> {
       assertPositive(command.sequence, 'sequence');
@@ -137,7 +149,22 @@ export function createMatchService(client: RepositoryClient, unitOfWork: UnitOfW
         await assertKnockoutReadyToStart(client, current);
       }
 
-      return client.matches.updateStatus(id, to);
+      // Read/validate on the plain client, then write the status and its event
+      // together so a committed start/cancel always has its notification.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const tournamentId = await resolveMatchTournamentId(tx, current);
+        const updated = await tx.matches.updateStatus(id, to);
+
+        await events.record(tx, {
+          tournamentId,
+          eventType:
+            to === 'IN_PROGRESS' ? REALTIME_EVENTS.MATCH_STARTED : REALTIME_EVENTS.MATCH_CANCELLED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: id,
+        });
+
+        return updated;
+      });
     },
 
     async getById(id: string): Promise<Match> {

@@ -3,6 +3,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   createMatchService,
   createPlayerService,
+  createRealtimeEventService,
   createTeamService,
   createTournamentCategoryService,
   createTournamentEntryService,
@@ -67,14 +68,15 @@ describe.skipIf(!database)('application services against PostgreSQL', () => {
   const prisma = database.prisma;
   const client = createRepositoryClient(prisma);
   const unitOfWork = createPrismaUnitOfWork(prisma);
+  const events = createRealtimeEventService();
 
-  const tournaments = createTournamentService(client);
-  const categories = createTournamentCategoryService(client);
+  const tournaments = createTournamentService(client, unitOfWork, events);
+  const categories = createTournamentCategoryService(client, unitOfWork, events);
   const players = createPlayerService(client);
   const teams = createTeamService(client, unitOfWork);
-  const entries = createTournamentEntryService(client, unitOfWork);
-  const matches = createMatchService(client, unitOfWork);
-  const stages = createTournamentStageService(client);
+  const entries = createTournamentEntryService(client, unitOfWork, events);
+  const matches = createMatchService(client, unitOfWork, events);
+  const stages = createTournamentStageService(client, unitOfWork, events);
 
   beforeEach(async () => {
     await resetTournamentData(prisma);

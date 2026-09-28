@@ -24,14 +24,26 @@ describe('realtime event catalogue', () => {
       'MATCH_UNSCHEDULED',
       'MATCH_STARTED',
       'MATCH_GAME_RECORDED',
+      'MATCH_RESULT_RECORDED',
       'MATCH_COMPLETED',
       'MATCH_CANCELLED',
       'COURT_CREATED',
       'COURT_UPDATED',
       'COURT_STATUS_CHANGED',
       'KNOCKOUT_MATCH_POPULATED',
+      'TOURNAMENT_STATUS_CHANGED',
+      'CATEGORY_STATUS_CHANGED',
+      'STAGE_STATUS_CHANGED',
+      'ENTRY_STATUS_CHANGED',
     ]);
-    expect([...REALTIME_AGGREGATE_TYPES]).toEqual(['MATCH', 'COURT']);
+    expect([...REALTIME_AGGREGATE_TYPES]).toEqual([
+      'MATCH',
+      'COURT',
+      'TOURNAMENT',
+      'CATEGORY',
+      'STAGE',
+      'ENTRY',
+    ]);
   });
 
   it('recognises known event types and rejects unknown ones', () => {

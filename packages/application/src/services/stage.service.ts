@@ -14,20 +14,27 @@ import {
   type TournamentStage,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
+import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
   CreateStageCommand,
   TransitionStageStatusCommand,
   UpdateStageCommand,
 } from './commands.ts';
+import { resolveStageTournamentId } from './resolve-tournament.ts';
 
 /**
  * Tournament stage service.
  *
  * A stage always belongs to a category and owns a unique 1-based sequence
  * within it. Creating a stage does not generate matches or draws - those are
- * later phases; a missing match is a valid, expected state. Every operation here
- * is a read or a single write, so no interactive transaction is opened.
+ * later phases; a missing match is a valid, expected state.
+ *
+ * A lifecycle transition is a stage-level state change the dashboard surfaces,
+ * so it writes its `STAGE_STATUS_CHANGED` outbox event in the same transaction.
+ * Creation and field edits stay plain single writes.
  */
 export interface TournamentStageService {
   create(categoryId: string, command: CreateStageCommand): Promise<TournamentStage>;
@@ -37,7 +44,11 @@ export interface TournamentStageService {
   listByCategory(categoryId: string): Promise<readonly TournamentStage[]>;
 }
 
-export function createTournamentStageService(client: RepositoryClient): TournamentStageService {
+export function createTournamentStageService(
+  client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
+): TournamentStageService {
   return {
     async create(categoryId: string, command: CreateStageCommand): Promise<TournamentStage> {
       const name = requireName(command.name);
@@ -131,7 +142,19 @@ export function createTournamentStageService(client: RepositoryClient): Tourname
         await assertKnockoutFinalDecided(client, current);
       }
 
-      return client.stages.updateStatus(id, to);
+      return unitOfWork.runInTransaction(async (tx) => {
+        const tournamentId = await resolveStageTournamentId(tx, id);
+        const updated = await tx.stages.updateStatus(id, to);
+
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.STAGE_STATUS_CHANGED,
+          aggregateType: REALTIME_AGGREGATES.STAGE,
+          aggregateId: id,
+        });
+
+        return updated;
+      });
     },
 
     async getById(id: string): Promise<TournamentStage> {
