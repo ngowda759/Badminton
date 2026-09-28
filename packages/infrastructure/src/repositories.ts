@@ -6,6 +6,7 @@ import type {
   CreateMatchGameData,
   CreateMatchParticipantData,
   CreatePlayerData,
+  CreateRealtimeEventData,
   CreateStageData,
   CreateTeamData,
   CreateTeamMemberData,
@@ -16,6 +17,7 @@ import type {
   MatchRepository,
   MatchScheduleData,
   PlayerRepository,
+  RealtimeEventRepository,
   RepositoryClient,
   TeamMemberRepository,
   TeamRepository,
@@ -32,7 +34,7 @@ import type {
   UpdateTeamData,
   UpdateTournamentData,
 } from '@badminton/application';
-import type { PrismaClient, TransactionClient } from '@badminton/database';
+import type { Prisma, PrismaClient, TransactionClient } from '@badminton/database';
 
 import { translatePersistenceErrors } from './errors.ts';
 import {
@@ -41,6 +43,7 @@ import {
   toMatchGame,
   toMatchParticipant,
   toPlayer,
+  toRealtimeEvent,
   toTeam,
   toTeamMember,
   toTournament,
@@ -603,6 +606,50 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
   };
 }
 
+function createRealtimeEventRepository(db: Db): RealtimeEventRepository {
+  return {
+    create(data: CreateRealtimeEventData) {
+      // `payload` is a JSON column; an absent payload is stored as an empty
+      // object so the domain (which treats empty as "no payload") round-trips.
+      return translatePersistenceErrors(async () =>
+        toRealtimeEvent(
+          await db.realtimeEvent.create({
+            data: {
+              tournamentId: data.tournamentId,
+              eventType: data.eventType,
+              aggregateType: data.aggregateType,
+              aggregateId: data.aggregateId,
+              payload: (data.payload ?? {}) as Prisma.InputJsonValue,
+            },
+          }),
+        ),
+      );
+    },
+    async getPendingEvents(limit: number) {
+      return translatePersistenceErrors(async () => {
+        // Oldest first, so a dispatcher restart drains in the order events were
+        // committed. Only unpublished rows are eligible.
+        const rows = await db.realtimeEvent.findMany({
+          where: { publishedAt: null },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          take: limit,
+        });
+        return rows.map(toRealtimeEvent);
+      });
+    },
+    markPublished(id: string) {
+      return translatePersistenceErrors(async () => {
+        // Conditional update: a concurrent drain that already stamped the row
+        // matches nothing instead of overwriting the original publish time.
+        await db.realtimeEvent.updateMany({
+          where: { id, publishedAt: null },
+          data: { publishedAt: new Date() },
+        });
+      });
+    },
+  };
+}
+
 /** Builds a client's repositories from an already-open database handle. */
 export function createRepositoryClient(db: Db): RepositoryClient {
   return {
@@ -617,6 +664,7 @@ export function createRepositoryClient(db: Db): RepositoryClient {
     matchParticipants: createMatchParticipantRepository(db),
     matchGames: createMatchGameRepository(db),
     courts: createCourtRepository(db),
+    realtimeEvents: createRealtimeEventRepository(db),
   };
 }
 

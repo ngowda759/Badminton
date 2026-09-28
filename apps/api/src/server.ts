@@ -4,6 +4,7 @@ import { createPrismaUnitOfWork, createRepositoryClient } from '@badminton/infra
 
 import { buildApp } from './app.ts';
 import { createApiServices } from './composition/api-services.ts';
+import { createRealtimeRuntime } from './composition/realtime.ts';
 import { createApiConfig, type ApiConfig } from './config/app-config.ts';
 import { createDatabaseHealthChecks } from './infrastructure/database.ts';
 
@@ -21,10 +22,17 @@ async function start(): Promise<void> {
   // Compose the application services over the single Prisma client. Creating
   // the repositories and unit of work here (not in a route) keeps Prisma out of
   // the HTTP layer while giving every service the same connection pool.
-  const services = createApiServices(
-    createRepositoryClient(database.prisma),
-    createPrismaUnitOfWork(database.prisma),
-  );
+  const client = createRepositoryClient(database.prisma);
+  const services = createApiServices(client, createPrismaUnitOfWork(database.prisma));
+
+  // Realtime: the dispatcher drains the durable outbox and forwards committed
+  // events to the publisher; the notifier wakes it from another process. The
+  // dispatcher owns its own poll, so it is started after the app is built.
+  const realtime = createRealtimeRuntime({
+    client,
+    databaseUrl: config.databaseUrl,
+    pollIntervalMs: config.realtimePollIntervalMs,
+  });
 
   const app = buildApp({
     checks: createDatabaseHealthChecks(database),
@@ -33,6 +41,8 @@ async function start(): Promise<void> {
     logger: config.logger,
     trustProxy: config.trustProxy,
   });
+
+  await realtime.start();
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
@@ -49,6 +59,7 @@ async function start(): Promise<void> {
 
     try {
       await app.close();
+      await realtime.stop();
       await database.disconnect();
       clearTimeout(timer);
       process.exit(0);

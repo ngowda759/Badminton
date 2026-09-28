@@ -51,6 +51,11 @@ export const serverEnvSchema = z.object({
   // Off by default: forwarded headers are attacker-controlled unless a trusted
   // proxy is known to sit in front of the API. Enable explicitly per deployment.
   TRUST_PROXY: booleanFlagSchema,
+  // Phase 8 realtime. The outbox poll cadence for the dispatcher and the
+  // interval between SSE heartbeats are both configurable rather than
+  // hard-coded. Defaults are deliberately gentle for the free/low-cost target.
+  REALTIME_POLL_INTERVAL_MS: portSchema.default(1_000),
+  REALTIME_HEARTBEAT_INTERVAL_MS: portSchema.default(15_000),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;

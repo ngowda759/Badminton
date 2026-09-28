@@ -70,6 +70,15 @@ export type {
 } from './tournament.ts';
 export { COURT_STATUSES } from './court.ts';
 export type { Court, CourtStatus } from './court.ts';
+export {
+  REALTIME_EVENT_TYPES,
+  REALTIME_AGGREGATE_TYPES,
+  RealtimeEventValidationError,
+  isRealtimeEventType,
+  isRealtimeAggregateType,
+  normalizeRealtimePayload,
+} from './realtime.ts';
+export type { RealtimeAggregateType, RealtimeEvent, RealtimeEventType } from './realtime.ts';
 export { doScheduleWindowsOverlap, isValidScheduleRange } from './scheduling.ts';
 export type { ScheduleWindow } from './scheduling.ts';
 export {

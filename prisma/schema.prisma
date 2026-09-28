@@ -305,3 +305,29 @@ model Court {
   @@index([tournamentId, status])
   @@map("courts")
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8 - realtime transactional outbox
+// ---------------------------------------------------------------------------
+
+// Durable record of "something changed" for Phase 8 realtime. It is written in
+// the same transaction as the business change, so a committed business change
+// always has its event and a rolled-back one never does. The dispatcher reads
+// unpublished rows and forwards them to SSE subscribers; `publishedAt` is the
+// only mutable field. `eventType`/`aggregateType` are stored as text (the
+// catalogue is validated in `@badminton/domain`, not by a database enum) so the
+// event catalogue can grow without a migration.
+model RealtimeEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  tournamentId  String    @db.Uuid
+  eventType     String
+  aggregateType String
+  aggregateId   String    @db.Uuid
+  payload       Json
+  createdAt     DateTime  @default(now()) @db.Timestamptz(3)
+  publishedAt   DateTime? @db.Timestamptz(3)
+
+  @@index([tournamentId, createdAt])
+  @@index([publishedAt])
+  @@map("realtime_events")
+}
