@@ -7,20 +7,23 @@ Repository guidance for automated agents working on Badminton V2.
 Badminton V2 — a badminton tournament management platform. **Phases 1 (foundation),
 2 (tournament database/domain/application/infrastructure), 3 (REST API layer),
 4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
-stage, bracket management and progression) and 7 (court management, match
-scheduling and tournament dashboard) are implemented. Phase 8.1 (the realtime
-transactional outbox) is implemented; Phase 8.2–8.6 (SSE transport, application
+stage, bracket management and progression), 7 (court management, match
+scheduling and tournament dashboard) and 8.1 (the realtime transactional outbox)
+and 8.2 (the realtime SSE transport) are implemented; Phase 8.3–8.6 (application
 event publishing, web realtime client, live UI sync and multi-device hardening)
 are not implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
 setup UI, group-stage match scoring/standings, the knockout bracket workflow,
-the Phase 7 operational layer (courts, scheduling, court board and dashboard) and
-the Phase 8.1 realtime outbox (event catalogue, repository port, Prisma adapter,
-publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up) exist.
+the Phase 7 operational layer (courts, scheduling, court board and dashboard), the
+Phase 8.1 realtime outbox (event catalogue, repository port, Prisma adapter,
+publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up) and the Phase 8.2
+SSE endpoint (`GET /api/v1/tournaments/:tournamentId/events`, SSE frame codec,
+connection adapter and heartbeat) exist.
 **Automatic draw/seeding, rankings, authentication, authorization,
-result-correction workflows and realtime _transport_ (SSE) are not implemented.**
+result-correction workflows and any frontend realtime client (`EventSource`,
+query invalidation, live UI) are not implemented.**
 Do not add those unless the task explicitly asks for a later phase. The
 authoritative design is `docs/phase-2-domain-design.md`; the Phase 2.2
 architecture is `docs/phase-2-2-architecture.md`; the REST API reference is
@@ -33,7 +36,8 @@ is `docs/phase-7-courts-dashboard.md`; Phase 8 realtime is
 
 - `apps/api` — Fastify API. `app.ts` is the factory, `server.ts` owns `listen`.
   `src/http/` holds the `/api/v1` routes, request/response helpers and the
-  `ApiServices` interface; `src/errors/` holds the API error model and HTTP error
+  `ApiServices` interface; `src/http/sse/` holds the SSE frame codec and connection
+  adapter (Phase 8.2); `src/errors/` holds the API error model and HTTP error
   mapper; `src/composition/` wires Prisma repositories into application services.
 - `apps/web` — React 19 + Vite + Tailwind v4 + shadcn/ui.
 - `packages/domain` — pure types, lifecycle tables, normalization, dates, errors. No runtime deps.
@@ -148,3 +152,12 @@ database — integration tests use `app.inject()` with stub probes.
   do not modify historical migrations.
 - `REALTIME_POLL_INTERVAL_MS` and `REALTIME_HEARTBEAT_INTERVAL_MS` are server-only config
   read through `getServerEnv()`; keep the intervals configurable rather than hard-coded.
+- Phase 8.2 SSE lives in `apps/api/src/http/sse/` (`sse-frame.ts` codec,
+  `sse-connection.ts` adapter) with the route in `src/http/routes/realtime.routes.ts`.
+  It must reuse `RealtimeEventPublisher` (never a second subscriber registry), never
+  query Prisma/the outbox or call a business service, and never mutate state. A sink that
+  fails to write is removed silently; cleanup is idempotent and must clear the heartbeat
+  timer and unsubscribe. The route's `preClose` hook ends live streams so `app.close()`
+  resolves. `Last-Event-ID` is accepted but informational only — no replay. SSE tests must
+  bind a real socket (a hijacked stream cannot be driven through `app.inject`) and use a
+  short injected `realtimeHeartbeatIntervalMs`/timer seam, never real-time waits.

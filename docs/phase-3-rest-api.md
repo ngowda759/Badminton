@@ -125,6 +125,11 @@ tournaments across the collection is **not** implemented, because the
 application layer does not provide it; no new query system was invented for the
 API.
 
+`GET /api/v1/tournaments/:tournamentId/events` is the Phase 8.2 realtime
+endpoint; it is a Server-Sent Events stream rather than a JSON resource and is
+documented in [`phase-8-realtime.md`](./phase-8-realtime.md). It is a
+notification channel only — REST remains authoritative.
+
 ### Lifecycle
 
 | Aggregate  | Endpoint                                                 | Body                                 |

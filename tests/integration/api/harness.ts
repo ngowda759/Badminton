@@ -1,8 +1,10 @@
 import type { HealthCheck, ServiceHealth } from '@badminton/domain';
+import { createRealtimeEventPublisher } from '@badminton/application';
 import type { FastifyInstance } from 'fastify';
 
 import { buildApp } from '../../../apps/api/src/app.ts';
 import { createApiServices } from '../../../apps/api/src/composition/api-services.ts';
+import type { ApiRealtime } from '../../../apps/api/src/http/api-realtime.ts';
 import type { ApiServices } from '../../../apps/api/src/http/api-services.ts';
 import { createFakeRepositories } from '../../unit/application/fake-repositories.ts';
 
@@ -28,12 +30,28 @@ export function stubHealthCheck(): HealthCheck {
 export interface TestApi {
   readonly app: FastifyInstance;
   readonly services: ApiServices;
+  /** The in-memory realtime publisher the SSE endpoint subscribes to. */
+  readonly realtime: ApiRealtime;
+}
+
+export interface TestApiOptions {
+  /** Overrides the SSE heartbeat interval so tests need not wait the default. */
+  readonly realtimeHeartbeatIntervalMs?: number;
 }
 
 /** Builds a Fastify app whose `/api/v1` services run over fake repositories. */
-export function createTestApi(): TestApi {
+export function createTestApi(options: TestApiOptions = {}): TestApi {
   const fakes = createFakeRepositories();
   const services = createApiServices(fakes.client, fakes.unitOfWork);
-  const app = buildApp({ checks: [stubHealthCheck()], corsOrigins: [], services });
-  return { app, services };
+  const realtime: ApiRealtime = { publisher: createRealtimeEventPublisher() };
+  const app = buildApp({
+    checks: [stubHealthCheck()],
+    corsOrigins: [],
+    services,
+    realtime,
+    ...(options.realtimeHeartbeatIntervalMs === undefined
+      ? {}
+      : { realtimeHeartbeatIntervalMs: options.realtimeHeartbeatIntervalMs }),
+  });
+  return { app, services, realtime };
 }
