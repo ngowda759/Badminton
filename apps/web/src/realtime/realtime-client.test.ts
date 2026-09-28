@@ -16,8 +16,19 @@ class FakeEventSource implements RealtimeEventSource {
   public onerror: ((event: Event) => void) | null = null;
   public onmessage: ((event: MessageEvent) => void) | null = null;
   public closeCalls = 0;
+  private readonly named = new Map<string, Set<(event: MessageEvent) => void>>();
 
   public constructor(public readonly url: string) {}
+
+  public addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    const set = this.named.get(type) ?? new Set();
+    set.add(listener);
+    this.named.set(type, set);
+  }
+
+  public removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.named.get(type)?.delete(listener);
+  }
 
   public close(): void {
     this.closeCalls += 1;
@@ -34,9 +45,16 @@ class FakeEventSource implements RealtimeEventSource {
     this.onerror?.(new Event('error'));
   }
 
-  /** Emits an SSE message; `data` is the raw `data:` field content. */
+  /** Emits an unnamed `message`; `data` is the raw `data:` field content. */
   public message(data: unknown): void {
     this.onmessage?.(new MessageEvent('message', { data }));
+  }
+
+  /** Emits a named event frame, as the real server does. */
+  public emit(type: string, data: unknown): void {
+    for (const listener of this.named.get(type) ?? []) {
+      listener(new MessageEvent(type, { data }));
+    }
   }
 }
 
@@ -223,6 +241,17 @@ describe('tournament realtime client event handling', () => {
     expect(events[0]?.event).toBe('FUTURE_EVENT');
   });
 
+  it('delivers a named event frame, which the browser does not route to onmessage', () => {
+    const { client, sources, events } = setup();
+    client.start();
+    sources[0]?.open();
+
+    sources[0]?.emit('MATCH_COMPLETED', EVENT_DATA);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event).toBe('MATCH_COMPLETED');
+  });
+
   it('ignores malformed data and keeps the connection usable', () => {
     const { client, sources, events, statuses } = setup();
     client.start();
@@ -233,11 +262,12 @@ describe('tournament realtime client event handling', () => {
     sources[0]?.message(JSON.stringify({ ...JSON.parse(EVENT_DATA), event: '' }));
     sources[0]?.message(42);
     sources[0]?.message(new Uint8Array([1, 2, 3]));
+    sources[0]?.emit('MATCH_STARTED', 'not json');
 
     expect(events).toHaveLength(0);
     expect(client.getStatus()).toBe('CONNECTED');
 
-    sources[0]?.message(EVENT_DATA);
+    sources[0]?.emit('MATCH_STARTED', EVENT_DATA);
     expect(events).toHaveLength(1);
     expect(statuses).toEqual(['CONNECTING', 'CONNECTED']);
   });

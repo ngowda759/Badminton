@@ -21,6 +21,8 @@ export interface ApiV1RoutesOptions {
   readonly realtime?: ApiRealtime;
   /** SSE heartbeat interval (ms); read from `REALTIME_HEARTBEAT_INTERVAL_MS`. */
   readonly realtimeHeartbeatIntervalMs: number;
+  /** Origins allowed to hold a realtime stream; mirrors the CORS allowlist. */
+  readonly corsOrigins: readonly string[];
 }
 
 /**
@@ -58,6 +60,7 @@ export function createApiV1Routes(
     await instance.register(realtimeRoutes, {
       ...(options.realtime ? { realtime: options.realtime } : {}),
       heartbeatIntervalMs: options.realtimeHeartbeatIntervalMs,
+      corsOrigins: options.corsOrigins,
     });
   };
 }

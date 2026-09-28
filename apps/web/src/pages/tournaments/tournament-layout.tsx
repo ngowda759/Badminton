@@ -7,6 +7,10 @@ import { LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { TournamentProvider } from '@/components/tournaments/context.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
+import {
+  RealtimeStatusIndicator,
+  TournamentRealtimeProvider,
+} from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Loads one tournament and keeps it available to every nested route.
@@ -14,6 +18,11 @@ import { useApiQuery } from '@/hooks/use-api-query.ts';
  * The tournament is fetched once here rather than by each child page, so
  * navigating between details, categories, stages and matches does not refetch
  * it repeatedly.
+ *
+ * It also opens the tournament's realtime stream once (Phase 8.5): the
+ * {@link TournamentRealtimeProvider} owns the single `EventSource` and the
+ * refresh bus every nested screen registers its REST query with, so no screen
+ * opens a connection of its own.
  */
 export function TournamentLayout() {
   const api = useApi();
@@ -48,9 +57,12 @@ export function TournamentLayout() {
       <div className="flex items-center gap-2">
         <StatusBadge kind="tournament" status={state.data.status} />
       </div>
-      <TournamentProvider value={{ tournament: state.data, refetch }}>
-        <Outlet />
-      </TournamentProvider>
+      <TournamentRealtimeProvider tournamentId={state.data.id}>
+        <TournamentProvider value={{ tournament: state.data, refetch }}>
+          <RealtimeStatusIndicator />
+          <Outlet />
+        </TournamentProvider>
+      </TournamentRealtimeProvider>
     </div>
   );
 }

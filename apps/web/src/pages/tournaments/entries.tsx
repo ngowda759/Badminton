@@ -28,6 +28,7 @@ import { useMutation } from '@/hooks/use-mutation.ts';
 import { formatCalendarDate } from '@/lib/format.ts';
 import { toDisplayMessage } from '@/lib/errors.ts';
 import { entryNextStatuses, transitionActionLabel } from '@/lib/lifecycle.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Category entries: list, registration and lifecycle.
@@ -43,6 +44,8 @@ export function EntriesPage() {
   const { state, refetch } = useApiQuery<readonly EntryDto[]>(['entries', category.id], (signal) =>
     api.entries.listByCategory(category.id, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   const entries = state.status === 'loaded' ? state.data : [];
   const { playerNames, teamNames } = useCompetitorNames(

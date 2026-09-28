@@ -333,3 +333,48 @@ describe('GET /api/v1/tournaments/:tournamentId/events', () => {
     await survivor.close();
   });
 });
+
+/**
+ * The SSE response is hijacked before Fastify's `onSend` phase, so `@fastify/cors`
+ * never runs for it; without the explicit header a cross-origin `EventSource`
+ * (the whole point of Phase 8.5) is blocked by the browser even though the same
+ * API's normal requests succeed.
+ */
+describe('GET /api/v1/tournaments/:tournamentId/events CORS', () => {
+  let corsApi: TestApi;
+  let corsApp: FastifyInstance;
+
+  beforeEach(async () => {
+    corsApi = createTestApi({ corsOrigins: ['http://localhost:5173'] });
+    corsApp = corsApi.app;
+    await corsApp.listen({ port: 0, host: '127.0.0.1' });
+  });
+
+  afterEach(async () => {
+    await corsApp.close();
+  });
+
+  it('reflects an allowed origin on the hijacked stream', async () => {
+    const address = corsApp.server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${String(address.port)}/api/v1/tournaments/${TOURNAMENT_A}/events`,
+      { headers: { origin: 'http://localhost:5173' } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:5173');
+    expect(response.headers.get('vary')).toContain('Origin');
+    await response.body?.cancel().catch(() => undefined);
+  });
+
+  it('does not reflect a disallowed origin', async () => {
+    const address = corsApp.server.address() as AddressInfo;
+    const response = await fetch(
+      `http://127.0.0.1:${String(address.port)}/api/v1/tournaments/${TOURNAMENT_A}/events`,
+      { headers: { origin: 'http://evil.example' } },
+    );
+
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+    await response.body?.cancel().catch(() => undefined);
+  });
+});

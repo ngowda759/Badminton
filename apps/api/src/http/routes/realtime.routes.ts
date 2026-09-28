@@ -4,6 +4,7 @@ import type { FastifyPluginCallback, FastifyReply } from 'fastify';
 
 import type { ApiRealtime } from '../api-realtime.ts';
 import { validate } from '../request.ts';
+import { applyHijackedCorsHeaders } from '../../plugins/cors.ts';
 import {
   openSseConnection,
   type SseConnection,
@@ -15,6 +16,12 @@ export interface RealtimeRoutesOptions {
   readonly realtime?: ApiRealtime;
   /** SSE heartbeat interval (ms); read from `REALTIME_HEARTBEAT_INTERVAL_MS`. */
   readonly heartbeatIntervalMs: number;
+  /**
+   * Browser origins allowed to hold a realtime stream. The stream hijacks the
+   * response, so it must carry the CORS headers itself (see
+   * `applyHijackedCorsHeaders`).
+   */
+  readonly corsOrigins: readonly string[];
   /** Timer seam so tests need not wait real time. */
   readonly scheduler?: SseConnectionTimerScheduler;
 }
@@ -77,7 +84,7 @@ export const realtimeRoutes: FastifyPluginCallback<RealtimeRoutesOptions> = (app
       );
     }
 
-    const response = hijackForSse(reply);
+    const response = hijackForSse(reply, request.headers.origin, options.corsOrigins);
 
     // The adapter registers disconnect detection before it subscribes or starts
     // the heartbeat, so a client that leaves during setup still ends with no
@@ -113,9 +120,18 @@ export const realtimeRoutes: FastifyPluginCallback<RealtimeRoutesOptions> = (app
 /**
  * Detaches the response from Fastify so the stream can outlive the normal
  * request lifecycle and be written to directly.
+ *
+ * Because hijacking skips Fastify's `onSend` phase, `@fastify/cors` never runs
+ * for this response; the approved CORS headers are applied here instead so a
+ * cross-origin `EventSource` is not blocked.
  */
-function hijackForSse(reply: FastifyReply): FastifyReply['raw'] {
+function hijackForSse(
+  reply: FastifyReply,
+  origin: string | undefined,
+  corsOrigins: readonly string[],
+): FastifyReply['raw'] {
   const response = reply.raw;
   reply.hijack();
+  applyHijackedCorsHeaders(response, origin, corsOrigins);
   return response;
 }

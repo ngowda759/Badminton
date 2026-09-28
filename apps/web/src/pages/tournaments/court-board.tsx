@@ -11,14 +11,16 @@ import { Card, CardContent } from '@/components/ui/card.tsx';
 import { useTournament } from '@/components/tournaments/context.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { formatDateTime } from '@/lib/format.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Court board: the operational view of each active court.
  *
  * Read-only with respect to scoring - the match lifecycle and scoring workflow
  * stays authoritative. Each court shows its live match (if any) or its next
- * scheduled match; a court with neither is idle. Refresh is manual: Phase 7
- * does not implement realtime.
+ * scheduled match; a court with neither is idle. The board loads and refreshes
+ * over REST, and Phase 8.5 refetches it on any tournament realtime event so a
+ * schedule, start or completion made elsewhere appears without a manual refresh.
  */
 export function CourtBoardPage() {
   const api = useApi();
@@ -28,6 +30,8 @@ export function CourtBoardPage() {
     ['dashboard', tournament.id],
     (signal) => api.dashboard.get(tournament.id, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   return (
     <div className="space-y-6">

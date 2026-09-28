@@ -8,6 +8,7 @@ import { FormatBadge, StatusBadge } from '@/components/status-badge.tsx';
 import { CategoryProvider, useTournament } from '@/components/tournaments/context.tsx';
 import { cn } from '@/lib/utils.ts';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Loads one category and provides it to its nested routes.
@@ -23,6 +24,8 @@ export function CategoryLayout() {
   const { state, refetch } = useApiQuery<CategoryDto>(['category', categoryId], (signal) =>
     api.categories.get(categoryId, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   if (state.status === 'loading') {
     return <LoadingState label="Loading category…" rows={4} />;

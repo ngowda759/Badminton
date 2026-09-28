@@ -9,9 +9,9 @@ Badminton V2 — a badminton tournament management platform. **Phases 1 (foundat
 4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
 stage, bracket management and progression), 7 (court management, match
 scheduling and tournament dashboard), 8.1 (the realtime transactional outbox),
-8.2 (the realtime SSE transport), 8.3 (application event publishing) and 8.4
-(the browser realtime `EventSource` client) are implemented; Phase 8.5–8.6
-(live UI sync and multi-device hardening) are not implemented.**
+8.2 (the realtime SSE transport), 8.3 (application event publishing), 8.4
+(the browser realtime `EventSource` client) and 8.5 (live UI synchronization)
+are implemented; Phase 8.6 (multi-device hardening) is not implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
@@ -22,12 +22,14 @@ publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up), the Phase 8.2
 SSE endpoint (`GET /api/v1/tournaments/:tournamentId/events`, SSE frame codec,
 connection adapter and heartbeat), the Phase 8.3 application-service event
 publishing (each live-tournament mutation records its outbox row in the same
-`UnitOfWork` transaction) and the Phase 8.4 browser realtime client (tournament-
+`UnitOfWork` transaction), the Phase 8.4 browser realtime client (tournament-
 scoped `EventSource` lifecycle, connection state and event parsing, exposed via
-`useTournamentRealtime`) exist.
+`useTournamentRealtime`) and the Phase 8.5 live UI synchronization (the
+tournament-scoped refresh bus that turns a realtime event or reconnect into an
+authoritative REST refetch) exist.
 **Automatic draw/seeding, rankings, authentication, authorization,
-result-correction workflows and live UI synchronization (consuming the realtime
-signal to invalidate/refetch REST) are not implemented.**
+result-correction workflows and Phase 8.6 multi-device hardening are not
+implemented.**
 Do not add those unless the task explicitly asks for a later phase. The
 authoritative design is `docs/phase-2-domain-design.md`; the Phase 2.2
 architecture is `docs/phase-2-2-architecture.md`; the REST API reference is
@@ -190,4 +192,26 @@ database — integration tests use `app.inject()` with stub probes.
   envelope is validated in `@badminton/validation` (`realtimeEventEnvelopeSchema`) — reuse
   it rather than re-parsing JSON ad hoc, drop malformed frames without closing the stream,
   and never add a custom reconnect loop (the native `EventSource` retries; the client only
-  mirrors its state). No `Last-Event-ID`, no replay.
+  mirrors its state). No `Last-Event-ID`, no replay. The server names every frame with an
+  `event:` field, so the client must subscribe per catalogue type with
+  `addEventListener(REALTIME_EVENT_TYPES…)` — a named frame is never delivered to
+  `onmessage` (`onmessage` is kept only as a fallback for an unnamed frame).
+- Phase 8.5 live UI sync lives in `apps/web/src/realtime/tournament-refresh.tsx`
+  (`TournamentRealtimeProvider`, `useTournamentRefresh`, `RealtimeStatusIndicator`).
+  `TournamentLayout` mounts one provider per open tournament; it is the only
+  `useTournamentRealtime` consumer, so exactly one `EventSource` opens per tournament
+  regardless of how many screens register. Each screen calls
+  `useTournamentRefresh(query.refetch)` with its own existing REST query — never a second
+  store, never a second data-fetching framework (the project uses `useApiQuery`, not
+  TanStack Query). Any valid event or a reconnect invalidates the registered REST queries;
+  the event payload is never read as a read model and there is no `switch (event.event)`
+  and no per-event business logic. Event bursts are coalesced by a small
+  `DEFAULT_REFRESH_COALESCE_MS` (60 ms) window whose pending flush is cancelled on unmount;
+  the first `CONNECTED` does not refetch (the initial REST load already ran), a later
+  `CONNECTED` after `RECONNECTING`/`DISCONNECTED` does. Invalidation is tournament-scoped —
+  never a global `invalidateQueries()`. Realtime failure is isolated: REST, manual refresh
+  and the initial load all work with the stream down, and a realtime-triggered refetch
+  failure uses the screen's existing error state (no new global error system).
+  `corsOrigins` (the app's `CORS_ORIGINS` allowlist) is applied to the hijacked SSE
+  response in `apps/api/src/http/routes/realtime.routes.ts` as well as to ordinary routes,
+  because `reply.hijack()` bypasses `@fastify/cors`.

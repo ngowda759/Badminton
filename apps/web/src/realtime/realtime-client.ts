@@ -1,3 +1,5 @@
+import { REALTIME_EVENT_TYPES } from '@badminton/domain';
+
 import {
   parseRealtimeEvent,
   type RealtimeConnectionStatus,
@@ -42,13 +44,17 @@ const EVENT_SOURCE_CLOSED = 2;
  * The subset of `EventSource` the client depends on.
  *
  * Declaring it keeps the client testable with a fake and documents exactly what
- * the browser API must provide.
+ * the browser API must provide. The listener methods are needed because the
+ * server frames each event with a named `event:` field, and the browser only
+ * routes those to `addEventListener(<type>)` - never to `onmessage`.
  */
 export interface RealtimeEventSource {
   readonly readyState: number;
   onopen: ((event: Event) => void) | null;
   onerror: ((event: Event) => void) | null;
   onmessage: ((event: MessageEvent) => void) | null;
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void;
+  removeEventListener(type: string, listener: (event: MessageEvent) => void): void;
   close(): void;
 }
 
@@ -101,6 +107,7 @@ export function createTournamentRealtimeClient(
   const factory = options.eventSourceFactory ?? createBrowserEventSource;
   let status: RealtimeConnectionStatus = 'DISCONNECTED';
   let source: RealtimeEventSource | undefined;
+  let removeNamedListeners: (() => void) | undefined;
   let stopped = false;
 
   const setStatus = (next: RealtimeConnectionStatus): void => {
@@ -109,6 +116,17 @@ export function createTournamentRealtimeClient(
     }
     status = next;
     options.onStatus?.(next);
+  };
+
+  /** Parses a frame's `data` and forwards a well-formed event; malformed is dropped. */
+  const handleData = (data: unknown): void => {
+    if (typeof data !== 'string') {
+      return;
+    }
+    const event = parseRealtimeEvent(data);
+    if (event) {
+      options.onEvent?.(event);
+    }
   };
 
   /** Detaches handlers first so no callback can fire after disposal. */
@@ -121,6 +139,8 @@ export function createTournamentRealtimeClient(
     current.onopen = null;
     current.onerror = null;
     current.onmessage = null;
+    removeNamedListeners?.();
+    removeNamedListeners = undefined;
     current.close();
   };
 
@@ -161,16 +181,37 @@ export function createTournamentRealtimeClient(
       setStatus(created.readyState === EVENT_SOURCE_CLOSED ? 'DISCONNECTED' : 'RECONNECTING');
     };
 
+    // Kept for compatibility with a source that emits an unnamed `message`
+    // event; the real server always names its frames, which don't reach this.
     created.onmessage = (message: MessageEvent): void => {
       if (stopped || source !== created) {
         return;
       }
-      if (typeof message.data !== 'string') {
-        return;
-      }
-      const event = parseRealtimeEvent(message.data);
-      if (event) {
-        options.onEvent?.(event);
+      handleData(message.data);
+    };
+
+    const listeners: { readonly type: string; readonly handler: (event: MessageEvent) => void }[] =
+      [];
+    const register = (type: string): void => {
+      const handler = (message: MessageEvent): void => {
+        if (stopped || source !== created) {
+          return;
+        }
+        handleData(message.data);
+      };
+      listeners.push({ type, handler });
+      created.addEventListener(type, handler);
+    };
+
+    // `onmessage` only fires for frames with no `event` field; every real event
+    // is named, so subscribe to each catalogue type. A named frame is dispatched
+    // to its own type only, which is why one `onmessage` handler is not enough.
+    for (const type of REALTIME_EVENT_TYPES) {
+      register(type);
+    }
+    removeNamedListeners = (): void => {
+      for (const { type, handler } of listeners) {
+        created.removeEventListener(type, handler);
       }
     };
   };

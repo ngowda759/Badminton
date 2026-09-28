@@ -38,6 +38,7 @@ import {
   validateRequired,
   type FieldErrors,
 } from '@/lib/form-validation.ts';
+import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
  * Stage metadata only.
@@ -53,6 +54,8 @@ export function StagesPage() {
   const { state, refetch } = useApiQuery<readonly StageDto[]>(['stages', category.id], (signal) =>
     api.stages.listByCategory(category.id, signal),
   );
+
+  useTournamentRefresh(refetch);
 
   return (
     <div className="space-y-6">
