@@ -2,6 +2,7 @@ import {
   createKnockoutBracketService,
   createMatchService,
   createPlayerService,
+  createRealtimeEventService,
   createTeamService,
   createTournamentCategoryService,
   createTournamentEntryService,
@@ -61,13 +62,29 @@ beforeEach(() => {
 
 function services() {
   return {
-    tournaments: createTournamentService(repos.client),
-    categories: createTournamentCategoryService(repos.client),
+    tournaments: createTournamentService(
+      repos.client,
+      counter.unitOfWork,
+      createRealtimeEventService(),
+    ),
+    categories: createTournamentCategoryService(
+      repos.client,
+      counter.unitOfWork,
+      createRealtimeEventService(),
+    ),
     players: createPlayerService(repos.client),
     teams: createTeamService(repos.client, counter.unitOfWork),
-    entries: createTournamentEntryService(repos.client, counter.unitOfWork),
-    stages: createTournamentStageService(repos.client),
-    matches: createMatchService(repos.client, counter.unitOfWork),
+    entries: createTournamentEntryService(
+      repos.client,
+      counter.unitOfWork,
+      createRealtimeEventService(),
+    ),
+    stages: createTournamentStageService(
+      repos.client,
+      counter.unitOfWork,
+      createRealtimeEventService(),
+    ),
+    matches: createMatchService(repos.client, counter.unitOfWork, createRealtimeEventService()),
   };
 }
 
@@ -140,11 +157,6 @@ describe('single-write operations do not open an interactive transaction', () =>
     expect(
       await transactionsUsed(() => tournaments.update(tournamentId, { name: 'Renamed' })),
     ).toBe(0);
-    expect(
-      await transactionsUsed(() =>
-        tournaments.transitionStatus(tournamentId, { status: 'REGISTRATION_OPEN' }),
-      ),
-    ).toBe(0);
 
     expect(
       await transactionsUsed(() =>
@@ -152,9 +164,6 @@ describe('single-write operations do not open an interactive transaction', () =>
       ),
     ).toBe(0);
     expect(await transactionsUsed(() => categories.update(categoryId, { name: 'Open' }))).toBe(0);
-    expect(
-      await transactionsUsed(() => categories.transitionStatus(categoryId, { status: 'OPEN' })),
-    ).toBe(0);
 
     expect(await transactionsUsed(() => players.create({ name: 'New Player' }))).toBe(0);
     expect(await transactionsUsed(() => players.update(playerId, { name: 'Updated' }))).toBe(0);
@@ -167,14 +176,8 @@ describe('single-write operations do not open an interactive transaction', () =>
       ),
     ).toBe(0);
     expect(await transactionsUsed(() => stages.update(stageId, { name: 'Group A' }))).toBe(0);
-    expect(
-      await transactionsUsed(() => stages.transitionStatus(stageId, { status: 'ACTIVE' })),
-    ).toBe(0);
 
     expect(await transactionsUsed(() => matches.update(matchId, { roundNumber: 1 }))).toBe(0);
-    expect(
-      await transactionsUsed(() => matches.transitionStatus(matchId, { status: 'IN_PROGRESS' })),
-    ).toBe(0);
   });
 
   it('updates an entry seed without a transaction', async () => {

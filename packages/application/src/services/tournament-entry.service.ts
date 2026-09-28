@@ -13,6 +13,8 @@ import {
   type TournamentEntry,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { RegisterEntryCommand, UpdateEntryCommand } from './commands.ts';
@@ -28,6 +30,12 @@ import type { RegisterEntryCommand, UpdateEntryCommand } from './commands.ts';
  *
  * The exactly-one-owner rule is also enforced structurally by the database; the
  * format/team-size/player-in-two-teams rules are cross-table and live here.
+ *
+ * An entry status transition (`CONFIRMED` / `WITHDRAWN` / `DISQUALIFIED`)
+ * changes who is eligible to compete, so it writes its
+ * `ENTRY_STATUS_CHANGED` outbox event in the same transaction. Registration
+ * itself and a seed edit are not live-state changes a connected client needs to
+ * react to, so they emit nothing.
  */
 export interface TournamentEntryService {
   register(command: RegisterEntryCommand): Promise<TournamentEntry>;
@@ -42,6 +50,7 @@ export interface TournamentEntryService {
 export function createTournamentEntryService(
   client: RepositoryClient,
   unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
 ): TournamentEntryService {
   return {
     async register(command: RegisterEntryCommand): Promise<TournamentEntry> {
@@ -88,15 +97,15 @@ export function createTournamentEntryService(
     },
 
     async withdraw(id: string): Promise<TournamentEntry> {
-      return transitionEntry(unitOfWork, id, 'WITHDRAWN');
+      return transitionEntry(unitOfWork, events, id, 'WITHDRAWN');
     },
 
     async confirm(id: string): Promise<TournamentEntry> {
-      return transitionEntry(unitOfWork, id, 'CONFIRMED');
+      return transitionEntry(unitOfWork, events, id, 'CONFIRMED');
     },
 
     async disqualify(id: string): Promise<TournamentEntry> {
-      return transitionEntry(unitOfWork, id, 'DISQUALIFIED');
+      return transitionEntry(unitOfWork, events, id, 'DISQUALIFIED');
     },
 
     async update(id: string, command: UpdateEntryCommand): Promise<TournamentEntry> {
@@ -256,11 +265,12 @@ async function buildDoublesEntry(
 
 async function transitionEntry(
   unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
   id: string,
   to: EntryStatus,
 ): Promise<TournamentEntry> {
   // Read-transition-write: the lifecycle guard must be evaluated against the
-  // same snapshot the write applies to.
+  // same snapshot the write applies to, and the outbox event commits with it.
   return unitOfWork.runInTransaction(async (tx) => {
     const current = await requireEntry(tx, id);
     const from: EntryStatus = current.status;
@@ -269,7 +279,23 @@ async function transitionEntry(
       throw new InvalidStateTransitionError('Entry', from, to);
     }
 
-    return tx.entries.updateStatus(id, to);
+    const updated = await tx.entries.updateStatus(id, to);
+
+    // Resolve the tournament through the entry's category; the event must carry
+    // the owning tournament so a tournament-scoped subscriber receives it.
+    const category = await tx.categories.findById(current.categoryId);
+    if (!category) {
+      throw new NotFoundError('Category', current.categoryId);
+    }
+
+    await events.record(tx, {
+      tournamentId: category.tournamentId,
+      eventType: REALTIME_EVENTS.ENTRY_STATUS_CHANGED,
+      aggregateType: REALTIME_AGGREGATES.ENTRY,
+      aggregateId: id,
+    });
+
+    return updated;
   });
 }
 

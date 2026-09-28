@@ -1,11 +1,12 @@
 # Phase 8 — Multi-device & realtime
 
-Status: **Phase 8.1 (transactional outbox) and Phase 8.2 (SSE transport) implemented on
-`main`; Phase 8.3–8.6 designed, not yet built.**
+Status: **Phase 8.1 (transactional outbox), Phase 8.2 (SSE transport) and Phase 8.3
+(application event publishing) implemented on `main`; Phase 8.4–8.6 designed, not yet
+built.**
 
 - Phase 8.1 — Transactional Outbox — **IMPLEMENTED**
 - Phase 8.2 — SSE Transport — **IMPLEMENTED**
-- Phase 8.3 — Application event publishing — NOT IMPLEMENTED
+- Phase 8.3 — Application event publishing — **IMPLEMENTED**
 - Phase 8.4 — Web realtime client (`EventSource`) — NOT IMPLEMENTED
 - Phase 8.5 — Live UI sync — NOT IMPLEMENTED
 - Phase 8.6 — Multi-device hardening — NOT IMPLEMENTED
@@ -24,8 +25,9 @@ something changed, and clients refetch authoritative state.
 ## 1. Scope
 
 - **In:** a durable transactional outbox, an event catalogue, a publisher, a
-  dispatcher, a PostgreSQL `LISTEN`/`NOTIFY` wake-up, and the SSE transport
-  endpoint (`GET /api/v1/tournaments/:tournamentId/events`) — Phase 8.1 + 8.2.
+  dispatcher, a PostgreSQL `LISTEN`/`NOTIFY` wake-up, the SSE transport endpoint
+  (`GET /api/v1/tournaments/:tournamentId/events`) — Phase 8.1 + 8.2 — and the
+  application-service event publishing that writes the outbox rows — Phase 8.3.
 - **Out:** WebSockets, Redis, Kafka, RabbitMQ, background job platforms, event
   replay, authentication, and any client-side business logic. SSE is the only
   transport; the browser refetches REST for state. **No frontend realtime client
@@ -47,16 +49,24 @@ Dispatcher drains outbox  →  RealtimeEventPublisher  →  SSE subscribers (8.2
 ```
 
 Business logic stays in services/domain; the outbox is written through a
-repository port; Prisma never leaks into the application layer.
+repository port; Prisma never leaks into the application layer. Phase 8.3 is
+where the top of that diagram is realized: the application services themselves
+write the outbox row, and only the application services do.
 
 ## 3. Phase 8.1 — implemented
 
 ### Domain (`packages/domain/src/realtime.ts`)
 
 - `REALTIME_EVENT_TYPES`: `MATCH_SCHEDULED`, `MATCH_UNSCHEDULED`, `MATCH_STARTED`,
-  `MATCH_GAME_RECORDED`, `MATCH_COMPLETED`, `MATCH_CANCELLED`, `COURT_CREATED`,
-  `COURT_UPDATED`, `COURT_STATUS_CHANGED`, `KNOCKOUT_MATCH_POPULATED`.
-- `REALTIME_AGGREGATE_TYPES`: `MATCH`, `COURT`.
+  `MATCH_GAME_RECORDED`, `MATCH_RESULT_RECORDED`, `MATCH_COMPLETED`,
+  `MATCH_CANCELLED`, `COURT_CREATED`, `COURT_UPDATED`, `COURT_STATUS_CHANGED`,
+  `KNOCKOUT_MATCH_POPULATED`, `TOURNAMENT_STATUS_CHANGED`,
+  `CATEGORY_STATUS_CHANGED`, `STAGE_STATUS_CHANGED`, `ENTRY_STATUS_CHANGED`.
+  (Phase 8.3 added `MATCH_RESULT_RECORDED` and the four `*_STATUS_CHANGED`
+  types; the catalogue still grows in `packages/domain`, never as scattered
+  string literals — services use the `REALTIME_EVENTS` constants below.)
+- `REALTIME_AGGREGATE_TYPES`: `MATCH`, `COURT`, `TOURNAMENT`, `CATEGORY`,
+  `STAGE`, `ENTRY`.
 - `RealtimeEvent` (id, tournamentId, eventType, aggregateType, aggregateId,
   occurredAt, payload, publishedAt), `isRealtimeEventType`,
   `isRealtimeAggregateType`, `normalizeRealtimePayload`,
@@ -260,13 +270,123 @@ keep-alive sockets.
 - **Failure:** a delivery failure never rolls back the committed transaction, and
   a broken SSE subscriber never affects another subscriber or REST.
 
-## 6. Phase 8.3–8.6 (planned)
+## 6. Phase 8.3 — Application event publishing (implemented)
 
-- **8.3** application event publishing from `MatchSchedulingService`,
-  `MatchResultService`, `CourtService`, `KnockoutProgressionService` — each state
-  change writes its event inside the same transaction. Not implemented: the SSE
-  endpoint currently receives only events written to the outbox by whatever calls
-  `RealtimeEventService.record`.
+Phase 8.3 wires the existing application-layer tournament mutations to record a
+realtime outbox row **inside the same `UnitOfWork.runInTransaction` block as the
+business mutation**. Nothing new is introduced at the transport end: the same
+`RealtimeEventService`, dispatcher, publisher and SSE endpoint from 8.1/8.2 carry
+the events. Phase 8.3 only makes the services _produce_ them.
+
+```
+Application Service
+        │
+        ▼
+UnitOfWork.runInTransaction(...)
+        ├── business mutation (repositories)
+        └── RealtimeEventService.record(client, …)
+        ▼
+      COMMIT  ──▶  realtime_events outbox  ──▶  dispatcher  ──▶  publisher  ──▶  SSE
+```
+
+### Transaction boundary
+
+Every integrated mutation runs both writes on the **transaction-scoped
+`RepositoryClient`** the unit of work hands it. Consequences, all covered by
+tests:
+
+- **Success** — the business change and its event(s) commit together.
+- **Business failure** — the transaction rolls back, so no event is committed.
+- **Event persistence failure** — the event write throws _inside_ the
+  transaction, so the business change rolls back with it. Event recording is
+  never caught-and-continued; it is not best-effort.
+
+A mutation that previously used only the plain client (a single write) now opens
+exactly one transaction so its event can join it. Read-only methods and
+mutations that emit no event (see below) still open none.
+
+### Event types used by each service
+
+| Service                     | Mutation                              | Event(s) recorded                                                                                                     |
+| --------------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `MatchSchedulingService`    | `schedule`                            | `MATCH_SCHEDULED` (aggregate `MATCH`)                                                                                 |
+| `MatchSchedulingService`    | `unschedule`                          | `MATCH_UNSCHEDULED` (aggregate `MATCH`)                                                                               |
+| `MatchService`              | `transitionStatus` → `IN_PROGRESS`    | `MATCH_STARTED` (aggregate `MATCH`)                                                                                   |
+| `MatchService`              | `transitionStatus` → `CANCELLED`      | `MATCH_CANCELLED` (aggregate `MATCH`)                                                                                 |
+| `MatchResultService`        | `recordResult`                        | `MATCH_RESULT_RECORDED` + `MATCH_COMPLETED`; plus `KNOCKOUT_MATCH_POPULATED` when progression fills a next-round slot |
+| `CourtService`              | `create`                              | `COURT_CREATED` (aggregate `COURT`)                                                                                   |
+| `CourtService`              | `update`                              | `COURT_UPDATED` (aggregate `COURT`)                                                                                   |
+| `CourtService`              | `transitionStatus`                    | `COURT_STATUS_CHANGED` (aggregate `COURT`)                                                                            |
+| `TournamentService`         | `transitionStatus`                    | `TOURNAMENT_STATUS_CHANGED` (aggregate `TOURNAMENT`)                                                                  |
+| `TournamentCategoryService` | `transitionStatus`                    | `CATEGORY_STATUS_CHANGED` (aggregate `CATEGORY`)                                                                      |
+| `TournamentStageService`    | `transitionStatus`                    | `STAGE_STATUS_CHANGED` (aggregate `STAGE`)                                                                            |
+| `TournamentEntryService`    | `confirm` / `withdraw` / `disqualify` | `ENTRY_STATUS_CHANGED` (aggregate `ENTRY`)                                                                            |
+
+`KnockoutProgressionService` stays a pure bracket operation: it returns `true`
+only when it actually fills a next-round slot, and `MatchResultService` uses that
+signal to decide whether the `KNOCKOUT_MATCH_POPULATED` event is warranted. This
+keeps a replayed/idempotent progression from producing a duplicate event without
+adding a deduplication system.
+
+The event-type and aggregate-type names are centralised in
+`REALTIME_EVENTS` / `REALTIME_AGGREGATES`
+(`packages/application/src/realtime/event-types.ts`), typed against the domain
+catalogue, so a service never scatters a string literal.
+
+### Payload principles
+
+Every event carries `tournamentId`, `aggregateType`, `aggregateId` and
+`eventType`, and an empty payload (`null` after normalisation). No dashboard,
+match, standings or court object is embedded — the client refetches REST for
+authoritative state, so the event is only a "something changed" notification. The
+`tournamentId` is always resolved by the service that knows the aggregate (the
+match → stage → category chain, the entry's category, the court/tournament id),
+never derived from request or session state in the realtime layer.
+
+### Idempotency / no-op behaviour
+
+- A **no-op court status transition** (already in the target status) returns
+  early and records nothing.
+- A **rejected** mutation (invalid transition, duplicate number, overlap,
+  inactive court, missing participant, …) throws before the event is written, so
+  no event is committed.
+- A **replayed knockout progression** returns `false`, so no duplicate
+  `KNOCKOUT_MATCH_POPULATED` event is recorded.
+- `recordResult` on an already-completed match is a conflict and records nothing.
+
+### Which services intentionally do not publish
+
+Only live-tournament state changes that a connected client would need to refetch
+on produce an event. The following stay plain reads/single writes with no event,
+to keep the catalogue meaningful and the transactions minimal:
+
+- **Reads** — every `getById` / `list*` (dashboard, standings, bracket read,
+  court list, …). The dashboard is a derived read model and never writes.
+- **Creation and edits that are not live-state transitions** — tournament
+  create/update, category create/update, stage create/update, player and team
+  mutations, entry registration and seed edits. These do not change what is
+  happening on court; a client that cares refetches on navigation.
+- **`MatchService.create` / `update` / `addParticipant`** and
+  **`KnockoutBracketService.generateBracket`**. Generating a bracket is setup,
+  and participant assignment is not surfaced on the live dashboard; both are
+  already transactional, and adding events would widen the catalogue without a
+  client use case.
+- **`CourtService` reads** and **`MatchService` reads** — never open a
+  transaction.
+
+If a later phase needs one of these, add the event to the domain catalogue and
+the service's transaction; do not add speculative events now.
+
+### Failure isolation
+
+Application mutation success depends only on the outbox row committing with it.
+It never depends on an SSE client: after commit, delivery is the dispatcher's and
+publisher's concern (Phase 8.1/8.2), and a delivery failure never rolls anything
+back. The application layer records durable events; it never sends SSE, never
+calls the publisher, and never holds an HTTP/SSE dependency.
+
+## 7. Phase 8.4–8.6 (planned)
+
 - **8.4** web `EventSource` client, connection state, query invalidation, REST
   refetch, graceful fallback to manual refresh. Not implemented: there is no
   frontend realtime client yet.
@@ -275,4 +395,5 @@ keep-alive sockets.
 - **8.6** multi-device/reconnect/missed-event/restart E2E hardening.
 
 Until 8.4 lands, nothing changes for existing clients: manual refresh continues
-to work and REST remains the only read path.
+to work and REST remains the only read path. Phase 8.3 only means the outbox now
+actually fills as tournaments are operated.

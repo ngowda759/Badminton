@@ -12,7 +12,10 @@ import {
   type TournamentCategory,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
+import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
   CreateCategoryCommand,
   TransitionCategoryStatusCommand,
@@ -25,8 +28,10 @@ import type {
  * Owns category creation within a tournament, the code normalization mandate
  * and the rules that freeze `format` once entries exist. A category is always
  * created in `DRAFT`; opening it for registration is an explicit transition.
- * Every operation here is a read or a single write, so no interactive
- * transaction is opened.
+ *
+ * A lifecycle transition is a category-level state change the dashboard
+ * surfaces, so it writes its `CATEGORY_STATUS_CHANGED` outbox event in the same
+ * transaction. Creation and field edits stay plain single writes.
  */
 export interface TournamentCategoryService {
   create(tournamentId: string, command: CreateCategoryCommand): Promise<TournamentCategory>;
@@ -41,6 +46,8 @@ export interface TournamentCategoryService {
 
 export function createTournamentCategoryService(
   client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
 ): TournamentCategoryService {
   return {
     async create(
@@ -122,7 +129,18 @@ export function createTournamentCategoryService(
         throw new InvalidStateTransitionError('Category', from, to);
       }
 
-      return client.categories.updateStatus(id, to);
+      return unitOfWork.runInTransaction(async (tx) => {
+        const updated = await tx.categories.updateStatus(id, to);
+
+        await events.record(tx, {
+          tournamentId: current.tournamentId,
+          eventType: REALTIME_EVENTS.CATEGORY_STATUS_CHANGED,
+          aggregateType: REALTIME_AGGREGATES.CATEGORY,
+          aggregateId: id,
+        });
+
+        return updated;
+      });
     },
 
     async getById(id: string): Promise<TournamentCategory> {

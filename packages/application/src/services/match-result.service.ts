@@ -9,10 +9,13 @@ import {
   type MatchResult,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { RecordMatchResultCommand } from './commands.ts';
 import type { KnockoutProgressionService } from './knockout-progression.service.ts';
+import { resolveMatchTournamentId } from './resolve-tournament.ts';
 
 /**
  * Match result and scoring service.
@@ -27,6 +30,12 @@ import type { KnockoutProgressionService } from './knockout-progression.service.
  * next round (Phase 6), so the result, the recorded winner and the bracket
  * progression commit atomically or not at all.
  *
+ * The same transaction also records the realtime outbox events: the result and
+ * the completion (`MATCH_RESULT_RECORDED` + `MATCH_COMPLETED`), plus the
+ * existing `KNOCKOUT_MATCH_POPULATED` when progression fills a next-round slot.
+ * So a committed result always has its notifications and a rolled-back result
+ * has none.
+ *
  * The service depends only on repository ports and the pure domain rules; it
  * knows nothing about HTTP or React.
  */
@@ -39,6 +48,7 @@ export interface MatchResultService {
 export function createMatchResultService(
   client: RepositoryClient,
   unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
   progression?: KnockoutProgressionService,
 ): MatchResultService {
   return {
@@ -84,11 +94,38 @@ export function createMatchResultService(
 
         const completed = await tx.matches.complete(matchId, winnerEntryId);
 
+        const tournamentId = await resolveMatchTournamentId(tx, match);
+
+        // Two distinct externally-observable changes, recorded together: the
+        // games are now stored (`MATCH_RESULT_RECORDED`) and the match has
+        // reached its terminal state (`MATCH_COMPLETED`). There is deliberately
+        // no per-game event - the dashboard refetches authoritative state.
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_RESULT_RECORDED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: matchId,
+        });
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_COMPLETED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: matchId,
+        });
+
         // Knockout progression runs inside the same unit of work (and sees the
         // completed match) so the result and the next-round slot cannot diverge.
         // The final has no successor - `progress` returns false.
         if (progression) {
-          await progression.progress(tx, matchId, winnerEntryId);
+          const populated = await progression.progress(tx, matchId, winnerEntryId);
+          if (populated) {
+            await events.record(tx, {
+              tournamentId,
+              eventType: REALTIME_EVENTS.KNOCKOUT_MATCH_POPULATED,
+              aggregateType: REALTIME_AGGREGATES.MATCH,
+              aggregateId: matchId,
+            });
+          }
         }
 
         return toResult(completed, winnerEntryId, loserEntryId, savedGames);

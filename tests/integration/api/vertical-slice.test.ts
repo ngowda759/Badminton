@@ -814,4 +814,34 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
       complete: true,
     });
   });
+
+  it('records the outbox event in the same transaction as a REST mutation', async () => {
+    // Phase 8.3: a REST change to live tournament state must leave a durable
+    // realtime_events row committed with it. This exercises the whole stack -
+    // route -> service -> transactional outbox -> PostgreSQL.
+    const { matchId } = await startedGroupMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: { games: twoZero },
+    });
+    expect(response.statusCode).toBe(201);
+
+    const events = await prisma.realtimeEvent.findMany({
+      where: { aggregateId: matchId },
+      select: { eventType: true, aggregateType: true },
+    });
+    expect(events.map((event) => event.eventType).sort()).toEqual([
+      'MATCH_COMPLETED',
+      'MATCH_RESULT_RECORDED',
+      'MATCH_STARTED',
+    ]);
+    expect(events.every((event) => event.aggregateType === 'MATCH')).toBe(true);
+
+    // A read-only request never writes an outbox row.
+    const before = await prisma.realtimeEvent.count();
+    await app.inject({ method: 'GET', url: `/api/v1/matches/${matchId}` });
+    expect(await prisma.realtimeEvent.count()).toBe(before);
+  });
 });

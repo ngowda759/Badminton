@@ -7,8 +7,12 @@ import {
   type Match,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
+import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { ScheduleMatchCommand } from './commands.ts';
+import { resolveMatchTournamentId } from './resolve-tournament.ts';
 
 /**
  * Match scheduling service.
@@ -21,10 +25,12 @@ import type { ScheduleMatchCommand } from './commands.ts';
  * It deliberately does not: calculate standings, drive knockout progression,
  * record scores or choose winners - those remain with the existing services.
  *
- * Reads and a single write are involved, so no interactive transaction is
- * opened. The scheduling overlap rule is enforced by a PostgreSQL GiST
- * exclusion constraint, which is the final boundary when two operators race;
- * the pre-check here exists only to return a friendly error.
+ * The schedule write and its realtime outbox event run in one `UnitOfWork`
+ * transaction, so a committed schedule always has its `MATCH_SCHEDULED` (or
+ * `MATCH_UNSCHEDULED`) event and a rollback writes neither. The scheduling
+ * overlap rule is enforced by a PostgreSQL GiST exclusion constraint, which is
+ * the final boundary when two operators race; the pre-check here exists only to
+ * return a friendly error.
  */
 export interface MatchSchedulingService {
   /** Assigns a court and a start/end window to a SCHEDULED match. */
@@ -33,57 +39,84 @@ export interface MatchSchedulingService {
   unschedule(matchId: string): Promise<Match>;
 }
 
-export function createMatchSchedulingService(client: RepositoryClient): MatchSchedulingService {
+export function createMatchSchedulingService(
+  _client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
+): MatchSchedulingService {
   return {
     async schedule(matchId: string, command: ScheduleMatchCommand): Promise<Match> {
-      const match = await requireMatch(client, matchId);
+      return unitOfWork.runInTransaction(async (tx) => {
+        const match = await requireMatch(tx, matchId);
 
-      assertSchedulable(match);
+        assertSchedulable(match);
 
-      if (!isValidScheduleRange(command.scheduledStartAt, command.scheduledEndAt)) {
-        throw new BusinessRuleViolationError(
-          'A schedule must start before it ends; zero-length and reversed windows are invalid.',
+        if (!isValidScheduleRange(command.scheduledStartAt, command.scheduledEndAt)) {
+          throw new BusinessRuleViolationError(
+            'A schedule must start before it ends; zero-length and reversed windows are invalid.',
+          );
+        }
+
+        const court = await requireCourt(tx, command.courtId);
+        const tournamentId = await resolveMatchTournamentId(tx, match);
+
+        if (court.tournamentId !== tournamentId) {
+          throw new BusinessRuleViolationError(
+            'The court does not belong to the same tournament as the match.',
+          );
+        }
+
+        if (court.status !== 'ACTIVE') {
+          throw new BusinessRuleViolationError('An inactive court cannot receive a new schedule.');
+        }
+
+        const overlap = await tx.matches.findOverlappingSchedule(
+          court.id,
+          command.scheduledStartAt,
+          command.scheduledEndAt,
+          match.id,
         );
-      }
+        if (overlap) {
+          throw new ConflictError('This court already has a match overlapping that time.');
+        }
 
-      const court = await requireCourt(client, command.courtId);
-      const tournamentId = await resolveTournamentId(client, match);
+        const scheduled = await tx.matches.schedule(match.id, {
+          courtId: court.id,
+          scheduledStartAt: command.scheduledStartAt,
+          scheduledEndAt: command.scheduledEndAt,
+        });
 
-      if (court.tournamentId !== tournamentId) {
-        throw new BusinessRuleViolationError(
-          'The court does not belong to the same tournament as the match.',
-        );
-      }
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_SCHEDULED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: match.id,
+        });
 
-      if (court.status !== 'ACTIVE') {
-        throw new BusinessRuleViolationError('An inactive court cannot receive a new schedule.');
-      }
-
-      const overlap = await client.matches.findOverlappingSchedule(
-        court.id,
-        command.scheduledStartAt,
-        command.scheduledEndAt,
-        match.id,
-      );
-      if (overlap) {
-        throw new ConflictError('This court already has a match overlapping that time.');
-      }
-
-      return client.matches.schedule(match.id, {
-        courtId: court.id,
-        scheduledStartAt: command.scheduledStartAt,
-        scheduledEndAt: command.scheduledEndAt,
+        return scheduled;
       });
     },
 
     async unschedule(matchId: string): Promise<Match> {
-      const match = await requireMatch(client, matchId);
+      return unitOfWork.runInTransaction(async (tx) => {
+        const match = await requireMatch(tx, matchId);
 
-      if (match.status !== 'SCHEDULED') {
-        throw new ConflictError('Only a scheduled match can be cleared.');
-      }
+        if (match.status !== 'SCHEDULED') {
+          throw new ConflictError('Only a scheduled match can be cleared.');
+        }
 
-      return client.matches.unschedule(match.id);
+        const tournamentId = await resolveMatchTournamentId(tx, match);
+        const cleared = await tx.matches.unschedule(match.id);
+
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_UNSCHEDULED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: match.id,
+        });
+
+        return cleared;
+      });
     },
   };
 }
@@ -121,17 +154,4 @@ async function requireCourt(client: RepositoryClient, id: string): Promise<Court
     throw new NotFoundError('Court', id);
   }
   return court;
-}
-
-/** Resolves the owning tournament through the match → stage → category chain. */
-async function resolveTournamentId(client: RepositoryClient, match: Match): Promise<string> {
-  const stage = await client.stages.findById(match.stageId);
-  if (!stage) {
-    throw new NotFoundError('Stage', match.stageId);
-  }
-  const category = await client.categories.findById(stage.categoryId);
-  if (!category) {
-    throw new NotFoundError('Category', stage.categoryId);
-  }
-  return category.tournamentId;
 }

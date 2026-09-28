@@ -1,4 +1,7 @@
-import { createTournamentCategoryService } from '@badminton/application';
+import {
+  createRealtimeEventService,
+  createTournamentCategoryService,
+} from '@badminton/application';
 import {
   BusinessRuleViolationError,
   InvalidStateTransitionError,
@@ -21,7 +24,11 @@ let service: ReturnType<typeof createTournamentCategoryService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentCategoryService(repos.client);
+  service = createTournamentCategoryService(
+    repos.client,
+    repos.unitOfWork,
+    createRealtimeEventService(),
+  );
 });
 
 describe('TournamentCategoryService.create', () => {

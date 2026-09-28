@@ -3,7 +3,7 @@ import {
   InvalidStateTransitionError,
   ValidationError,
 } from '@badminton/domain';
-import { createTournamentService } from '@badminton/application';
+import { createRealtimeEventService, createTournamentService } from '@badminton/application';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createFakeRepositories, type FakeRepositories } from './fake-repositories.ts';
@@ -20,7 +20,7 @@ let service: ReturnType<typeof createTournamentService>;
 
 beforeEach(() => {
   repos = createFakeRepositories();
-  service = createTournamentService(repos.client);
+  service = createTournamentService(repos.client, repos.unitOfWork, createRealtimeEventService());
 });
 
 const validInput = {

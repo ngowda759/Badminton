@@ -12,7 +12,10 @@ import {
   type TournamentStatus,
 } from '@badminton/domain';
 
+import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
+import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
+import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
   CreateTournamentCommand,
   TransitionTournamentStatusCommand,
@@ -24,8 +27,13 @@ import type {
  *
  * Owns tournament creation, guarded edits and the lifecycle state machine. All
  * persistence goes through the `TournamentRepository` port; the service never
- * imports Prisma. Every operation here is a read or a single write, so no
- * interactive transaction is opened.
+ * imports Prisma.
+ *
+ * A lifecycle transition changes the tournament's headline state (and gates
+ * registration), so it writes its `TOURNAMENT_STATUS_CHANGED` outbox event in
+ * the same transaction as the status write. Creation and field edits are not
+ * live-tournament changes a connected client needs to react to, so they stay a
+ * plain single write with no event.
  */
 export interface TournamentService {
   create(command: CreateTournamentCommand): Promise<Tournament>;
@@ -34,7 +42,11 @@ export interface TournamentService {
   getById(id: string): Promise<Tournament>;
 }
 
-export function createTournamentService(client: RepositoryClient): TournamentService {
+export function createTournamentService(
+  client: RepositoryClient,
+  unitOfWork: UnitOfWork,
+  events: RealtimeEventService,
+): TournamentService {
   return {
     async create(command: CreateTournamentCommand): Promise<Tournament> {
       const name = requireName(command.name);
@@ -111,7 +123,18 @@ export function createTournamentService(client: RepositoryClient): TournamentSer
         throw new InvalidStateTransitionError('Tournament', from, to);
       }
 
-      return client.tournaments.updateStatus(id, to);
+      return unitOfWork.runInTransaction(async (tx) => {
+        const updated = await tx.tournaments.updateStatus(id, to);
+
+        await events.record(tx, {
+          tournamentId: id,
+          eventType: REALTIME_EVENTS.TOURNAMENT_STATUS_CHANGED,
+          aggregateType: REALTIME_AGGREGATES.TOURNAMENT,
+          aggregateId: id,
+        });
+
+        return updated;
+      });
     },
 
     async getById(id: string): Promise<Tournament> {

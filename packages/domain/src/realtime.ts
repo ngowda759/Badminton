@@ -20,18 +20,30 @@ export const REALTIME_EVENT_TYPES = [
   'MATCH_UNSCHEDULED',
   'MATCH_STARTED',
   'MATCH_GAME_RECORDED',
+  'MATCH_RESULT_RECORDED',
   'MATCH_COMPLETED',
   'MATCH_CANCELLED',
   'COURT_CREATED',
   'COURT_UPDATED',
   'COURT_STATUS_CHANGED',
   'KNOCKOUT_MATCH_POPULATED',
+  'TOURNAMENT_STATUS_CHANGED',
+  'CATEGORY_STATUS_CHANGED',
+  'STAGE_STATUS_CHANGED',
+  'ENTRY_STATUS_CHANGED',
 ] as const;
 
 export type RealtimeEventType = (typeof REALTIME_EVENT_TYPES)[number];
 
 /** The aggregate whose state changed. */
-export const REALTIME_AGGREGATE_TYPES = ['MATCH', 'COURT'] as const;
+export const REALTIME_AGGREGATE_TYPES = [
+  'MATCH',
+  'COURT',
+  'TOURNAMENT',
+  'CATEGORY',
+  'STAGE',
+  'ENTRY',
+] as const;
 export type RealtimeAggregateType = (typeof REALTIME_AGGREGATE_TYPES)[number];
 
 /**

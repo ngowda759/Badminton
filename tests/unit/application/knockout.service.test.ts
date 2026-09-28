@@ -3,6 +3,7 @@ import {
   createMatchResultService,
   createMatchService,
   createKnockoutProgressionService,
+  createRealtimeEventService,
   createStandingsService,
 } from '@badminton/application';
 import { BusinessRuleViolationError, ConflictError, NotFoundError } from '@badminton/domain';
@@ -34,8 +35,13 @@ let progression: ReturnType<typeof createKnockoutProgressionService>;
 beforeEach(() => {
   repos = createFakeRepositories();
   progression = createKnockoutProgressionService();
-  matches = createMatchService(repos.client, repos.unitOfWork);
-  results = createMatchResultService(repos.client, repos.unitOfWork, progression);
+  matches = createMatchService(repos.client, repos.unitOfWork, createRealtimeEventService());
+  results = createMatchResultService(
+    repos.client,
+    repos.unitOfWork,
+    createRealtimeEventService(),
+    progression,
+  );
   knockout = createKnockoutBracketService(repos.client, repos.unitOfWork);
 });
 

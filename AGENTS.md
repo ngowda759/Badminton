@@ -8,19 +8,21 @@ Badminton V2 — a badminton tournament management platform. **Phases 1 (foundat
 2 (tournament database/domain/application/infrastructure), 3 (REST API layer),
 4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
 stage, bracket management and progression), 7 (court management, match
-scheduling and tournament dashboard) and 8.1 (the realtime transactional outbox)
-and 8.2 (the realtime SSE transport) are implemented; Phase 8.3–8.6 (application
-event publishing, web realtime client, live UI sync and multi-device hardening)
-are not implemented.**
+scheduling and tournament dashboard), 8.1 (the realtime transactional outbox),
+8.2 (the realtime SSE transport) and 8.3 (application event publishing) are
+implemented; Phase 8.4–8.6 (web realtime client, live UI sync and multi-device
+hardening) are not implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
 setup UI, group-stage match scoring/standings, the knockout bracket workflow,
 the Phase 7 operational layer (courts, scheduling, court board and dashboard), the
 Phase 8.1 realtime outbox (event catalogue, repository port, Prisma adapter,
-publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up) and the Phase 8.2
+publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up), the Phase 8.2
 SSE endpoint (`GET /api/v1/tournaments/:tournamentId/events`, SSE frame codec,
-connection adapter and heartbeat) exist.
+connection adapter and heartbeat) and the Phase 8.3 application-service event
+publishing (each live-tournament mutation records its outbox row in the same
+`UnitOfWork` transaction) exist.
 **Automatic draw/seeding, rankings, authentication, authorization,
 result-correction workflows and any frontend realtime client (`EventSource`,
 query invalidation, live UI) are not implemented.**
@@ -166,3 +168,14 @@ database — integration tests use `app.inject()` with stub probes.
   grows memory without bound. SSE tests must bind a real socket (a hijacked stream cannot
   be driven through `app.inject`) and use a short injected `realtimeHeartbeatIntervalMs`/
   timer seam, never real-time waits.
+- Phase 8.3 publishing lives in the application services: each integrated mutation
+  (`MatchSchedulingService`, `MatchService.transitionStatus`, `MatchResultService`,
+  `CourtService`, and the tournament/category/stage/entry `transitionStatus`) opens one
+  `UnitOfWork.runInTransaction` and calls `RealtimeEventService.record(tx, …)` on the
+  transaction client, so the business row and its outbox row commit or roll back together.
+  Event names are centralised in `packages/application/src/realtime/event-types.ts`
+  (`REALTIME_EVENTS` / `REALTIME_AGGREGATES`, typed against the domain catalogue) — never
+  scatter string literals. Do not catch an event-write error and continue, do not add a
+  second publishing path, and do not emit events for reads, plain create/edit mutations or
+  no-op/idempotent operations (a replayed knockout progression returns `false`, so the
+  caller records nothing). Payloads stay empty/flat — the client refetches REST.

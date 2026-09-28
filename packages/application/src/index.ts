@@ -46,6 +46,7 @@ export type {
 } from './repositories/data.ts';
 export type { UnitOfWork } from './repositories/unit-of-work.ts';
 
+export { REALTIME_AGGREGATES, REALTIME_EVENTS } from './realtime/event-types.ts';
 export { createRealtimeEventService, type RealtimeEventService } from './realtime/event.service.ts';
 export {
   createRealtimeEventPublisher,
