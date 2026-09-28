@@ -28,10 +28,16 @@ async function start(): Promise<void> {
   // Realtime: the dispatcher drains the durable outbox and forwards committed
   // events to the publisher; the notifier wakes it from another process. The
   // dispatcher owns its own poll, so it is started after the app is built.
+  // Errors are routed to the app logger through a late-bound hook, since the
+  // runtime (which owns the publisher) is built before the Fastify instance.
+  let logRealtimeError: (error: unknown) => void = () => undefined;
   const realtime = createRealtimeRuntime({
     client,
     databaseUrl: config.databaseUrl,
     pollIntervalMs: config.realtimePollIntervalMs,
+    onError: (error) => {
+      logRealtimeError(error);
+    },
   });
 
   const app = buildApp({
@@ -44,7 +50,12 @@ async function start(): Promise<void> {
     trustProxy: config.trustProxy,
   });
 
+  logRealtimeError = (error) => {
+    app.log.error({ err: error }, 'realtime error');
+  };
+
   await realtime.start();
+  app.log.info({ pollIntervalMs: config.realtimePollIntervalMs }, 'realtime dispatcher started');
 
   let shuttingDown = false;
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
