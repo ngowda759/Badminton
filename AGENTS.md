@@ -158,6 +158,11 @@ database — integration tests use `app.inject()` with stub probes.
   query Prisma/the outbox or call a business service, and never mutate state. A sink that
   fails to write is removed silently; cleanup is idempotent and must clear the heartbeat
   timer and unsubscribe. The route's `preClose` hook ends live streams so `app.close()`
-  resolves. `Last-Event-ID` is accepted but informational only — no replay. SSE tests must
-  bind a real socket (a hijacked stream cannot be driven through `app.inject`) and use a
-  short injected `realtimeHeartbeatIntervalMs`/timer seam, never real-time waits.
+  resolves. `Last-Event-ID` is accepted but informational only — no replay. Disconnect
+  detection must be registered on the request/response before subscribing, and the closed
+  state re-checked after each setup step, so a client that leaves mid-setup cannot leak a
+  subscription or a timer. A full socket buffers frames up to a byte cap and flushes on
+  `drain`; a client past the cap is dropped, so a slow client never blocks the publisher or
+  grows memory without bound. SSE tests must bind a real socket (a hijacked stream cannot
+  be driven through `app.inject`) and use a short injected `realtimeHeartbeatIntervalMs`/
+  timer seam, never real-time waits.

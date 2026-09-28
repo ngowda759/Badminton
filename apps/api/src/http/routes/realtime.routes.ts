@@ -79,42 +79,34 @@ export const realtimeRoutes: FastifyPluginCallback<RealtimeRoutesOptions> = (app
 
     const response = hijackForSse(reply);
 
-    // Attach the disconnect listeners before opening so both sides of the socket
-    // are covered; `detach` removes them once cleanup runs so no handler lingers.
-    const rawConnection = openSseConnection({
+    // The adapter registers disconnect detection before it subscribes or starts
+    // the heartbeat, so a client that leaves during setup still ends with no
+    // subscription and no timer. It reports cleanup here so shutdown can end it.
+    const connection = openSseConnection({
       tournamentId,
       publisher,
+      request: request.raw,
       response,
       heartbeatIntervalMs: options.heartbeatIntervalMs,
-      // A hijacked request can already be closed by the time we run.
-      isRequestClosed: () => request.raw.destroyed || response.destroyed,
       ...(options.scheduler ? { scheduler: options.scheduler } : {}),
       logger: {
         error: (details: unknown, message?: string) => {
           request.log.error(details, message);
         },
+        warn: (details: unknown, message?: string) => {
+          request.log.warn(details, message);
+        },
+      },
+      onCleanup: () => {
+        connections.delete(connection);
       },
     });
 
-    const connection: SseConnection = {
-      close: () => {
-        rawConnection.close();
-        detach();
-        connections.delete(connection);
-      },
-    };
-
-    const detach = (): void => {
-      request.raw.off('close', onClose);
-      response.off('close', onClose);
-    };
-    const onClose = (): void => {
-      connection.close();
-    };
-
-    connections.add(connection);
-    request.raw.on('close', onClose);
-    response.on('close', onClose);
+    // `openSseConnection` may have closed (and thus cleaned up) before returning
+    // if the client was already gone; only track a connection that is still live.
+    if (!connection.isClosed()) {
+      connections.add(connection);
+    }
   });
 };
 

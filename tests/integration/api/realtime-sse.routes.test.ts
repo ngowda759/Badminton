@@ -294,4 +294,42 @@ describe('GET /api/v1/tournaments/:tournamentId/events', () => {
     expect(api.realtime.publisher.tournaments()).not.toContain(TOURNAMENT_A);
     await client.close();
   });
+
+  it('does not leak a subscriber when the client aborts during setup', async () => {
+    // Abort immediately, racing the handler's setup; the adapter must end with
+    // no subscription and no heartbeat, whatever the timing.
+    const controller = new AbortController();
+    const pending = fetch(`${baseUrl()}/api/v1/tournaments/${TOURNAMENT_A}/events`, {
+      signal: controller.signal,
+    });
+    controller.abort();
+    await pending.catch(() => undefined);
+
+    await waitUntil(() => !api.realtime.publisher.tournaments().includes(TOURNAMENT_A));
+    expect(api.realtime.publisher.tournaments()).toEqual([]);
+  });
+
+  it('does not deliver to an aborted connection and keeps serving others', async () => {
+    const survivor = await connectSse(TOURNAMENT_A);
+    await survivor.waitForText((text) => text.includes(': connected'));
+
+    const controller = new AbortController();
+    const early = await fetch(`${baseUrl()}/api/v1/tournaments/${TOURNAMENT_A}/events`, {
+      signal: controller.signal,
+    });
+    const earlyReader = (early.body as ReadableStream<Uint8Array>).getReader();
+    await earlyReader.read();
+    controller.abort();
+    await earlyReader.cancel().catch(() => undefined);
+
+    await api.realtime.publisher.publish(
+      eventFor(TOURNAMENT_A, 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'),
+    );
+
+    // The live subscriber still receives; the aborted one is gone from the registry.
+    await survivor.waitForText((text) => text.includes('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'));
+    expect(api.realtime.publisher.tournaments()).toContain(TOURNAMENT_A);
+
+    await survivor.close();
+  });
 });

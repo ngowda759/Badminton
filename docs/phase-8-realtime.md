@@ -214,6 +214,26 @@ the dispatcher, affect other subscribers, or affect REST. The route objects are
 discarded and the process stays up; the publisher's existing per-sink isolation
 is preserved.
 
+### Backpressure
+
+`send` is synchronous and never awaits the socket, so a slow client can never
+block the publisher or the dispatcher. When `response.write` reports a full
+socket, further frames are buffered (bounded by a byte cap) and flushed on
+`drain`. A client that exceeds the cap is disconnected - SSE only signals
+"something changed", so a stalled client reconnects and refetches REST instead of
+forcing the server to buffer without bound. Memory stays bounded and other
+subscribers are unaffected.
+
+### Disconnect-initialization race
+
+Disconnect detection is registered on the raw request and response **before**
+anything is created, and the closed state is re-checked after subscribing and
+after starting the heartbeat. A client that goes away at any point - before the
+handler runs, while the headers are written, or mid-setup - always ends with no
+subscription and no timer. A subscription created after a disconnect is undone
+immediately, so a disconnected client can never remain in the publisher's
+registry.
+
 ### Last-Event-ID
 
 The endpoint accepts a `Last-Event-ID` request header for client compatibility,
