@@ -9,9 +9,9 @@ Badminton V2 — a badminton tournament management platform. **Phases 1 (foundat
 4 (tournament setup UI), 5 (group-stage scheduling and scoring), 6 (knockout
 stage, bracket management and progression), 7 (court management, match
 scheduling and tournament dashboard), 8.1 (the realtime transactional outbox),
-8.2 (the realtime SSE transport) and 8.3 (application event publishing) are
-implemented; Phase 8.4–8.6 (web realtime client, live UI sync and multi-device
-hardening) are not implemented.**
+8.2 (the realtime SSE transport), 8.3 (application event publishing) and 8.4
+(the browser realtime `EventSource` client) are implemented; Phase 8.5–8.6
+(live UI sync and multi-device hardening) are not implemented.**
 The Prisma schema, migrations, constraints, indexes, seed, database tests, domain
 types/rules, application services, repository ports, Prisma repository adapters,
 application/domain error model, the Fastify `/api/v1` REST surface, the tournament
@@ -20,12 +20,14 @@ the Phase 7 operational layer (courts, scheduling, court board and dashboard), t
 Phase 8.1 realtime outbox (event catalogue, repository port, Prisma adapter,
 publisher, dispatcher and PostgreSQL `LISTEN`/`NOTIFY` wake-up), the Phase 8.2
 SSE endpoint (`GET /api/v1/tournaments/:tournamentId/events`, SSE frame codec,
-connection adapter and heartbeat) and the Phase 8.3 application-service event
+connection adapter and heartbeat), the Phase 8.3 application-service event
 publishing (each live-tournament mutation records its outbox row in the same
-`UnitOfWork` transaction) exist.
+`UnitOfWork` transaction) and the Phase 8.4 browser realtime client (tournament-
+scoped `EventSource` lifecycle, connection state and event parsing, exposed via
+`useTournamentRealtime`) exist.
 **Automatic draw/seeding, rankings, authentication, authorization,
-result-correction workflows and any frontend realtime client (`EventSource`,
-query invalidation, live UI) are not implemented.**
+result-correction workflows and live UI synchronization (consuming the realtime
+signal to invalidate/refetch REST) are not implemented.**
 Do not add those unless the task explicitly asks for a later phase. The
 authoritative design is `docs/phase-2-domain-design.md`; the Phase 2.2
 architecture is `docs/phase-2-2-architecture.md`; the REST API reference is
@@ -179,3 +181,13 @@ database — integration tests use `app.inject()` with stub probes.
   second publishing path, and do not emit events for reads, plain create/edit mutations or
   no-op/idempotent operations (a replayed knockout progression returns `false`, so the
   caller records nothing). Payloads stay empty/flat — the client refetches REST.
+- Phase 8.4 web realtime lives in `apps/web/src/realtime/` (`realtime-types.ts` union +
+  parser, `realtime-client.ts` framework-free `EventSource` lifecycle,
+  `use-tournament-realtime.ts` React binding). It is a signal source only: it must never
+  fetch dashboard data, call a REST endpoint, invalidate a query or mutate state — that is
+  Phase 8.5. One `EventSource` per hook instance, closed on unmount and on tournament
+  change; `start()` is idempotent so React Strict Mode cannot open two sockets. The event
+  envelope is validated in `@badminton/validation` (`realtimeEventEnvelopeSchema`) — reuse
+  it rather than re-parsing JSON ad hoc, drop malformed frames without closing the stream,
+  and never add a custom reconnect loop (the native `EventSource` retries; the client only
+  mirrors its state). No `Last-Event-ID`, no replay.

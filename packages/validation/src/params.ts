@@ -28,3 +28,12 @@ export function mergeParams<A extends z.ZodRawShape, B extends z.ZodRawShape>(
 }
 
 export const teamMemberParamSchema = mergeParams(idParamSchema, playerIdParamSchema);
+
+/**
+ * A single tournament identifier.
+ *
+ * The same UUID convention the route parameters use, exposed standalone so the
+ * browser realtime client can refuse to open a stream for a malformed id
+ * without re-declaring the rule.
+ */
+export const tournamentIdSchema = z.uuid();

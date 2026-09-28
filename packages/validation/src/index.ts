@@ -9,6 +9,12 @@ export { parseRequest, toValidationFailure, type ParseResult } from './parse.ts'
 export { healthResponseSchema, parseHealthResponse } from './health.ts';
 
 export {
+  parseRealtimeEventEnvelope,
+  realtimeEventEnvelopeSchema,
+  type RealtimeEventEnvelope,
+} from './realtime.ts';
+
+export {
   categoryIdParamSchema,
   courtIdParamSchema,
   idParamSchema,
@@ -18,6 +24,7 @@ export {
   stageIdParamSchema,
   teamMemberParamSchema,
   tournamentIdParamSchema,
+  tournamentIdSchema,
 } from './params.ts';
 
 export {

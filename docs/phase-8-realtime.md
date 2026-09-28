@@ -1,13 +1,13 @@
 # Phase 8 — Multi-device & realtime
 
-Status: **Phase 8.1 (transactional outbox), Phase 8.2 (SSE transport) and Phase 8.3
-(application event publishing) implemented on `main`; Phase 8.4–8.6 designed, not yet
-built.**
+Status: **Phase 8.1 (transactional outbox), Phase 8.2 (SSE transport), Phase 8.3
+(application event publishing) and Phase 8.4 (browser realtime client) implemented
+on `main`; Phase 8.5–8.6 designed, not yet built.**
 
 - Phase 8.1 — Transactional Outbox — **IMPLEMENTED**
 - Phase 8.2 — SSE Transport — **IMPLEMENTED**
 - Phase 8.3 — Application event publishing — **IMPLEMENTED**
-- Phase 8.4 — Web realtime client (`EventSource`) — NOT IMPLEMENTED
+- Phase 8.4 — Web realtime client (`EventSource`) — **IMPLEMENTED**
 - Phase 8.5 — Live UI sync — NOT IMPLEMENTED
 - Phase 8.6 — Multi-device hardening — NOT IMPLEMENTED
 
@@ -26,13 +26,16 @@ something changed, and clients refetch authoritative state.
 
 - **In:** a durable transactional outbox, an event catalogue, a publisher, a
   dispatcher, a PostgreSQL `LISTEN`/`NOTIFY` wake-up, the SSE transport endpoint
-  (`GET /api/v1/tournaments/:tournamentId/events`) — Phase 8.1 + 8.2 — and the
-  application-service event publishing that writes the outbox rows — Phase 8.3.
+  (`GET /api/v1/tournaments/:tournamentId/events`) — Phase 8.1 + 8.2 — the
+  application-service event publishing that writes the outbox rows — Phase 8.3 —
+  and the browser `EventSource` client that subscribes to that endpoint — Phase
+  8.4.
 - **Out:** WebSockets, Redis, Kafka, RabbitMQ, background job platforms, event
   replay, authentication, and any client-side business logic. SSE is the only
-  transport; the browser refetches REST for state. **No frontend realtime client
-  exists yet** — until Phase 8.4 lands, manual refresh continues to work and REST
-  remains the only read path.
+  transport; the browser refetches REST for state. The Phase 8.4 client only
+  exposes the connection state and the event _signal_; it does not yet refetch
+  or refresh any UI, so manual refresh still works and REST remains the only read
+  path until Phase 8.5 lands.
 
 ## 2. Layering
 
@@ -385,15 +388,139 @@ publisher's concern (Phase 8.1/8.2), and a delivery failure never rolls anything
 back. The application layer records durable events; it never sends SSE, never
 calls the publisher, and never holds an HTTP/SSE dependency.
 
-## 7. Phase 8.4–8.6 (planned)
+## 7. Phase 8.4 — Browser realtime client (implemented)
 
-- **8.4** web `EventSource` client, connection state, query invalidation, REST
-  refetch, graceful fallback to manual refresh. Not implemented: there is no
-  frontend realtime client yet.
+Phase 8.4 adds the browser-side SSE client. It opens a tournament-scoped
+`EventSource`, tracks the connection lifecycle, parses each event frame, and
+hands the parsed event to a consumer. It is a **signal source only**: it never
+fetches dashboard data, never mutates state, never calls a REST endpoint and
+never decides which query to invalidate. That wiring is Phase 8.5.
+
+```
+React UI
+   │
+   ▼
+useTournamentRealtime(tournamentId)   (apps/web/src/realtime/use-tournament-realtime.ts)
+   │
+   ▼
+createTournamentRealtimeClient        (apps/web/src/realtime/realtime-client.ts)
+   │
+   ▼
+EventSource
+   │
+   ▼
+GET /api/v1/tournaments/:tournamentId/events
+```
+
+### Location and layering
+
+`apps/web/src/realtime/`:
+
+- `realtime-types.ts` — the `RealtimeConnectionStatus` union, the client-side
+  `RealtimeEvent`, and `parseRealtimeEvent` (JSON parse plus the shared Zod
+  envelope guard).
+- `realtime-client.ts` — the framework-free lifecycle client
+  (`createTournamentRealtimeClient`, `buildTournamentEventsUrl`,
+  `RealtimeEventSource`, `EventSourceFactory`). No React import, so it is unit
+  testable against a fake `EventSource`.
+- `use-tournament-realtime.ts` — the React binding. One `EventSource` per mount,
+  closed on unmount and on tournament change.
+
+The envelope guard itself lives in the shared `@badminton/validation` package
+(`realtimeEventEnvelopeSchema` / `parseRealtimeEventEnvelope`), alongside
+`healthResponseSchema`, so the browser validates the server contract with the
+same Zod tooling the REST client already uses rather than a second copy.
+
+### Public API
+
+```ts
+const { status, lastEvent } = useTournamentRealtime(tournamentId, {
+  onEvent: (event) => {
+    /* Phase 8.5 will invalidate/refetch REST here */
+  },
+});
+```
+
+`status` is the connection state; `lastEvent` is the most recent event for the
+current tournament (or `null`); `onEvent` is called for every well-formed event.
+The hook is the only realtime API the UI consumes; a future Phase 8.5 consumer
+subscribes through it rather than touching the client or `EventSource`.
+
+### Connection states
+
+```
+initial
+  ↓
+CONNECTING        start() opened the EventSource
+  ↓  open
+CONNECTED         stream is live
+  ↓  error (temporary)
+RECONNECTING      the browser is retrying on its own
+  ↓  open
+CONNECTED
+  ↓  stop() / unmount / error while CLOSED
+DISCONNECTED      intentional; no further callbacks
+```
+
+The statuses are a typed union, not arbitrary strings. A _temporary_ error while
+the source is still retrying is `RECONNECTING`; a source that reports `CLOSED`
+(readyState `2`) has given up and is `DISCONNECTED`. An explicit `stop()` or
+unmount is always `DISCONNECTED`, never confused with a transient failure.
+
+### Reconnection
+
+Reconnection uses the browser's native `EventSource` retry. There is **no custom
+reconnect loop**, so no second connection is ever created: the client only
+mirrors the browser's own state (an error while not `CLOSED` is `RECONNECTING`).
+A consumer that wants to recover authoritative state after a reconnect does so
+with a REST refetch (Phase 8.5), not by replaying events.
+
+### Event parsing
+
+The `data` field of a frame is parsed with `JSON.parse` and then validated
+against the envelope (`id`, `event`, `tournamentId`, `aggregateType`,
+`aggregateId`, `occurredAt` non-empty strings; `payload` opaque). A malformed
+frame — invalid JSON, missing or empty fields, a non-string `data` — is dropped
+and the connection stays open. An event whose type the client does not know is
+still delivered as long as the envelope is valid, so a later server release that
+adds an event does not break an older client. The client never branches on the
+event type; it only signals that something changed.
+
+### Lifecycle and cleanup
+
+`start()` is a no-op while a source exists, so a double effect invocation (React
+Strict Mode in development) can never open two sockets — there is **at most one
+active `EventSource` per client instance**. `stop()` detaches the `onopen` /
+`onerror` / `onmessage` handlers _before_ calling `close()`, so no callback fires
+after disposal, and it is idempotent. Unmounting the hook, or changing the
+tournament id, closes the old connection first and only then opens the new one,
+so the previous tournament's stream is never left active.
+
+### Tournament scoping and no replay
+
+The URL is built once per tournament and the id is path-encoded
+(`/api/v1/tournaments/<id>/events`); the client never opens a global stream and
+never subscribes to more than one tournament. An absent or malformed id (not a
+UUID, per `tournamentIdSchema`) opens no connection at all. Phase 8.2 does not
+replay and the client does not ask for `Last-Event-ID`; missed events are not
+reconstructed — a reconnect is only a signal for a consumer to refetch REST.
+
+### Relationship to Phase 8.5
+
+Phase 8.4 deliberately stops at the signal. It performs **no** REST refetch, no
+query invalidation and no UI update; `apps/web/src/pages/tournaments/dashboard.tsx`
+is unchanged and still refreshes manually. Phase 8.5 will consume `onEvent` /
+`status` from this hook and turn the signal into an authoritative REST refetch.
+
+## 8. Phase 8.5–8.6 (planned)
+
 - **8.5** live synchronization for dashboard, court board, scoring, standings and
-  bracket — no duplicate domain logic.
+  bracket — consuming the Phase 8.4 signal to invalidate/refetch REST; no
+  duplicate domain logic. Not implemented: the Phase 8.4 client provides the
+  signal but nothing consumes it to update business UI yet.
 - **8.6** multi-device/reconnect/missed-event/restart E2E hardening.
 
-Until 8.4 lands, nothing changes for existing clients: manual refresh continues
-to work and REST remains the only read path. Phase 8.3 only means the outbox now
-actually fills as tournaments are operated.
+Until 8.5 lands, nothing changes for existing clients: manual refresh continues
+to work and REST remains the only read path. Phase 8.4 only means a browser can
+now open a tournament-scoped realtime stream and observe the connection state
+and events; no screen consumes that signal yet.
