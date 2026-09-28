@@ -159,6 +159,22 @@ compiles the API to `apps/api/dist` for production, and Vite bundles the web app
 npm install
 ```
 
+### Windows quick start
+
+After installing Node.js 22 or later and installing dependencies once, start the
+local app with:
+
+```powershell
+npm run start:local
+```
+
+This command starts the local PostgreSQL database (or the Docker Compose database
+when no local PostgreSQL data directory exists), generates the Prisma client,
+applies pending migrations, and runs the idempotent seed before starting the API
+and web app. It refuses to migrate a non-local database. Keep the terminal open
+while developing; press `Ctrl+C` to stop the app. The database files and seed data
+remain available for the next run.
+
 ## Environment setup
 
 ```bash
