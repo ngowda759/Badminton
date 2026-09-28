@@ -36,16 +36,21 @@ CREATE INDEX "realtime_events_publishedAt_idx" ON "realtime_events"("publishedAt
 -- ---------------------------------------------------------------------------
 -- Hand-written constraints Prisma cannot express.
 --
--- The catalogue columns must be present and a published timestamp can never
--- precede creation. These are row-local invariants only; catalogue membership
--- itself stays in the domain layer.
+-- The catalogue columns must be present. These are row-local invariants only;
+-- catalogue membership itself stays in the domain layer.
+--
+-- There is deliberately no `publishedAt >= createdAt` check: `createdAt` is
+-- stamped by the database clock while `publishedAt` is stamped by the API
+-- process clock, so comparing them would couple correctness to clock
+-- synchronisation between the two machines. An API clock behind PostgreSQL
+-- would fail `markPublished()` after a successful delivery and leave the event
+-- pending for a duplicate retry. Publication order is not required for
+-- correctness, so the comparison is omitted rather than replaced.
 -- ---------------------------------------------------------------------------
 
 ALTER TABLE "realtime_events"
   ADD CONSTRAINT "realtime_events_event_type_present" CHECK (length(btrim("eventType")) > 0),
-  ADD CONSTRAINT "realtime_events_aggregate_type_present" CHECK (length(btrim("aggregateType")) > 0),
-  ADD CONSTRAINT "realtime_events_published_after_created"
-    CHECK ("publishedAt" IS NULL OR "publishedAt" >= "createdAt");
+  ADD CONSTRAINT "realtime_events_aggregate_type_present" CHECK (length(btrim("aggregateType")) > 0);
 
 -- ---------------------------------------------------------------------------
 -- Cross-process wake-up.

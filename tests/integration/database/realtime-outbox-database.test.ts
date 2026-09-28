@@ -123,6 +123,41 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
       expect(secondStamp?.getTime()).toBe(firstStamp?.getTime());
     });
 
+    it('marks an event published regardless of the API clock versus the database clock', async () => {
+      // Regression: `createdAt` is stamped by the database clock and
+      // `publishedAt` by the API process clock. If the API clock ran behind
+      // PostgreSQL, a `publishedAt >= createdAt` check would reject this write
+      // after a successful delivery and leave the event pending for a duplicate
+      // retry. Simulate that skew by publishing with an explicitly earlier time.
+      const tournament = await createTournament(prisma);
+      const event = await events.record(client, {
+        tournamentId: tournament.id,
+        eventType: 'MATCH_COMPLETED',
+        aggregateType: 'MATCH',
+        aggregateId: tournament.id,
+      });
+
+      const skewedPublishedAt = new Date(event.occurredAt.getTime() - 60_000);
+      await expect(
+        prisma.realtimeEvent.updateMany({
+          where: { id: event.id, publishedAt: null },
+          data: { publishedAt: skewedPublishedAt },
+        }),
+      ).resolves.toEqual({ count: 1 });
+
+      const stored = await prisma.realtimeEvent.findUnique({ where: { id: event.id } });
+      expect(stored?.publishedAt?.getTime()).toBe(skewedPublishedAt.getTime());
+      expect(stored?.publishedAt?.getTime()).toBeLessThan(stored?.createdAt.getTime() ?? 0);
+
+      // The conditional/idempotent markPublished still succeeds and is a no-op.
+      await expect(client.realtimeEvents.markPublished(event.id)).resolves.toBeUndefined();
+      const afterSecond = await prisma.realtimeEvent.findUnique({ where: { id: event.id } });
+      expect(afterSecond?.publishedAt?.getTime()).toBe(skewedPublishedAt.getTime());
+
+      // A published event is excluded from the pending set, so it is not retried.
+      expect(await client.realtimeEvents.getPendingEvents(10)).toHaveLength(0);
+    });
+
     it('round-trips a small payload through the JSON column', async () => {
       const tournament = await createTournament(prisma);
       const event = await events.record(client, {

@@ -63,10 +63,16 @@ Forward-only migration `20260927180000_add_realtime_outbox` creates
 `realtime_events` (`id`, `tournamentId`, `eventType`, `aggregateType`,
 `aggregateId`, `payload` JSONB, `createdAt`, `publishedAt`), the
 `(tournamentId, createdAt)` and `publishedAt` indexes, hand-written `CHECK`s
-(non-empty catalogue columns, `publishedAt >= createdAt`), and the
-`realtime_events_notify` trigger calling
+(non-empty catalogue columns), and the `realtime_events_notify` trigger calling
 `pg_notify('realtime_events', NEW."tournamentId")`. No historical migration or
 Phase 1–7 table is touched.
+
+There is deliberately **no** `publishedAt >= createdAt` check: `createdAt` comes
+from the database clock and `publishedAt` from the API process clock, so
+comparing them would make `markPublished()` fail whenever the API clock ran
+behind PostgreSQL — leaving a successfully delivered event pending and causing a
+duplicate retry. Pending semantics come from `publishedAt IS NULL`, not from
+ordering.
 
 ### Application (`packages/application/src/realtime/`)
 
