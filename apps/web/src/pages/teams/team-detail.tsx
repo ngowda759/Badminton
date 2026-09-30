@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
+import { PlayerSelector } from '@/components/player-selector.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
@@ -179,20 +180,17 @@ function AddMemberForm({
   const api = useApi();
   const [playerId, setPlayerId] = useState('');
   const [position, setPosition] = useState('');
-  const [errors, setErrors] = useState<FieldErrors>({});
   const mutation = useMutation<unknown>();
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
-    const nextErrors = compactErrors({ playerId: validateRequired(playerId, 'Player ID', 64) });
-    setErrors(nextErrors);
-    if (Object.keys(nextErrors).length > 0) {
+    if (playerId.trim().length === 0) {
       return;
     }
 
     void mutation.run(async () => {
       await api.teams.addMember(teamId, {
-        playerId: playerId.trim(),
+        playerId,
         ...(position.trim() ? { position: Number(position) } : {}),
       });
       setPlayerId('');
@@ -203,23 +201,18 @@ function AddMemberForm({
 
   return (
     <form
-      className="grid max-w-2xl gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end"
+      className="grid max-w-2xl gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-start"
       onSubmit={submit}
       noValidate
     >
-      <FormField label="Player ID" required error={errors.playerId} htmlFor="add-member-player">
-        {({ id, describedBy }) => (
-          <Input
-            id={id}
-            {...(describedBy ? { 'aria-describedby': describedBy } : {})}
-            aria-invalid={errors.playerId ? true : undefined}
-            value={playerId}
-            onChange={(event) => {
-              setPlayerId(event.target.value);
-            }}
-          />
-        )}
-      </FormField>
+      <PlayerSelector
+        label="Player"
+        required
+        htmlFor="add-member-player"
+        value={playerId}
+        onValueChange={setPlayerId}
+        disabled={mutation.pending}
+      />
       <FormField
         label="Position (optional)"
         description="Defaults to the next free position."
@@ -238,7 +231,7 @@ function AddMemberForm({
           />
         )}
       </FormField>
-      <Button type="submit" disabled={mutation.pending}>
+      <Button type="submit" disabled={mutation.pending || playerId === ''}>
         {mutation.pending ? 'Adding…' : 'Add member'}
       </Button>
       {mutation.error ? (

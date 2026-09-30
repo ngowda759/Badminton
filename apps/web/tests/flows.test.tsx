@@ -17,9 +17,11 @@ import {
   makeMatchResult,
   makeParticipant,
   makePlayer,
+  makePlayerListItem,
   makeStage,
   makeStandingRow,
   makeTeam,
+  makeTeamListItem,
   makeTeamMember,
   makeTournament,
   renderWithProviders,
@@ -102,7 +104,7 @@ describe('tournament setup flows', () => {
     expect(await screen.findByRole('heading', { name: 'Women Doubles' })).toBeInTheDocument();
   });
 
-  it('registers a singles entry with the player id and no team id', async () => {
+  it('registers a singles entry with the selected player id and no team id', async () => {
     const user = userEvent.setup();
     const api = createStubApi();
     const tournament = makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' });
@@ -111,13 +113,21 @@ describe('tournament setup flows', () => {
     api.categories.get.mockResolvedValue(category);
     api.entries.listByCategory.mockResolvedValue([]);
     api.entries.register.mockResolvedValue(makeEntry());
+    api.players.list.mockResolvedValue({
+      items: [
+        makePlayerListItem({ id: 'p1', name: 'Alice' }),
+        makePlayerListItem({ id: 'p2', name: 'Bob' }),
+      ],
+      nextCursor: null,
+    });
 
     renderWithProviders(<AppRoutes />, {
       api,
       route: '/tournaments/t1/categories/c1/entries',
     });
 
-    await user.type(await screen.findByLabelText(/^Player ID/), 'p1');
+    await user.click(await screen.findByLabelText('Player'));
+    await user.click(await screen.findByRole('option', { name: 'Alice' }));
     await user.click(screen.getByRole('button', { name: 'Register' }));
 
     await waitFor(() => {
@@ -125,7 +135,7 @@ describe('tournament setup flows', () => {
     });
   });
 
-  it('registers a doubles entry with the team id and no player id', async () => {
+  it('registers a doubles entry with the selected team id and no player id', async () => {
     const user = userEvent.setup();
     const api = createStubApi();
     const tournament = makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' });
@@ -133,13 +143,22 @@ describe('tournament setup flows', () => {
     api.tournaments.get.mockResolvedValue(tournament);
     api.categories.get.mockResolvedValue(category);
     api.entries.listByCategory.mockResolvedValue([]);
+    api.entries.register.mockResolvedValue(makeEntry());
+    api.teams.list.mockResolvedValue({
+      items: [
+        makeTeamListItem({ id: 'team-1', name: 'Smash Masters' }),
+        makeTeamListItem({ id: 'team-2', name: 'Net Ninjas' }),
+      ],
+      nextCursor: null,
+    });
 
     renderWithProviders(<AppRoutes />, {
       api,
       route: '/tournaments/t1/categories/c1/entries',
     });
 
-    await user.type(await screen.findByLabelText(/^Team ID/), 'team-1');
+    await user.click(await screen.findByLabelText('Team'));
+    await user.click(await screen.findByRole('option', { name: 'Smash Masters' }));
     await user.click(screen.getByRole('button', { name: 'Register' }));
 
     await waitFor(() => {
@@ -164,6 +183,165 @@ describe('tournament setup flows', () => {
     expect(screen.getByRole('button', { name: 'Register' })).toBeDisabled();
   });
 
+  it('keeps Register disabled until a player is selected', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' }),
+    );
+    api.categories.get.mockResolvedValue(
+      makeCategory({ id: 'c1', format: 'SINGLES', status: 'OPEN' }),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list.mockResolvedValue({
+      items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
+      nextCursor: null,
+    });
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    const register = await screen.findByRole('button', { name: 'Register' });
+    await waitFor(() => {
+      expect(screen.getByLabelText('Player')).toBeEnabled();
+    });
+    expect(register).toBeDisabled();
+
+    await user.click(screen.getByLabelText('Player'));
+    await user.click(await screen.findByRole('option', { name: 'Alice' }));
+    expect(register).toBeEnabled();
+  });
+
+  it('shows a loading state while the player options load', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' }),
+    );
+    api.categories.get.mockResolvedValue(
+      makeCategory({ id: 'c1', format: 'SINGLES', status: 'OPEN' }),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list.mockReturnValue(new Promise(() => {}));
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    const trigger = await screen.findByLabelText('Player');
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveTextContent('Loading…');
+    expect(screen.getByRole('button', { name: 'Register' })).toBeDisabled();
+  });
+
+  it('shows an empty state when there are no players', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' }),
+    );
+    api.categories.get.mockResolvedValue(
+      makeCategory({ id: 'c1', format: 'SINGLES', status: 'OPEN' }),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list.mockResolvedValue({ items: [], nextCursor: null });
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    expect(
+      await screen.findByText('No players available. Create a player first.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Register' })).toBeDisabled();
+  });
+
+  it('shows an error state and retries loading the player options', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' }),
+    );
+    api.categories.get.mockResolvedValue(
+      makeCategory({ id: 'c1', format: 'SINGLES', status: 'OPEN' }),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list
+      .mockRejectedValueOnce(
+        new ApiError(500, 'INTERNAL_SERVER_ERROR', 'The server encountered an error.'),
+      )
+      .mockResolvedValue({
+        items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
+        nextCursor: null,
+      });
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    expect(await screen.findByText('Could not load options')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Try again/ }));
+
+    await user.click(await screen.findByLabelText('Player'));
+    expect(await screen.findByRole('option', { name: 'Alice' })).toBeInTheDocument();
+  });
+
+  it('loads every page of players so a later page is selectable', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_OPEN' }),
+    );
+    api.categories.get.mockResolvedValue(
+      makeCategory({ id: 'c1', format: 'SINGLES', status: 'OPEN' }),
+    );
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list
+      .mockResolvedValueOnce({
+        items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
+        nextCursor: 'p1',
+      })
+      .mockResolvedValueOnce({
+        items: [makePlayerListItem({ id: 'p2', name: 'Bob' })],
+        nextCursor: null,
+      });
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    await user.click(await screen.findByLabelText('Player'));
+    // "Bob" only exists on the second page: proving the walk, not just page one.
+    expect(await screen.findByRole('option', { name: 'Bob' })).toBeInTheDocument();
+    expect(api.players.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables the competitor selector when registration is closed', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(
+      makeTournament({ id: 't1', status: 'REGISTRATION_CLOSED' }),
+    );
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'CLOSED' }));
+    api.entries.listByCategory.mockResolvedValue([]);
+    api.players.list.mockResolvedValue({
+      items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
+      nextCursor: null,
+    });
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/entries',
+    });
+
+    expect(await screen.findByText(/Registration is closed/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Player')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Register' })).toBeDisabled();
+  });
+
   it('manages team members add and remove', async () => {
     const user = userEvent.setup();
     const api = createStubApi();
@@ -171,11 +349,25 @@ describe('tournament setup flows', () => {
     const member = makeTeamMember({ teamId: 'team-1', playerId: 'p1' });
     api.teams.get.mockResolvedValue(team);
     api.teams.listMembers.mockResolvedValue([member]);
+    api.teams.addMember.mockResolvedValue(makeTeamMember());
     api.players.get.mockResolvedValue(makePlayer({ id: 'p1', name: 'Player A' }));
+    api.players.list.mockResolvedValue({
+      items: [makePlayerListItem({ id: 'p2', name: 'Player B' })],
+      nextCursor: null,
+    });
 
     renderWithProviders(<AppRoutes />, { api, route: '/teams/team-1' });
 
     expect(await screen.findByText('Player A')).toBeInTheDocument();
+
+    // Adding a member selects a player instead of typing a UUID.
+    await user.click(await screen.findByLabelText('Player'));
+    await user.click(await screen.findByRole('option', { name: 'Player B' }));
+    await user.click(screen.getByRole('button', { name: 'Add member' }));
+
+    await waitFor(() => {
+      expect(api.teams.addMember).toHaveBeenCalledWith('team-1', { playerId: 'p2' });
+    });
 
     await user.click(screen.getByRole('button', { name: 'Remove' }));
     const dialog = await screen.findByRole('dialog');
