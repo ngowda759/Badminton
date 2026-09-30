@@ -64,13 +64,15 @@ test.describe('group-stage scoring', () => {
       playerIds.push(id);
     }
 
-    // Register both players, waiting for each row before the next submission.
+    // Register both players, choosing each from the server-backed list and
+    // waiting for its row before the next submission.
     await page.goto(`${categoryUrl}/entries`);
     const names = [playerOne, playerTwo];
-    for (const [index, id] of playerIds.entries()) {
-      await page.getByLabel(/^Player ID/).fill(id);
+    for (const name of names) {
+      await page.getByLabel('Player').click();
+      await page.getByRole('option', { name }).click();
       await page.getByRole('button', { name: 'Register' }).click();
-      await expect(page.getByRole('cell', { name: names[index] as string })).toBeVisible({
+      await expect(page.getByRole('cell', { name })).toBeVisible({
         timeout: 15_000,
       });
     }

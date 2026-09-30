@@ -89,10 +89,11 @@ test.describe('court scheduling and dashboard', () => {
 
     await page.goto(`${categoryUrl}/entries`);
     const names = [playerOne, playerTwo];
-    for (const [index, id] of playerIds.entries()) {
-      await page.getByLabel(/^Player ID/).fill(id);
+    for (const name of names) {
+      await page.getByLabel('Player').click();
+      await page.getByRole('option', { name }).click();
       await page.getByRole('button', { name: 'Register' }).click();
-      await expect(page.getByRole('cell', { name: names[index] as string })).toBeVisible({
+      await expect(page.getByRole('cell', { name })).toBeVisible({
         timeout: 15_000,
       });
     }

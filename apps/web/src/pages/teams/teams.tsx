@@ -6,6 +6,7 @@ import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
+import { PlayerSelector } from '@/components/player-selector.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
@@ -203,29 +204,28 @@ function CreateTeamCard({ onCreated }: { readonly onCreated: () => void }) {
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Initial members (optional)</legend>
             <p className="text-muted-foreground text-xs">
-              Add player IDs. Members can also be managed after the team is created.
+              Choose players. Members can also be managed after the team is created.
             </p>
             {memberIds.map((memberId, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <label className="sr-only" htmlFor={`member-${index}`}>
-                  Player ID {index + 1}
-                </label>
-                <Input
-                  id={`member-${index}`}
-                  value={memberId}
-                  placeholder="Player UUID"
-                  onChange={(event) => {
-                    setMemberIds((current) =>
-                      current.map((value, position) =>
-                        position === index ? event.target.value : value,
-                      ),
-                    );
-                  }}
-                />
+              <div key={index} className="flex items-start gap-2">
+                <div className="flex-1">
+                  <PlayerSelector
+                    label={`Player ${String(index + 1)}`}
+                    htmlFor={`member-${index}`}
+                    value={memberId}
+                    onValueChange={(value) => {
+                      setMemberIds((current) =>
+                        current.map((id, position) => (position === index ? value : id)),
+                      );
+                    }}
+                    disabled={mutation.pending}
+                  />
+                </div>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
+                  className="mt-1"
                   onClick={() => {
                     setMemberIds((current) => current.filter((_, position) => position !== index));
                   }}
