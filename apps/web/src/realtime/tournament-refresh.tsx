@@ -76,7 +76,6 @@ export function TournamentRealtimeProvider({
   refreshCoalesceMs = DEFAULT_REFRESH_COALESCE_MS,
 }: TournamentRealtimeProviderProps) {
   const listeners = useRef(new Set<() => void>());
-  const connectedBefore = useRef(false);
   const coalesceRef = useRef(refreshCoalesceMs);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
@@ -115,32 +114,35 @@ export function TournamentRealtimeProvider({
     };
   }, []);
 
+  const connectedOnce = useRef(false);
+  const scheduleRefreshRef = useRef(scheduleRefresh);
+  useEffect(() => {
+    scheduleRefreshRef.current = scheduleRefresh;
+  }, [scheduleRefresh]);
+
+  const handleStatus = useCallback((status: RealtimeConnectionStatus): void => {
+    if (status !== 'CONNECTED') {
+      return;
+    }
+    // The client reports every transition synchronously, so a drop between two
+    // CONNECTED statuses is always observed here - even when React collapses the
+    // intervening `RECONNECTING` into the same render (which a real browser
+    // does). The first CONNECTED is the initial subscription; the screen already
+    // has its authoritative REST data from the initial load, so forcing a second
+    // request here would only duplicate it. A later CONNECTED follows a
+    // RECONNECTING/DISCONNECTED, where events may have been missed, so it must
+    // trigger an authoritative refresh.
+    if (connectedOnce.current) {
+      scheduleRefreshRef.current();
+    }
+    connectedOnce.current = true;
+  }, []);
+
   const realtime = useTournamentRealtime(tournamentId, {
     onEvent: scheduleRefresh,
+    onStatus: handleStatus,
     ...(eventSourceFactory ? { eventSourceFactory } : {}),
   });
-
-  const handleStatus = useCallback(
-    (status: RealtimeConnectionStatus): void => {
-      if (status !== 'CONNECTED') {
-        return;
-      }
-      // The first CONNECTED is the initial subscription; the screen already has
-      // its authoritative REST data from the initial load, so forcing a second
-      // request here would only duplicate it. A later CONNECTED follows a
-      // RECONNECTING/DISCONNECTED, where events may have been missed, so it must
-      // trigger an authoritative refresh.
-      if (connectedBefore.current) {
-        scheduleRefresh();
-      }
-      connectedBefore.current = true;
-    },
-    [scheduleRefresh],
-  );
-
-  useEffect(() => {
-    handleStatus(realtime.status);
-  }, [handleStatus, realtime.status]);
 
   const subscribe = useCallback<TournamentRefreshSubscribe>((listener) => {
     listeners.current.add(listener);

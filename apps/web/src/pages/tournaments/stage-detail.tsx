@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { BracketSection } from '@/components/tournaments/knockout-bracket.tsx';
+import { GroupFixtureSetup } from '@/components/tournaments/group-fixture-setup.tsx';
 import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
@@ -40,12 +41,13 @@ import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 /**
  * Stage detail: metadata, lifecycle and its matches.
  *
- * Matches are created manually; there is no draw or bracket generation. Match
- * participants are assigned on the match page. Phase 8.5 refetches the stage,
- * its matches, its standings and its bracket whenever a tournament realtime
- * event arrives, so a result recorded on another device updates this screen
- * without a manual refresh - the standings and bracket come from REST, never
- * from the event.
+ * A GROUP stage's fixtures are generated as a complete round-robin from the
+ * selected active entries; a KNOCKOUT stage's matches come from its bracket.
+ * Individual matches can still be created manually. Match participants are
+ * assigned on the match page. Phase 8.5 refetches the stage, its matches, its
+ * standings and its bracket whenever a tournament realtime event arrives, so a
+ * result recorded on another device updates this screen without a manual refresh
+ * - the standings and bracket come from REST, never from the event.
  */
 export function StageDetailPage() {
   const api = useApi();
@@ -168,7 +170,16 @@ export function StageDetailPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {stage.type === 'GROUP' ? (
-            <CreateMatchForm stageId={stage.id} onCreated={matchQuery.refetch} />
+            <>
+              {matchQuery.state.status === 'loaded' && matchQuery.state.data.length === 0 ? (
+                <GroupFixtureSetup
+                  stageId={stage.id}
+                  categoryId={category.id}
+                  onGenerated={matchQuery.refetch}
+                />
+              ) : null}
+              <CreateMatchForm stageId={stage.id} onCreated={matchQuery.refetch} />
+            </>
           ) : (
             <p className="text-muted-foreground text-sm">
               Knockout matches are created with the bracket; use the bracket above to view and open

@@ -28,7 +28,9 @@ scoped `EventSource` lifecycle, connection state and event parsing, exposed via
 tournament-scoped refresh bus that turns a realtime event or reconnect into an
 authoritative REST refetch) exist, as does the server-backed collection layer
 (the cursor-paginated `GET /api/v1/tournaments|players|teams` list endpoints and
-the web list pages that read them).
+the web list pages that read them), and group-stage fixture generation
+(`POST /api/v1/stages/:id/fixtures` generates the complete round-robin for a
+GROUP stage from the caller-ordered active entries).
 **Automatic draw/seeding, rankings, authentication, authorization,
 result-correction workflows and Phase 8.6 multi-device hardening are not
 implemented.**
@@ -244,3 +246,21 @@ database — integration tests use `app.inject()` with stub probes.
   this with arbitrary `OFFSET` pagination or a naive `id`-only comparison. Real-PostgreSQL
   coverage lives in `tests/integration/database/collection-pagination-database.test.ts` (the
   in-memory fake stamps one fixed `createdAt`, so it can only exercise the id tiebreaker).
+- Group-stage fixtures are a complete round-robin and reuse the existing
+  `matches`/`match_participants` tables (no new table, no new model). The pure circle-method
+  algorithm lives in `packages/domain/src/round-robin.ts` (`roundRobinRounds` /
+  `roundRobinPairings` / `roundRobinMatchCount`); `GroupFixtureService`
+  (`packages/application/src/services/group-fixture.service.ts`) validates the entries and
+  writes the whole fixture set in one `UnitOfWork.runInTransaction`, so a partial round-robin
+  is never left behind. `n` entries produce exactly `n(n-1)/2` matches; the caller's
+  `entryIds` order is the schedule order (no seeding/ranking), each match carries a
+  stage-unique `sequence` plus the round-robin `roundNumber`, and both slots are always
+  filled — a bye (odd group) is never emitted as a match. Generation is rejected with 409 if
+  the stage already has matches, so fixtures are never duplicated; retrieval reuses
+  `GET /api/v1/stages/:id/matches` rather than a second read model. Do not add a draw/seeding
+  algorithm, a separate fixture table, or a second retrieval endpoint.
+- An odd-sized group rotates a bye through the circle method; the bye slot must rotate with
+  the competitors (splice the popped value back even when it is `undefined`), otherwise the
+  same pairing is emitted every round and the round-robin silently degenerates. `sequence`
+  is the flat 1..M generation order; `roundNumber` groups the pairings that can be played
+  simultaneously.

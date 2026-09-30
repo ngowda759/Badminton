@@ -11,7 +11,9 @@ import type {
   CreateTeamInput,
   CreateTournamentInput,
   EntryDto,
+  GenerateGroupFixturesInput,
   GenerateKnockoutBracketInput,
+  GroupFixturesDto,
   ListQueryParams,
   ListResponseDto,
   MatchDto,
@@ -116,6 +118,12 @@ export interface StageApi {
     input: GenerateKnockoutBracketInput,
     signal?: AbortSignal,
   ): Promise<BracketDto>;
+  /** Generates the GROUP stage round-robin from a caller-controlled ordering. */
+  generateFixtures(
+    id: string,
+    input: GenerateGroupFixturesInput,
+    signal?: AbortSignal,
+  ): Promise<GroupFixturesDto>;
 }
 
 export interface MatchApi {
@@ -235,6 +243,8 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       getBracket: (id, signal) => client.get(`/api/v1/stages/${id}/bracket`, signal),
       generateBracket: (id, input, signal) =>
         client.post(`/api/v1/stages/${id}/bracket`, input, signal),
+      generateFixtures: (id, input, signal) =>
+        client.post(`/api/v1/stages/${id}/fixtures`, input, signal),
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),

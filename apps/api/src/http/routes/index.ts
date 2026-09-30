@@ -51,6 +51,7 @@ export function createApiV1Routes(
       matchResults: services.matchResults,
       standings: services.standings,
       knockout: services.knockout,
+      groupFixtures: services.groupFixtures,
     });
     await instance.register(courtSchedulingRoutes, {
       courts: services.courts,

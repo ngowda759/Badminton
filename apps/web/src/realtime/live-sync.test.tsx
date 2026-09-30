@@ -381,6 +381,32 @@ describe('Phase 8.5 reconnect handling', () => {
     // Two open events with no intervening error: still the initial load only.
     expect(api.dashboard.get).toHaveBeenCalledTimes(1);
   });
+
+  it('refetches on a reconnect even when the intervening drop is never rendered', async () => {
+    const api = createStubApi();
+    const { sources, factory } = createHarness();
+
+    renderLive(<TournamentDashboardPage />, { api, factory });
+    await screen.findByText('Live matches');
+
+    act(() => {
+      sources[0]?.open();
+    });
+    expect(api.dashboard.get).toHaveBeenCalledTimes(1);
+
+    // A real browser can observe open -> error -> open with React collapsing the
+    // intermediate RECONNECTING into the same render, so the committed status
+    // goes CONNECTED -> CONNECTED and a status-derived effect never fires. The
+    // reconnect must still refetch because the client reports each transition.
+    act(() => {
+      sources[0]?.reconnect();
+      sources[0]?.open();
+    });
+
+    await waitFor(() => {
+      expect(api.dashboard.get).toHaveBeenCalledTimes(2);
+    });
+  });
 });
 
 describe('Phase 8.5 isolation, cleanup and failure handling', () => {

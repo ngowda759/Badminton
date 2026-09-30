@@ -1,5 +1,6 @@
 import {
   createCourtService,
+  createGroupFixtureService,
   createKnockoutBracketService,
   createKnockoutProgressionService,
   createMatchResultService,
@@ -49,6 +50,7 @@ export function createApiServices(client: RepositoryClient, unitOfWork: UnitOfWo
     matchResults: createMatchResultService(client, unitOfWork, events, progression),
     standings: createStandingsService(client),
     knockout: createKnockoutBracketService(client, unitOfWork),
+    groupFixtures: createGroupFixtureService(unitOfWork),
     courts: createCourtService(client, unitOfWork, events),
     scheduling: createMatchSchedulingService(client, unitOfWork, events),
     dashboard: createTournamentDashboardService(client),

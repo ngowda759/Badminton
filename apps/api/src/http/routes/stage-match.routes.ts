@@ -1,4 +1,5 @@
 import type {
+  GroupFixtureService,
   KnockoutBracketService,
   MatchResultService,
   MatchService,
@@ -10,6 +11,7 @@ import {
   categoryIdParamSchema,
   createMatchInputSchema,
   createStageInputSchema,
+  generateGroupFixturesInputSchema,
   generateKnockoutBracketInputSchema,
   idParamSchema,
   matchIdParamSchema,
@@ -31,6 +33,7 @@ export interface StageMatchRoutesOptions {
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
   readonly knockout: KnockoutBracketService;
+  readonly groupFixtures: GroupFixtureService;
 }
 
 /**
@@ -41,7 +44,7 @@ export interface StageMatchRoutesOptions {
  * handlers validate, delegate and serialise.
  */
 export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = (app, options) => {
-  const { stages, matches, matchResults, standings, knockout } = options;
+  const { stages, matches, matchResults, standings, knockout, groupFixtures } = options;
 
   app.get('/categories/:categoryId/stages', async (request) => {
     const { categoryId } = validate(categoryIdParamSchema, request.params);
@@ -132,6 +135,16 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
   app.get('/stages/:id/standings', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     return data(await standings.getStageStandings(id));
+  });
+
+  // Group-stage fixtures. Generation is a single transactional application call
+  // that writes the whole round-robin; the route only validates the request
+  // shape and serialises the result. Retrieval reuses `GET /stages/:id/matches`.
+  app.post('/stages/:id/fixtures', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    const body = validate(generateGroupFixturesInputSchema, request.body);
+    const fixtures = await groupFixtures.generate(id, body);
+    return reply.status(201).send(data(fixtures));
   });
 
   // Knockout bracket. Generation is a single transactional application call;

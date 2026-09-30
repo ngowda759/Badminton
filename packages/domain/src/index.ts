@@ -105,6 +105,13 @@ export type {
 export { calculateStandings, STANDING_WIN_POINTS, STANDING_LOSS_POINTS } from './standings.ts';
 export type { StandingsMatch, StandingsParticipant, StandingRow } from './standings.ts';
 export {
+  MIN_ROUND_ROBIN_COMPETITORS,
+  roundRobinMatchCount,
+  roundRobinRounds,
+  roundRobinPairings,
+} from './round-robin.ts';
+export type { RoundRobinRound } from './round-robin.ts';
+export {
   SUPPORTED_BRACKET_SIZES,
   isSupportedBracketSize,
   calculateRoundCount,

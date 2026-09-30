@@ -169,6 +169,18 @@ export interface GetKnockoutBracketQuery {
   readonly stageId: string;
 }
 
+/**
+ * Generates a complete round-robin for a GROUP stage.
+ *
+ * `entryIds` is the caller-controlled ordering: the supplied entries are
+ * scheduled in order into the round-robin (every entry plays every other entry
+ * exactly once). There is deliberately no automatic seeding or ranking - the
+ * caller decides the order.
+ */
+export interface GenerateGroupFixturesCommand {
+  readonly entryIds: readonly string[];
+}
+
 /* ------------------------------------------------------------------ */
 /* Phase 7 - court management and match scheduling                     */
 /* ------------------------------------------------------------------ */

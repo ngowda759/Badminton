@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  createGroupFixtureService,
   createMatchService,
   createPlayerService,
   createRealtimeEventService,
@@ -77,6 +78,7 @@ describe.skipIf(!database)('application services against PostgreSQL', () => {
   const entries = createTournamentEntryService(client, unitOfWork, events);
   const matches = createMatchService(client, unitOfWork, events);
   const stages = createTournamentStageService(client, unitOfWork, events);
+  const groupFixtures = createGroupFixtureService(unitOfWork);
 
   beforeEach(async () => {
     await resetTournamentData(prisma);
@@ -374,6 +376,111 @@ describe.skipIf(!database)('application services against PostgreSQL', () => {
         matches.addParticipant(match.id, { entryId: foreignEntry.id, slot: 2 }),
       );
       expect(codeOf(foreignError)).toBe('VALIDATION_ERROR');
+    });
+  });
+
+  describe('group fixture persistence', () => {
+    async function seedEntries(
+      categoryId: string,
+      count: number,
+      format: 'SINGLES' | 'DOUBLES',
+    ): Promise<string[]> {
+      const entryIds: string[] = [];
+      for (let index = 0; index < count; index += 1) {
+        if (format === 'SINGLES') {
+          const player = await players.create({ name: `Fixture Player ${String(index)}` });
+          const entry = await entries.register({ categoryId, playerId: player.id });
+          entryIds.push(entry.id);
+          continue;
+        }
+        const team = await prisma.team.create({ data: { name: `Fixture Team ${String(index)}` } });
+        for (let member = 0; member < 2; member += 1) {
+          const player = await players.create({
+            name: `Team ${String(index)} Player ${String(member)}`,
+          });
+          await prisma.teamMember.create({
+            data: { teamId: team.id, playerId: player.id, position: member + 1 },
+          });
+        }
+        const entry = await entries.register({ categoryId, teamId: team.id });
+        entryIds.push(entry.id);
+      }
+      return entryIds;
+    }
+
+    it('persists a singles round-robin and reloads it from PostgreSQL', async () => {
+      const tournamentId = await openSinglesTournament();
+      const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+      const stage = await prisma.tournamentStage.create({
+        data: { categoryId, name: 'Group A', type: 'GROUP', sequence: 1 },
+      });
+      const entryIds = await seedEntries(categoryId, 4, 'SINGLES');
+
+      const generated = await groupFixtures.generate(stage.id, { entryIds });
+      expect(generated.matchCount).toBe(6);
+
+      const stored = await prisma.match.findMany({
+        where: { stageId: stage.id },
+        include: { participants: true },
+        orderBy: { sequence: 'asc' },
+      });
+      expect(stored).toHaveLength(6);
+      expect(stored.map((row) => row.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+      for (const row of stored) {
+        expect(row.participants).toHaveLength(2);
+      }
+
+      const pairings = new Set(
+        stored.map((row) =>
+          row.participants
+            .map((participant) => participant.entryId)
+            .sort()
+            .join('|'),
+        ),
+      );
+      expect(pairings.size).toBe(6);
+    });
+
+    it('keeps exactly one fixture set when generation is repeated', async () => {
+      const tournamentId = await openSinglesTournament();
+      const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+      const stage = await prisma.tournamentStage.create({
+        data: { categoryId, name: 'Group A', type: 'GROUP', sequence: 1 },
+      });
+      const entryIds = await seedEntries(categoryId, 3, 'SINGLES');
+
+      await groupFixtures.generate(stage.id, { entryIds });
+      const error = await rejection(groupFixtures.generate(stage.id, { entryIds }));
+      expect(codeOf(error)).toBe('CONFLICT');
+
+      const count = await prisma.match.count({ where: { stageId: stage.id } });
+      expect(count).toBe(3);
+    });
+
+    it('persists a doubles round-robin from team entries', async () => {
+      const tournamentId = await openSinglesTournament();
+      const categoryId = await openCategory(tournamentId, 'DOUBLES', 'MD');
+      const stage = await prisma.tournamentStage.create({
+        data: { categoryId, name: 'Group A', type: 'GROUP', sequence: 1 },
+      });
+      const entryIds = await seedEntries(categoryId, 3, 'DOUBLES');
+
+      const generated = await groupFixtures.generate(stage.id, { entryIds });
+      expect(generated.matchCount).toBe(3);
+
+      const stored = await prisma.match.findMany({
+        where: { stageId: stage.id },
+        include: { participants: true },
+      });
+      expect(stored).toHaveLength(3);
+      // Team entries carry no player; the participants reference the team entry.
+      const participantEntryIds = new Set(
+        stored.flatMap((row) => row.participants.map((participant) => participant.entryId)),
+      );
+      for (const entryId of participantEntryIds) {
+        expect(entryIds).toContain(entryId);
+      }
+      expect(participantEntryIds.size).toBe(3);
     });
   });
 });
