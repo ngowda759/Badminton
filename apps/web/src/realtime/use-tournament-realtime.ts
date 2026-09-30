@@ -17,6 +17,13 @@ const INITIAL_STATUS: RealtimeConnectionStatus = 'DISCONNECTED';
 export interface UseTournamentRealtimeOptions {
   /** Called for every well-formed event; the primary signal for Phase 8.5. */
   readonly onEvent?: (event: RealtimeEvent) => void;
+  /**
+   * Called for every connection-state transition, synchronously as the client
+   * reports it. Unlike the rendered `status`, this cannot skip a transition when
+   * React collapses several state updates into one render, so it is the correct
+   * signal for "was there a drop?" logic (Phase 8.5 reconnect).
+   */
+  readonly onStatus?: (status: RealtimeConnectionStatus) => void;
   /** Test seam; defaults to a native browser `EventSource`. */
   readonly eventSourceFactory?: EventSourceFactory;
 }
@@ -41,7 +48,7 @@ interface TaggedEvent {
  * client's lifecycle (one `EventSource` per mount, closed on unmount and when
  * the tournament id changes) and exposes the connection status plus the latest
  * event. It never fetches or mutates data - a consumer reacts to `onEvent` /
- * `lastEvent` by refetching REST itself (Phase 8.5).
+ * `onStatus` (or `lastEvent`) by refetching REST itself (Phase 8.5).
  *
  * Callbacks live in refs so a consumer may pass an inline function without the
  * effect re-running and reopening the socket. The effect depends only on the
@@ -56,11 +63,13 @@ export function useTournamentRealtime(
   const [tagged, setTagged] = useState<TaggedEvent | null>(null);
 
   const onEventRef = useRef(options.onEvent);
+  const onStatusRef = useRef(options.onStatus);
   const factoryRef = useRef(options.eventSourceFactory);
   useEffect(() => {
     onEventRef.current = options.onEvent;
+    onStatusRef.current = options.onStatus;
     factoryRef.current = options.eventSourceFactory;
-  }, [options.onEvent, options.eventSourceFactory]);
+  }, [options.onEvent, options.onStatus, options.eventSourceFactory]);
 
   useEffect(() => {
     // An absent or malformed id never opens a connection. Nothing is set here:
@@ -73,7 +82,10 @@ export function useTournamentRealtime(
     const factory = factoryRef.current;
     const client = createTournamentRealtimeClient({
       url: buildTournamentEventsUrl(env.VITE_API_BASE_URL, tournamentId),
-      onStatus: setStatus,
+      onStatus: (next) => {
+        onStatusRef.current?.(next);
+        setStatus(next);
+      },
       onEvent: (event) => {
         setTagged({ tournamentId, event });
         onEventRef.current?.(event);
