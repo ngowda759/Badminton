@@ -1,0 +1,84 @@
+name: AI loop merge gate
+
+# Reports whether a pull request is ready for the human merge decision.
+#
+# This workflow NEVER merges. The repository's merge gate is a human action; this
+# job only summarizes the automated evidence (CI result, review label, changed
+# areas, protected paths) so the decision is fast and auditable. The merge
+# itself stays manual by policy.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to evaluate
+        required: true
+        type: string
+
+concurrency:
+  group: ai-loop-merge-gate-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+
+jobs:
+  merge-gate:
+    name: Report merge readiness (no merge)
+    # Scoped to AI-loop pull requests so unrelated PRs are never affected.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.pull_request.head.ref, 'automation/') ||
+      contains(github.event.pull_request.labels.*.name, 'ai-review')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate the loop state
+        run: node .ai/scripts/validate-loop-config.mjs
+
+      - name: Classify the changed areas
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+        run: |
+          git fetch --no-tags origin "${BASE_REF}" --depth=1 || true
+          # A change over the configured limits is reported, not fatal: this job
+          # informs a human decision, it does not fail the pull request.
+          git diff --name-only "origin/${BASE_REF}...HEAD" \
+            | node .ai/scripts/detect-changed-areas.mjs --json > /tmp/areas.json || true
+          cat /tmp/areas.json
+
+      - name: Report readiness
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          {
+            echo "## Merge gate — PR #${PR_NUMBER}"
+            echo
+            echo "Automated evidence (the merge decision itself remains manual):"
+            echo
+            echo '```json'
+            cat /tmp/areas.json
+            echo '```'
+            echo
+            echo "- Required CI check: \`Lint, typecheck, test, build\`"
+            echo "- Required review label: \`ai-review\` (review must be approved)"
+            echo "- Required approval: human"
+            echo
+            echo "This workflow does not merge and holds read-only permissions."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          gh pr checks "$PR_NUMBER" || true

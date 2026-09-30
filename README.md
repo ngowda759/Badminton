@@ -125,7 +125,10 @@ Badminton/
 │   ├── unit/                    pure logic, stubbed dependencies
 │   └── integration/             app.inject(); API + real-PostgreSQL suites
 ├── e2e/                         Playwright specs
+├── .ai/                         AI development loop: config, prompts, schemas, state, scripts
+├── .openhands/skills/           repository skills for automated agents
 ├── .github/workflows/ci.yml     continuous integration
+├── .github/workflows/ai-loop-*.yml  AI development-loop workflows
 ├── docker-compose.yml           local PostgreSQL
 ├── prisma.config.ts             Prisma CLI configuration (Prisma 7)
 ├── vitest.config.ts
@@ -345,6 +348,35 @@ PostgreSQL runs as a GitHub Actions service container with a healthcheck, and mi
 are applied with `prisma migrate deploy` before the tests. No secrets live in the
 workflow: the CI database URL is an inline throwaway credential for a container that
 only exists for the duration of the job.
+
+## AI development loop
+
+The repository owns a closed development loop — ChatGPT architect → OpenHands
+implementation → GitHub PR → GitHub Actions CI → ChatGPT review → OpenHands fixes the
+same PR (up to `MAX_REVIEW_ROUNDS = 3`) → human merge gate → next-task generation.
+
+The loop is infrastructure only: it never implements product features, never redesigns
+the web application, never touches production data, and never merges a pull request.
+Its configuration, prompts, JSON Schemas, machine-readable state and validation scripts
+live in [`.ai/`](.ai/README.md); the stage-by-stage guide, required GitHub Secrets,
+workflow permissions and remaining manual setup are in
+[docs/ai-development-loop.md](docs/ai-development-loop.md).
+
+| Workflow                 | Purpose                                                               |
+| ------------------------ | --------------------------------------------------------------------- |
+| `ci.yml`                 | Unchanged product CI (lint, typecheck, test, build, e2e)              |
+| `ai-loop-validate.yml`   | Validates the loop config, state, schemas and workflow structure      |
+| `ai-loop-implement.yml`  | Dispatches one OpenHands implementation conversation (manual)         |
+| `ai-loop-review.yml`     | Dispatches one OpenHands review conversation on the `ai-review` label |
+| `ai-loop-merge-gate.yml` | Reports merge readiness; never merges                                 |
+| `ai-loop-next-task.yml`  | Dispatches next-task generation after the human merge gate            |
+
+Validate the loop locally with:
+
+```bash
+npm run loop:validate
+npm run loop:status
+```
 
 ## Phase scope
 

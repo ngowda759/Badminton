@@ -1,0 +1,86 @@
+name: AI loop review
+
+# Starts an OpenHands review conversation for a pull request that carries the
+# review label. The loop never reviews or merges on its own: this workflow only
+# assembles the repository-owned review prompt and dispatches one conversation.
+#
+# When the OPENHANDS_API_KEY secret is absent the dispatch script skips cleanly,
+# so the workflow is safe to merge before the secret is configured.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review
+        required: true
+        type: string
+      round:
+        description: Review round (1..maxReviewRounds)
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: ai-loop-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: Dispatch OpenHands review
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'ai-review'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Resolve the pull request head
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+        run: |
+          gh pr view "$PR_NUMBER" \
+            --json number,headRefName,headRefOid \
+            --jq '"number=\(.number)\nbranch=\(.headRefName)\nhead=\(.headRefOid)"' \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the review context
+        env:
+          ROUND: ${{ inputs.round || '1' }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_BRANCH: ${{ steps.pr.outputs.branch }}
+          HEAD_SHA: ${{ steps.pr.outputs.head }}
+        run: |
+          {
+            echo "## Pull request under review"
+            echo
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Head branch: ${HEAD_BRANCH}"
+            echo "- Head SHA: ${HEAD_SHA}"
+            echo "- Review round: ${ROUND}"
+            echo
+            echo "Read the pull request diff and its CI check results before deciding."
+          } > /tmp/review-context.md
+
+      - name: Dispatch the review conversation
+        env:
+          OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
+          OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
+        run: |
+          node .ai/scripts/dispatch-conversation.mjs \
+            --stage review \
+            --pr "${{ steps.pr.outputs.number }}" \
+            --branch "${{ steps.pr.outputs.branch }}" \
+            --context-file /tmp/review-context.md

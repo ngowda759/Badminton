@@ -40,6 +40,13 @@ is `docs/phase-7-courts-dashboard.md`; Phase 8 realtime is
 
 ## Layout
 
+- `.ai/` — the AI development loop: `loop.config.json` (knobs and guardrails),
+  `prompts/` (architect, implementation, review, fix, next-task), `schemas/`
+  (JSON Schemas for config/state/briefs/reviews), `state/` (durable state, task
+  queue, append-only review log) and `scripts/` (dependency-free validation and
+  state helpers). See `docs/ai-development-loop.md`.
+- `.openhands/skills/badminton-development/` — the repository skill loaded by
+  automated agents.
 - `apps/api` — Fastify API. `app.ts` is the factory, `server.ts` owns `listen`.
   `src/http/` holds the `/api/v1` routes, request/response helpers and the
   `ApiServices` interface; `src/http/sse/` holds the SSE frame codec and connection
@@ -89,6 +96,8 @@ npm run test:e2e         # Playwright (starts both servers itself)
 npm run build
 npm run db:generate && npm run db:migrate && npm run db:seed
 npm run format           # Prettier; CI runs format:check via lint only — run format before committing
+node .ai/scripts/validate-loop-config.mjs   # AI loop config + state + schemas
+node .ai/scripts/validate-workflows.mjs     # workflow structure and permissions
 ```
 
 ## Local prerequisites

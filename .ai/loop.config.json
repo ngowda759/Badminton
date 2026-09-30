@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "loopId": "AI-001",
+  "maxReviewRounds": 3,
+  "baseBranch": "main",
+  "branchPrefix": "automation/",
+  "ciWorkflow": "CI",
+  "requiredChecks": ["Lint, typecheck, test, build"],
+  "protectedPaths": [
+    "prisma/migrations/**",
+    "prisma/seed.ts",
+    ".github/workflows/ci.yml",
+    ".env",
+    ".env.*"
+  ],
+  "secrets": {
+    "required": ["OPENHANDS_API_KEY"],
+    "optional": ["OPENHANDS_HOST"],
+    "note": "GITHUB_TOKEN is provided by GitHub Actions and must never be committed. OPENHANDS_HOST is an Actions variable, not a secret."
+  },
+  "mergeGate": {
+    "enabled": false,
+    "requireCiGreen": true,
+    "requireReviewPassed": true,
+    "requireHumanApproval": true
+  },
+  "reviewers": {
+    "architect": "ChatGPT",
+    "implementer": "OpenHands",
+    "ci": "GitHub Actions"
+  },
+  "automation": {
+    "triggerLabel": "ai-task",
+    "reviewLabel": "ai-review",
+    "blockedLabel": "ai-blocked",
+    "readyLabel": "ai-ready",
+    "nextTaskEnabled": true,
+    "nextTaskBranchPrefix": "automation/next-task-"
+  },
+  "limits": {
+    "maxChangedFiles": 60,
+    "maxDiffLines": 2500
+  },
+  "paths": {
+    "state": ".ai/state/loop-state.json",
+    "queue": ".ai/state/task-queue.json",
+    "reviewLog": ".ai/state/review-log.jsonl"
+  }
+}

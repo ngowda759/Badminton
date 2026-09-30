@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "loopId": "AI-001",
+  "status": "idle",
+  "round": 0,
+  "maxReviewRounds": 3,
+  "currentTaskId": null,
+  "currentPr": null,
+  "updatedAt": "2026-09-30T00:00:00Z",
+  "history": [
+    {
+      "at": "2026-09-30T00:00:00Z",
+      "status": "idle",
+      "note": "AI-001 bootstrap: loop infrastructure established. No task is active; the loop starts on the first approved task brief."
+    }
+  ]
+}

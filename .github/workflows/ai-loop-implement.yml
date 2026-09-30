@@ -1,0 +1,54 @@
+name: AI loop implement
+
+# Starts the OpenHands implementation conversation for one approved task brief.
+#
+# Manual by design: a task is only implemented once a human has flipped its
+# `humanApproval` to `true` in `.ai/state/task-queue.json`, and the architect
+# decides when to hand a brief over. The workflow only assembles the
+# repository-owned implementation prompt and dispatches one conversation — it
+# never writes code, never opens the pull request and never merges.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: Approved task id from .ai/state/task-queue.json
+        required: true
+        type: string
+
+concurrency:
+  group: ai-loop-implement
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  implement:
+    name: Dispatch OpenHands implementation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate the loop state
+        run: node .ai/scripts/validate-loop-config.mjs
+
+      - name: Confirm the task is approved
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+        run: node .ai/scripts/require-approved-task.mjs "$TASK_ID"
+
+      - name: Dispatch the implementation conversation
+        env:
+          OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
+          OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
+        run: |
+          node .ai/scripts/dispatch-conversation.mjs \
+            --stage implement \
+            --task "${{ inputs.task_id }}"

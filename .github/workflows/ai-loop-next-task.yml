@@ -1,0 +1,63 @@
+name: AI loop next task
+
+# After a task passes the merge gate, proposes the next task brief. This
+# workflow only dispatches an OpenHands conversation with the repository-owned
+# next-task prompt; it never implements the task and never merges anything.
+#
+# Manual by design: the merge gate is a human decision, so the loop advances to
+# the next task only when a human dispatches this workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      note:
+        description: Why the loop is advancing (e.g. "PR #42 merged")
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ai-loop-next-task
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  next-task:
+    name: Dispatch OpenHands next-task generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate the loop state before advancing
+        run: node .ai/scripts/validate-loop-config.mjs
+
+      - name: Assemble the next-task context
+        env:
+          NOTE: ${{ inputs.note }}
+        run: |
+          {
+            echo "## Merge-gate outcome"
+            echo
+            if [ -n "${NOTE}" ]; then
+              echo "${NOTE}"
+            else
+              echo "The previous task passed the merge gate; propose the next task."
+            fi
+          } > /tmp/next-task-context.md
+
+      - name: Dispatch the next-task conversation
+        env:
+          OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
+          OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
+        run: |
+          node .ai/scripts/dispatch-conversation.mjs \
+            --stage next-task \
+            --context-file /tmp/next-task-context.md

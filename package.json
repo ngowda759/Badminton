@@ -26,6 +26,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "loop:validate": "node .ai/scripts/validate-loop-config.mjs && node .ai/scripts/validate-workflows.mjs",
+    "loop:status": "node .ai/scripts/loop-state.mjs status",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "updatedAt": "2026-09-30T00:00:00Z",
+  "tasks": [
+    {
+      "id": "AI-001",
+      "title": "Establish AI development loop",
+      "phase": "infrastructure",
+      "status": "in-review",
+      "summary": "Establish the repository-owned AI development loop infrastructure: .ai/ configuration, prompts, schemas and state; .openhands/skills/badminton-development; and the GitHub Actions workflows that validate the loop and gate merges. Infrastructure only - no product feature work.",
+      "acceptanceCriteria": [
+        "`.ai/loop.config.json` declares maxReviewRounds, baseBranch, protectedPaths, requiredChecks and label names, and validates against `.ai/schemas/loop-config.schema.json`.",
+        "`.ai/state/loop-state.json`, `.ai/state/task-queue.json` and `.ai/state/review-log.jsonl` validate against their schemas.",
+        "`.openhands/skills/badminton-development/SKILL.md` exists with valid frontmatter and describes the repository's build/test/lint commands and layering rules.",
+        "`.github/workflows/ai-loop-validate.yml` runs the loop validator on pull requests and pushes and fails on invalid YAML, JSON or state.",
+        "The existing CI workflow is unchanged and still runs lint, typecheck, test, build and e2e.",
+        "`npm run lint`, `npm run typecheck`, `npm test` and `npm run build` pass on the branch.",
+        "PR #18 is untouched by this change."
+      ],
+      "outOfScope": [
+        "Mobile implementation",
+        "Web application redesign",
+        "Production data or credential changes",
+        "Merging any pull request",
+        "Modifying or reusing PR #18"
+      ],
+      "humanApproval": true,
+      "dependsOn": [],
+      "references": ["AGENTS.md", ".github/workflows/ci.yml", "docs/ai-development-loop.md"],
+      "createdAt": "2026-09-30T00:00:00Z"
+    }
+  ]
+}
