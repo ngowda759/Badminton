@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -514,11 +514,88 @@ describe('ChatGPT review CLI', () => {
     rmSync(scratch, { recursive: true, force: true });
   });
 
-  function runReview(args: string[], env: Record<string, string> = {}) {
+  // The CLI shells out to `gh`. Stub it so the tests are hermetic: no network,
+  // and no dependence on an ambient GH_TOKEN that a developer happens to have
+  // exported but CI does not.
+  function stubGh(pr: Record<string, unknown>): string {
+    const bin = join(scratch, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const fixture = join(scratch, 'pr.json');
+    writeFileSync(fixture, JSON.stringify(pr));
+    const script = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'case "$1 $2" in',
+      '  "pr view") cat "$AI_LOOP_STUB_PR" ;;',
+      '  "pr checks") printf \'%s\' "${AI_LOOP_STUB_CHECKS:-[]}" ;;',
+      '  "pr diff") printf \'%s\' "${AI_LOOP_STUB_DIFF:-}" ;;',
+      "  *) printf '%s' '' ;;",
+      'esac',
+      '',
+    ].join('\n');
+    const gh = join(bin, 'gh');
+    writeFileSync(gh, script, { mode: 0o755 });
+    return bin;
+  }
+
+  // A minimal but schema-valid review report, so the CLI's own validation path
+  // runs without a network call.
+  function canned(verdict: string): string {
+    const file = join(scratch, `canned-${verdict}.json`);
+    writeFileSync(
+      file,
+      JSON.stringify({
+        verdict,
+        summary: `stub ${verdict}`,
+        acceptanceCriteria: [
+          { criterion: 'the loop is automatic', status: 'met', evidence: 'stub' },
+        ],
+        findings:
+          verdict === 'approved'
+            ? []
+            : [
+                {
+                  id: 'REV-1',
+                  severity: 'major',
+                  file: '.ai/scripts/chatgpt-review.mjs',
+                  line: 1,
+                  summary: 'stub finding',
+                  suggestion: 'stub suggestion',
+                },
+              ],
+      }),
+    );
+    return file;
+  }
+
+  function runReview(
+    args: string[],
+    env: Record<string, string> = {},
+    pr: Record<string, unknown> = {
+      number: 19,
+      title: 'stub',
+      body: '',
+      headRefName: 'automation/ai-development-loop',
+      headRefOid: 'a'.repeat(40),
+      baseRefName: 'main',
+      headRepositoryOwner: { login: 'ngowda759' },
+      comments: [],
+      labels: [],
+      isCrossRepository: false,
+    },
+  ) {
+    const bin = stubGh(pr);
     return spawnSync('node', [resolve(root, '.ai/scripts/chatgpt-review.mjs'), ...args], {
       cwd: root,
       encoding: 'utf8',
-      env: { ...process.env, AI_LOOP_ROOT: scratch, OPENAI_API_KEY: '', ...env },
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ''}`,
+        AI_LOOP_ROOT: scratch,
+        AI_LOOP_STUB_PR: join(scratch, 'pr.json'),
+        OPENAI_API_KEY: '',
+        ...env,
+      },
     });
   }
 
@@ -539,6 +616,95 @@ describe('ChatGPT review CLI', () => {
     const result = runReview([]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('usage: chatgpt-review.mjs');
+  });
+
+  it('plans a fix on the SAME pr and branch when the verdict needs work', () => {
+    const result = runReview(
+      ['--pr', '19', '--response-file', canned('changes-requested'), '--dry-run'],
+      { OPENAI_API_KEY: 'test-key' },
+    );
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('verdict: changes-requested');
+    expect(out).toContain(
+      'fix dispatch: --stage fix --pr 19 --branch automation/ai-development-loop',
+    );
+    // A fix updates the existing pull request; it never opens a second one.
+    expect(out).not.toMatch(/--new-pr|create.*pull request/i);
+  });
+
+  it('routes an approval to the human merge gate without dispatching a fix', () => {
+    const result = runReview(['--pr', '19', '--response-file', canned('approved'), '--dry-run'], {
+      OPENAI_API_KEY: 'test-key',
+      AI_LOOP_STUB_CHECKS: JSON.stringify([
+        { name: 'Lint, typecheck, test, build', state: 'SUCCESS', bucket: 'pass', link: '' },
+      ]),
+    });
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('verdict: approved');
+    expect(out).toContain('fix dispatch: none');
+    expect(out).toContain('ai-ready');
+  });
+
+  it('runs a round on a red build and reports changes-requested rather than blocking', () => {
+    // The reviewer still runs when CI is red, so a fix round is dispatched with
+    // the failure attached instead of the loop going straight to blocked.
+    const result = runReview(['--pr', '19', '--response-file', canned('approved'), '--dry-run'], {
+      OPENAI_API_KEY: 'test-key',
+      AI_LOOP_STUB_CHECKS: JSON.stringify([
+        {
+          name: 'Lint, typecheck, test, build',
+          state: 'FAILURE',
+          bucket: 'fail',
+          link: 'https://example.test/run/9',
+        },
+      ]),
+    });
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('verdict: changes-requested');
+    expect(out).not.toContain('verdict: approved');
+    expect(out).toContain('fix dispatch: --stage fix --pr 19');
+  });
+
+  it('stops for a human at the round limit instead of dispatching another fix', () => {
+    // Rounds 1-3 already ran on older heads, so this head would be round 4.
+    const comments = [1, 2, 3].map((round) => ({
+      body: reviewMarker(round, 'a'.repeat(40), 'changes-requested'),
+    }));
+    const result = runReview(
+      ['--pr', '19', '--response-file', canned('changes-requested'), '--dry-run'],
+      { OPENAI_API_KEY: 'test-key' },
+      {
+        number: 19,
+        headRefName: 'automation/ai-development-loop',
+        headRefOid: 'b'.repeat(40),
+        comments,
+        isCrossRepository: false,
+      },
+    );
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('exceeds maxReviewRounds 3');
+    expect(out).not.toContain('fix dispatch: --stage fix');
+  });
+
+  it('skips a head SHA that a previous review already covered', () => {
+    const sha = 'a'.repeat(40);
+    const result = runReview(
+      ['--pr', '19', '--dry-run'],
+      { OPENAI_API_KEY: 'test-key' },
+      {
+        number: 19,
+        headRefName: 'automation/ai-development-loop',
+        headRefOid: sha,
+        comments: [{ body: reviewMarker(1, sha, 'approved') }],
+        isCrossRepository: false,
+      },
+    );
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('no review needed');
   });
 });
 
