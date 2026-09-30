@@ -117,6 +117,12 @@ never a read model.
 
 ## Gotchas
 
+- **Known e2e flake.** `e2e/phase8-6-hardening.spec.ts` ("a reconnect after missed
+  events recovers the authoritative state") fails intermittently on `main` and on
+  unrelated branches, independently of your change. Phase 8.6 is not implemented.
+  If it is the only failing spec, re-run the failed job
+  (`gh run rerun <run-id> --failed`) rather than changing product code or the
+  spec. See `docs/ai-development-loop.md`.
 - `localhost` and `127.0.0.1` are distinct browser origins; both are in the
   default `CORS_ORIGINS`. Change one, change the other or E2E reports `Unreachable`.
 - Phase 2 constraints Prisma cannot express live in the `add_tournament_domain`

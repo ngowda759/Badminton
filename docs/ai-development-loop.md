@@ -179,3 +179,13 @@ node .ai/scripts/loop-state.mjs reset --note "task merged"
   GitHub parser.
 - The loop does not (and must not) merge. `mergeGate.enabled` stays `false`
   until a human changes it, and even then the merge is a human action.
+- **Known pre-existing e2e flake.** `e2e/phase8-6-hardening.spec.ts:213`
+  ("a reconnect after missed events recovers the authoritative state") fails
+  intermittently on `main` and on unrelated branches; it reproduces on the
+  current `main` head with no loop changes applied. It also failed in the last
+  `main` push run that GitHub reported as `success`, so the run conclusion is not
+  a reliable signal for it. Phase 8.6 is not implemented. Treat a red e2e step
+  whose only failure is this spec as a flake: re-run the failed job
+  (`gh run rerun <run-id> --failed`) and record the attempt, rather than
+  "fixing" product code. Do not change the spec to make it pass as part of loop
+  infrastructure work.
