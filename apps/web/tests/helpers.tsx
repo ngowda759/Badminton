@@ -17,6 +17,7 @@ import type {
   MatchParticipantDto,
   MatchResultDto,
   PlayerDto,
+  PlayerListItemDto,
   StageDto,
   StandingRowDto,
   TeamDto,
@@ -66,6 +67,17 @@ export function makePlayer(overrides: Partial<PlayerDto> = {}): PlayerDto {
     name: 'Player A',
     email: null,
     phone: null,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  };
+}
+
+/** A player list row; the collection omits `email`/`phone`. */
+export function makePlayerListItem(overrides: Partial<PlayerListItemDto> = {}): PlayerListItemDto {
+  return {
+    id: '33333333-3333-4333-8333-333333333333',
+    name: 'Player A',
     createdAt: ISO,
     updatedAt: ISO,
     ...overrides,
@@ -337,7 +349,9 @@ export function createStubApi(): Mocked<BadmintonApi> {
     players: {
       create: vi.fn(() => Promise.resolve(makePlayer())),
       get: vi.fn(() => Promise.resolve(makePlayer())),
-      list: vi.fn(() => Promise.resolve({ items: [] as readonly PlayerDto[], nextCursor: null })),
+      list: vi.fn(() =>
+        Promise.resolve({ items: [] as readonly PlayerListItemDto[], nextCursor: null }),
+      ),
       update: vi.fn(() => Promise.resolve(makePlayer())),
     },
     teams: {

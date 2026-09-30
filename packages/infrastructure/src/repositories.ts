@@ -104,7 +104,10 @@ function createTournamentRepository(db: Db): TournamentRepository {
         // even when `createdAt` values differ or tie. The `id desc` tiebreaker
         // is what makes that predicate unique; without it Prisma would emit a
         // non-unique `createdAt <= cursor` comparison that can skip or repeat
-        // rows. `skip` is only ever 0 or 1, so no OFFSET scan. Newest first.
+        // rows. Prisma implements the cursor by skipping the cursor row itself,
+        // so the SQL carries `OFFSET $skip`, but `skip` is bounded to 0/1 - a
+        // constant-time skip of the single cursor row, never an arbitrary
+        // `OFFSET page * size` that grows with the page number. Newest first.
         const rows = await db.tournament.findMany({
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: query.limit + 1,
@@ -196,9 +199,11 @@ function createPlayerRepository(db: Db): PlayerRepository {
     listPage(query: ListQuery) {
       return translatePersistenceErrors(async () => {
         // Same keyset mechanism as the tournament list: the unique `id` cursor
-        // plus `skip: 1` resumes strictly after the previous page under the
-        // (createdAt, id) ordering, so differing or tied `createdAt` values are
-        // handled correctly. No OFFSET scan. Newest first.
+        // plus a bounded `skip: 1` resumes strictly after the previous page
+        // under the (createdAt, id) ordering, so differing or tied `createdAt`
+        // values are handled correctly. The `skip` only ever drops the single
+        // cursor row; it is never an arbitrary `OFFSET page * size`. Newest
+        // first.
         const rows = await db.player.findMany({
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: query.limit + 1,

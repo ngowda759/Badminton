@@ -224,9 +224,11 @@ describe('GET /api/v1/players', () => {
       unknown
     >;
 
-    expect(Object.keys(item).sort()).toEqual(
-      ['createdAt', 'email', 'id', 'name', 'phone', 'updatedAt'].sort(),
-    );
+    // The collection returns every player, so it omits the contact fields that
+    // stay on the single-player detail endpoint.
+    expect(Object.keys(item).sort()).toEqual(['createdAt', 'id', 'name', 'updatedAt'].sort());
+    expect(item).not.toHaveProperty('email');
+    expect(item).not.toHaveProperty('phone');
   });
 
   it('paginates players with a cursor', async () => {

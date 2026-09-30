@@ -32,12 +32,16 @@ export interface TournamentListItemDto {
   readonly updatedAt: Date;
 }
 
-/** One player row in `GET /api/v1/players`. */
+/**
+ * One player row in `GET /api/v1/players`.
+ *
+ * The collection returns every player, so it exposes only the minimum the list
+ * needs. `email`/`phone` are deliberately omitted here and remain available from
+ * the single-player endpoints (`GET`/`PATCH /api/v1/players/:id`).
+ */
 export interface PlayerListItemDto {
   readonly id: string;
   readonly name: string;
-  readonly email: string | null;
-  readonly phone: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -70,8 +74,6 @@ export function toPlayerListItem(player: Player): PlayerListItemDto {
   return {
     id: player.id,
     name: player.name,
-    email: player.email,
-    phone: player.phone,
     createdAt: player.createdAt,
     updatedAt: player.updatedAt,
   };

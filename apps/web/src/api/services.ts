@@ -18,6 +18,7 @@ import type {
   MatchParticipantDto,
   MatchResultDto,
   PlayerDto,
+  PlayerListItemDto,
   RecordMatchResultInput,
   RegisterEntryInput,
   ScheduleMatchInput,
@@ -70,8 +71,8 @@ export interface CategoryApi {
 export interface PlayerApi {
   create(input: CreatePlayerInput, signal?: AbortSignal): Promise<PlayerDto>;
   get(id: string, signal?: AbortSignal): Promise<PlayerDto>;
-  /** One page of players, newest first. */
-  list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<PlayerDto>>;
+  /** One page of players, newest first. Omits `email`/`phone` (detail-only). */
+  list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<PlayerListItemDto>>;
   update(id: string, input: UpdatePlayerInput, signal?: AbortSignal): Promise<PlayerDto>;
 }
 
@@ -194,7 +195,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       create: (input, signal) => client.post('/api/v1/players', input, signal),
       get: (id, signal) => client.get(`/api/v1/players/${id}`, signal),
       list: (params, signal) =>
-        client.get<ListResponseDto<PlayerDto>>(listPath('/api/v1/players', params), signal),
+        client.get<ListResponseDto<PlayerListItemDto>>(listPath('/api/v1/players', params), signal),
       update: (id, input, signal) => client.patch(`/api/v1/players/${id}`, input, signal),
     },
     teams: {

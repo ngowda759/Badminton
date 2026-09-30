@@ -3,10 +3,12 @@ import { z } from 'zod';
 /**
  * Shared list/pagination query schemas for the collection endpoints.
  *
- * Collection reads are cursor-paginated by opaque UUID cursor so a growing
- * dataset is never loaded unbounded and no `OFFSET` scan is introduced. The
- * cursor is the last id of the previous page; the repository resumes strictly
- * after it using the list's deterministic ordering.
+ * Collection reads are cursor/keyset-paginated by opaque UUID cursor: the
+ * `limit` caps each page and the cursor is the last id of the previous page, so
+ * a growing dataset is never loaded unbounded. The repository resumes strictly
+ * after the cursor using the list's deterministic ordering; its Prisma
+ * `skip: 1` is a bounded skip of the cursor row, not arbitrary `OFFSET`
+ * pagination.
  */
 
 /** Hard ceiling on a single page; keeps a request from asking for everything. */

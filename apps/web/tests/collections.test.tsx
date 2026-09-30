@@ -12,6 +12,7 @@ import { TournamentEntryPage } from '@/pages/tournaments/tournament-entry.tsx';
 import {
   createStubApi,
   makePlayer,
+  makePlayerListItem,
   makeTeamListItem,
   makeTournament,
   renderWithProviders,
@@ -43,7 +44,10 @@ describe('PlayersPage collection list', () => {
   it('renders players returned by the server', async () => {
     const api = createStubApi();
     vi.mocked(api.players.list).mockResolvedValue({
-      items: [makePlayer({ id: 'p1', name: 'Alice' }), makePlayer({ id: 'p2', name: 'Bob' })],
+      items: [
+        makePlayerListItem({ id: 'p1', name: 'Alice' }),
+        makePlayerListItem({ id: 'p2', name: 'Bob' }),
+      ],
       nextCursor: null,
     });
 
@@ -51,6 +55,8 @@ describe('PlayersPage collection list', () => {
 
     expect(await screen.findByText('Alice')).toBeInTheDocument();
     expect(screen.getByText('Bob')).toBeInTheDocument();
+    // The collection DTO omits contact details, so the list has no Contact column.
+    expect(screen.queryByText('Contact')).not.toBeInTheDocument();
     expect(api.players.list).toHaveBeenCalledWith(
       expect.objectContaining({ limit: 20 }),
       expect.any(AbortSignal),
@@ -70,7 +76,10 @@ describe('PlayersPage collection list', () => {
     const api = createStubApi();
     vi.mocked(api.players.list)
       .mockRejectedValueOnce(new ApiError(503, 'PERSISTENCE_ERROR', 'The service is unavailable.'))
-      .mockResolvedValue({ items: [makePlayer({ id: 'p1', name: 'Alice' })], nextCursor: null });
+      .mockResolvedValue({
+        items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
+        nextCursor: null,
+      });
 
     listPage(<PlayersPage />, api, '/players');
 
@@ -87,7 +96,7 @@ describe('PlayersPage collection list', () => {
     vi.mocked(api.players.list)
       .mockResolvedValueOnce({ items: [], nextCursor: null })
       .mockResolvedValue({
-        items: [makePlayer({ id: 'p1', name: 'Newcomer' })],
+        items: [makePlayerListItem({ id: 'p1', name: 'Newcomer' })],
         nextCursor: null,
       });
     vi.mocked(api.players.create).mockResolvedValue(makePlayer({ id: 'p1', name: 'Newcomer' }));
@@ -107,7 +116,7 @@ describe('PlayersPage collection list', () => {
     const user = userEvent.setup();
     const api = createStubApi();
     vi.mocked(api.players.list).mockResolvedValue({
-      items: [makePlayer({ id: 'p1', name: 'Alice' })],
+      items: [makePlayerListItem({ id: 'p1', name: 'Alice' })],
       nextCursor: null,
     });
 

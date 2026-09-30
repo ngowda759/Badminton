@@ -28,11 +28,12 @@ import { compactErrors, validateRequired, type FieldErrors } from '@/lib/form-va
 /**
  * Team management.
  *
- * The list is server-backed: `GET /api/v1/teams` returns persisted teams name
- * ascending with a member count (one grouped read, no per-team query). Creating
- * a team refetches the same list so the new team appears from server state.
- * Membership is managed on the team detail page; the doubles "exactly two
- * members" rule is enforced at registration, not in this generic editor.
+ * The list is server-backed: `GET /api/v1/teams` returns persisted teams newest
+ * first (`createdAt` descending, `id` descending) with a member count (one
+ * grouped read, no per-team query). Creating a team refetches the same list so
+ * the new team appears from server state. Membership is managed on the team
+ * detail page; the doubles "exactly two members" rule is enforced at
+ * registration, not in this generic editor.
  */
 export function TeamsPage() {
   const api = useApi();

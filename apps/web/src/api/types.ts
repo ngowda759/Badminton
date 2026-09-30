@@ -55,6 +55,20 @@ export interface PlayerDto {
   readonly updatedAt: string;
 }
 
+/**
+ * One player row in `GET /api/v1/players`.
+ *
+ * The collection lists every player, so the server omits `email`/`phone` here;
+ * those stay on the single-player `PlayerDto` returned by the detail/edit
+ * endpoints.
+ */
+export interface PlayerListItemDto {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface TeamDto {
   readonly id: string;
   readonly name: string;

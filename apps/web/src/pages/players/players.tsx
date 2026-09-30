@@ -1,7 +1,7 @@
 import { useState, type SubmitEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
-import type { PlayerDto } from '@/api/types.ts';
+import type { PlayerListItemDto } from '@/api/types.ts';
 import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
@@ -23,7 +23,7 @@ import {
 import { useCollection, type CollectionResult } from '@/hooks/use-collection.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { fieldErrors } from '@/lib/errors.ts';
-import { formatCalendarDate, orDash } from '@/lib/format.ts';
+import { formatCalendarDate } from '@/lib/format.ts';
 import {
   compactErrors,
   validateOptionalEmail,
@@ -69,7 +69,7 @@ export function PlayersPage() {
   );
 }
 
-function PlayerList({ collection }: { readonly collection: CollectionResult<PlayerDto> }) {
+function PlayerList({ collection }: { readonly collection: CollectionResult<PlayerListItemDto> }) {
   const { state, hasMore, loadingMore, loadMore, loadMoreError, refetch } = collection;
 
   if (state.status === 'loading') {
@@ -96,7 +96,6 @@ function PlayerList({ collection }: { readonly collection: CollectionResult<Play
           <TableHeader>
             <TableRow>
               <TableHead>Player</TableHead>
-              <TableHead>Contact</TableHead>
               <TableHead>Created</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -111,9 +110,6 @@ function PlayerList({ collection }: { readonly collection: CollectionResult<Play
                   >
                     {player.name}
                   </Link>
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {orDash(player.email ?? player.phone)}
                 </TableCell>
                 <TableCell className="text-muted-foreground whitespace-nowrap">
                   {formatCalendarDate(player.createdAt)}

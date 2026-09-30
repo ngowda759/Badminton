@@ -352,17 +352,21 @@ describe('/api/v1 players', () => {
     expect(response.statusCode).toBe(409);
   });
 
-  it('reads a created player', async () => {
+  it('reads a created player, including the contact fields the list omits', async () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/v1/players',
-      payload: { name: 'Asha' },
+      payload: { name: 'Asha', email: 'asha@example.com', phone: '+15551234567' },
     });
     const id = created.json<{ data: { id: string } }>().data.id;
 
     const response = await app.inject({ method: 'GET', url: `/api/v1/players/${id}` });
     expect(response.statusCode).toBe(200);
-    expect(response.json<{ data: { name: string } }>().data.name).toBe('Asha');
+    const player = response.json<{ data: { name: string; email: string; phone: string } }>().data;
+    expect(player.name).toBe('Asha');
+    // The single-player endpoint keeps the contact fields the collection omits.
+    expect(player.email).toBe('asha@example.com');
+    expect(player.phone).toBe('+15551234567');
   });
 });
 

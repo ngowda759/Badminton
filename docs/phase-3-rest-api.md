@@ -154,20 +154,27 @@ Response:
 
 `nextCursor` is the last returned row's id when more rows remain, or `null` on
 the last page; pass it back as `cursor` to fetch the next page. Pagination is
-cursor-based, never `OFFSET`-scanned: the repository issues one `findMany` with
-`take: limit + 1` (the extra row proves whether another page exists) and Prisma
-expands `cursor: { id }` into a **keyset predicate over the whole ordering
-tuple**. For the `(createdAt desc, id desc)` order that predicate compares the
-cursor row's `createdAt` and `id`, so a page resumes strictly after the cursor
-even when `createdAt` values differ or tie:
+cursor/keyset-based: the repository issues one `findMany` with `take: limit + 1`
+(the extra row proves whether another page exists) and Prisma expands
+`cursor: { id }` into a **keyset predicate over the whole ordering tuple**. For
+the `(createdAt desc, id desc)` order that predicate compares the cursor row's
+`createdAt` and `id`, so a page resumes strictly after the cursor even when
+`createdAt` values differ or tie:
 
 ```sql
 WHERE (("createdAt" = (SELECT "createdAt" … WHERE id = $cursor)
         AND "id" <= (SELECT "id" … WHERE id = $cursor))
    OR  ("createdAt" < (SELECT "createdAt" … WHERE id = $cursor)))
 ORDER BY "createdAt" DESC, "id" DESC
-LIMIT $take OFFSET $skip   -- $skip is only ever 0 or 1
+LIMIT $take OFFSET $skip   -- $skip is a bounded cursor skip, only ever 0 or 1
 ```
+
+Prisma implements the cursor by skipping the cursor row itself, so the generated
+SQL carries `OFFSET $skip`; because `skip` is bounded to `0` or `1` this is a
+constant-time skip of the single cursor row, **not** arbitrary/unbounded
+`OFFSET` pagination (there is no `OFFSET page * size` that grows with the page
+number, so no offset scan over the collection). `limit` caps the rows read, so
+the collection is never loaded unbounded.
 
 The `id desc` tiebreaker is load-bearing: without it Prisma emits a non-unique
 `createdAt <= cursor` comparison whose result depends on physical row order, so
@@ -189,7 +196,7 @@ List DTOs expose only operator-facing fields:
 | Collection  | Fields                                                                                                          |
 | ----------- | --------------------------------------------------------------------------------------------------------------- |
 | Tournaments | `id`, `name`, `description`, `status`, `startDate`, `endDate`, `location`, `timezone`, `createdAt`, `updatedAt` |
-| Players     | `id`, `name`, `email`, `phone`, `createdAt`, `updatedAt`                                                        |
+| Players     | `id`, `name`, `createdAt`, `updatedAt`                                                                          |
 | Teams       | `id`, `name`, `memberCount`, `createdAt`, `updatedAt`                                                           |
 
 `memberCount` is a derived count over the page's team ids in one grouped read,
