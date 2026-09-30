@@ -231,6 +231,36 @@ deliberately separated from the pull request's own workflows: they run with the
 base repository's token and secrets, check out **only** the default branch, and
 never install or execute pull-request-controlled code.
 
+### Bootstrap: the first merge must be manual
+
+`workflow_run` only fires for a workflow that already exists on the **default
+branch**, and `ai-loop-next-task.yml` only fires for a `pull_request` event that
+GitHub can dispatch from the default branch's copy of that file. Neither is true
+while the loop's own pull request is still open, so on the pull request that
+introduces the loop:
+
+- `ai-loop-review.yml` and `ai-loop-merge-gate.yml` do not start automatically
+  after `CI`, even though CI itself runs;
+- `ai-loop-merge-gate.yml` can still be run by hand
+  (`workflow_dispatch`, `pr_number`) — but only once the file is on the default
+  branch, so it is not a usable bootstrap path either.
+
+This is a GitHub platform constraint, not a defect in the loop. The consequence
+is that **the AI-001 infrastructure pull request is merged by a human**; from the
+next task onward the loop is self-driving. If the merge gate has to be exercised
+by hand for the first merge, that is the expected sequence, not a broken loop.
+
+Two follow-on checks after the first manual merge confirm the loop came up:
+
+1. `main` now holds the `ai-loop-*` workflows, so the next `automation/**` pull
+   request gets an automatic review and merge gate.
+2. The `pull_request: closed` trigger fires on that merge and
+   `ai-loop-next-task.yml` dispatches the architect, so the queue change starts
+   the next implementation.
+
+If either is missing, run `ai-loop-next-task.yml` by hand with
+`workflow_dispatch` (`reason`) — the operator recovery path documented below.
+
 ## Required GitHub Secrets
 
 Configure these under **Settings → Secrets and variables → Actions**:
