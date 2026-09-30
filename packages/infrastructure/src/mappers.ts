@@ -124,6 +124,7 @@ export function toTournamentStage(row: PrismaTournamentStage): TournamentStage {
     type: row.type,
     sequence: row.sequence,
     drawSize: row.drawSize,
+    qualifiersPerGroup: row.qualifiersPerGroup,
     status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

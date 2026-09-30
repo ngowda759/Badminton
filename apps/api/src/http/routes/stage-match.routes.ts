@@ -3,6 +3,7 @@ import type {
   KnockoutBracketService,
   MatchResultService,
   MatchService,
+  QualificationService,
   StandingsService,
   TournamentStageService,
 } from '@badminton/application';
@@ -32,6 +33,7 @@ export interface StageMatchRoutesOptions {
   readonly matches: MatchService;
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
+  readonly qualification: QualificationService;
   readonly knockout: KnockoutBracketService;
   readonly groupFixtures: GroupFixtureService;
 }
@@ -44,7 +46,8 @@ export interface StageMatchRoutesOptions {
  * handlers validate, delegate and serialise.
  */
 export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = (app, options) => {
-  const { stages, matches, matchResults, standings, knockout, groupFixtures } = options;
+  const { stages, matches, matchResults, standings, qualification, knockout, groupFixtures } =
+    options;
 
   app.get('/categories/:categoryId/stages', async (request) => {
     const { categoryId } = validate(categoryIdParamSchema, request.params);
@@ -152,12 +155,30 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
   app.post('/stages/:id/bracket', async (request, reply) => {
     const { id } = validate(idParamSchema, request.params);
     const body = validate(generateKnockoutBracketInputSchema, request.body);
-    const bracket = await knockout.generateBracket(id, body);
+    const bracket = await knockout.generateBracket(id, compact(body));
+    return reply.status(201).send(data(bracket));
+  });
+
+  // Generate the bracket directly from the feeder group stage's qualifiers: the
+  // service reads the standings, seeds the qualifiers (cross-seed / snake-fold)
+  // and writes the bracket in one transaction. Rejected while any required group
+  // match is incomplete, so stale standings never feed a bracket.
+  app.post('/stages/:id/bracket/generate', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    const bracket = await knockout.generateFromQualifiers(id);
     return reply.status(201).send(data(bracket));
   });
 
   app.get('/stages/:id/bracket', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     return data(await knockout.getBracket(id));
+  });
+
+  // Qualification is a derived view of the group standings: the top N of each
+  // group, the resulting bracket size and the bye count. Read-only; it never
+  // advances anything and never mutates state.
+  app.get('/stages/:id/qualification', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    return data(await qualification.getView(id));
   });
 };

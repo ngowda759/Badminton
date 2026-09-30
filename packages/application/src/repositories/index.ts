@@ -184,6 +184,13 @@ export interface MatchRepository {
   create(data: CreateMatchData): Promise<Match>;
   findById(id: string): Promise<Match | undefined>;
   listByStage(stageId: string): Promise<readonly Match[]>;
+  /**
+   * Creates every match of a stage in one write, so a generated fixture set or
+   * bracket is never left partially persisted by a round trip per row. Used by
+   * the group-fixture and knockout-bracket generators; the stage-unique
+   * `(stageId, sequence)` index is the database's final guard.
+   */
+  createMany(data: readonly CreateMatchData[]): Promise<readonly Match[]>;
   /** Completed matches only, scoped to one stage (drives group standings). */
   listCompletedByStage(stageId: string): Promise<readonly Match[]>;
   /**
@@ -224,6 +231,12 @@ export interface MatchWithParticipants {
 
 export interface MatchParticipantRepository {
   create(data: CreateMatchParticipantData): Promise<MatchParticipant>;
+  /**
+   * Creates several participants in one write. Used by the fixture and bracket
+   * generators so a generated set is inserted in a single statement rather than
+   * one round trip per slot.
+   */
+  createMany(data: readonly CreateMatchParticipantData[]): Promise<readonly MatchParticipant[]>;
   listByMatch(matchId: string): Promise<readonly MatchParticipant[]>;
   /** Participants for several matches, so standings avoids a per-match query. */
   listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchParticipant[]>;

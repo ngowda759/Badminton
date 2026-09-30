@@ -72,7 +72,11 @@ Route handlers contain no business rules and do not import Prisma.
 
 ## 3. Database changes
 
-**None.** No migration was added and no historical migration was modified.
+**One additive, forward-only migration:** `add_stage_qualification` adds a
+nullable `tournament_stages.qualifiersPerGroup` `smallint` (how many competitors
+advance from each group into the feeder knockout) plus a row-local `CHECK` that a
+present value is positive. No historical migration was modified and no existing
+row is affected.
 
 ### Why no `Bracket` table
 
@@ -137,11 +141,11 @@ caller.
 
 ## 6. Participant ordering
 
-**Participant ordering is caller-controlled in Phase 6. No automatic seeding or
-ranking algorithm is implemented.**
+Two ways to supply the draw.
 
-The application/API caller supplies `entryIds` in bracket order. Round 1 pairs
-the list in order: position 1 vs 2, 3 vs 4, and so on. For:
+**Caller-controlled ordering (Phase 6).** The application/API caller supplies
+`entryIds` in bracket order. Round 1 pairs the list in order: position 1 vs 2, 3
+vs 4, and so on. For:
 
 ```
 entryIds: [A, B, C, D, E, F, G, H]
@@ -155,6 +159,15 @@ QF2 C vs D
 QF3 E vs F
 QF4 G vs H
 ```
+
+**Seeded draw from group qualification (TASK-4).** `pairings` supplies explicit
+first-round pairings where `second` may be `null` for a bye. `seedBracket` /
+`buildBracketSeed` order the qualifiers: one group keeps standing order, two
+groups cross-seed (`A1 vs Bk`, `B1 vs Ak`, …), three or more rank-interleave then
+snake-fold. Byes are spread evenly across round one and awarded to the strongest
+qualifiers, so a bye seed meets a first-round winner next; a bye is a pairing
+with one real competitor and is advanced into round 2 immediately at generation
+time. This mirrors the original tournament application's draw.
 
 Later-round matches are created with **empty** slots. No fake entry ids and no
 nullable foreign keys are used to stand in for "winner of QF1"; the relationship
@@ -208,24 +221,61 @@ testable):
 - `isBracketFinalCompleted(size, roundNumber, matchNumber, status)` → true only
   when that final is `COMPLETED`
 
+`packages/domain/src/qualification.ts` (pure group→knockout qualification):
+
+- `validateQualificationConfig({ qualifiersPerGroup })`
+- `selectQualifiers(config, standingsByGroup, pendingMatchCount)` → the top N of
+  each group in standing order; rejects a non-zero `pendingMatchCount` so a
+  competitor never advances on stale standings
+- `flattenQualifiers(result)` → the qualifiers in group order
+
+`packages/domain/src/bracket-seeding.ts` (pure seeding of the qualifiers):
+
+- `seedBracket(groups)` — one group keeps standing order; two groups use the
+  classic cross-seed (`A1 vs Bk`, `B1 vs Ak`, …); three or more rank-interleave
+  then snake-fold
+- `buildBracketSeed(groups)` → `{ pairings, bracketSize, byeCount, seeds }` — the
+  bracket size is the smallest supported size that holds every qualifier, byes
+  are spread evenly across round one and awarded to the strongest
+  (rank-interleaved) qualifiers, and a bye pairing carries `second: null`
+
 No Prisma/database access lives in the domain package.
 
 ## 9. Application layer
 
-Two focused services, plus an orchestration hook into match results.
+Three focused services, plus an orchestration hook into match results.
 
 ### `KnockoutBracketService`
 
-- `generateBracket(stageId, { entryIds })` — transactional. Verifies the stage
+- `generateBracket(stageId, command)` — transactional. Verifies the stage
   exists, is `KNOCKOUT`, is not `COMPLETED`, has no existing matches, and that
   every entry belongs to the stage's category, is active (`PENDING`/`CONFIRMED`)
-  and unique; the count must be a supported bracket size. It records the size on
-  `stage.drawSize`, creates all matches with their `roundNumber`, `matchNumber`
-  and `sequence`, and fills round 1 in the supplied order. Later rounds keep
-  empty slots.
+  and unique. The command supplies **either** `entryIds` (the caller-controlled
+  ordering, paired 1 vs 2, 3 vs 4, …) **or** `pairings` (explicit first-round
+  pairings where `second` may be `null` for a bye); exactly one is required. It
+  records the size on `stage.drawSize`, creates all matches with their
+  `roundNumber`, `matchNumber` and `sequence`, fills round 1, and immediately
+  advances every bye into round 2. Later rounds keep empty slots.
+- `generateFromQualifiers(stageId)` — transactional. Reads the feeder groups'
+  standings through `QualificationService`, seeds the qualifiers with
+  `buildBracketSeed`, and writes the bracket from the resulting pairings. It is
+  rejected while any feeder group match is incomplete, so a bracket is never
+  built from stale standings.
 - `getBracket(stageId)` — reads the bracket in one batched query
   (`listByStageWithParticipants`, no N+1) and derives rounds, round names and the
   completion flag. It completes an `ACTIVE` stage whose final is `COMPLETED`.
+
+### `QualificationService`
+
+`getView(stageId)` returns the derived qualification view of a `KNOCKOUT` stage:
+each feeder `GROUP` stage (same category, lower sequence, in sequence order)
+contributes its top `qualifiersPerGroup` competitors in standing order. The view
+reports readiness, the block reason, the seeds, the bracket size and the bye
+count. `resolve(client, stageId)` returns the same resolution for the bracket
+generator, so it can pass its **transactional** client and generate atomically.
+The service reuses `computeStageStandings` (the same derivation the standings
+endpoint uses) and scopes each group's selection to the entries that actually
+play in it — a sibling-group entry can never qualify from another group.
 
 ### `KnockoutProgressionService`
 
@@ -295,10 +345,12 @@ Group matches keep their Phase 5 behavior unchanged.
 All under `/api/v1`; responses use the `{ "data": ... }` envelope and the
 centralised `{ "error": { code, message, details } }` model.
 
-| Method | Path                  | Service  | Notes                                       |
-| ------ | --------------------- | -------- | ------------------------------------------- |
-| `POST` | `/stages/:id/bracket` | knockout | Generates the bracket from `entryIds` (201) |
-| `GET`  | `/stages/:id/bracket` | knockout | UI-friendly bracket, or an empty bracket    |
+| Method | Path                           | Service       | Notes                                                     |
+| ------ | ------------------------------ | ------------- | --------------------------------------------------------- |
+| `POST` | `/stages/:id/bracket`          | knockout      | Generates the bracket from `entryIds` or `pairings` (201) |
+| `POST` | `/stages/:id/bracket/generate` | knockout      | Generates the bracket from the group qualifiers (201)     |
+| `GET`  | `/stages/:id/bracket`          | knockout      | UI-friendly bracket, or an empty bracket                  |
+| `GET`  | `/stages/:id/qualification`    | qualification | Derived group→knockout qualification view                 |
 
 Existing Phase 5 endpoints are reused unchanged:
 
@@ -312,13 +364,72 @@ No duplicate scoring endpoints were created.
 
 ### `POST /stages/:id/bracket`
 
-Request:
+Request — exactly one of the two shapes:
 
 ```json
 { "entryIds": ["...", "..."] }
 ```
 
+```json
+{
+  "pairings": [
+    { "first": "...", "second": "..." },
+    { "first": "...", "second": null }
+  ]
+}
+```
+
+`pairings` is how a seeded draw with byes is supplied: `second: null` is a bye,
+and the competitor is advanced into round 2 immediately. Supplying both, or
+neither, is a `400`.
+
 Response `201` — the bracket (same shape as `GET`, below).
+
+### `POST /stages/:id/bracket/generate`
+
+No body. Reads the feeder `GROUP` stages' standings, seeds the qualifiers
+(cross-seed for two groups, rank-interleave + snake-fold for three or more),
+spreads byes and writes the bracket in one transaction. Response `201` — the
+bracket. Rejected with `422` while any feeder group match is incomplete (or no
+group stage feeds the knockout / the qualifier count is unset), and `409` when a
+bracket already exists.
+
+### `GET /stages/:id/qualification`
+
+Response:
+
+```json
+{
+  "data": {
+    "knockoutStageId": "...",
+    "knockoutStageName": "Knockout",
+    "qualifiersPerGroup": 2,
+    "groups": [
+      {
+        "groupId": "...",
+        "groupName": "Group A",
+        "sequence": 1,
+        "qualifyingCount": 2,
+        "competitorCount": 4,
+        "qualifiers": [{ "entryId": "...", "position": 1 }],
+        "complete": true,
+        "totalMatches": 6,
+        "completedMatches": 6
+      }
+    ],
+    "seeds": ["..."],
+    "qualifierCount": 4,
+    "bracketSize": 4,
+    "byeCount": 0,
+    "ready": true,
+    "blockedReason": null,
+    "bracketGenerated": false,
+    "standingsByGroup": { "<groupId>": [] }
+  }
+}
+```
+
+Read-only; it never advances anything and never mutates state.
 
 ### `GET /stages/:id/bracket`
 
@@ -444,36 +555,37 @@ Extends the Phase 4 UI and reuses its primitives.
 
 ## 15. Limitations
 
-Deliberate Phase 6 limitations:
+Deliberate limitations (Phase 6 plus TASK-4 progression):
 
-- Caller-controlled ordering only; no seeding/ranking/draw algorithm.
-- Bracket size is a power of two from 2 to 128; no byes for non-power-of-two
-  fields.
+- Caller-controlled ordering remains available; the seeded draw is derived from
+  group qualification (`qualifiersPerGroup`), not from a ranking/Elo system.
+- Bracket size is a power of two from 2 to 128; a non-power-of-two qualifier
+  field is padded with byes, which are spread evenly and awarded to the strongest
+  (rank-interleaved) qualifiers.
 - Single elimination only; no double elimination, consolation or third-place
   match.
 - No bracket reset/edit after generation; a completed result is immutable.
-- No automatic advancement without an explicit completed result.
+- No automatic advancement without an explicit completed result; a bye is the one
+  exception, advanced at generation time.
 - No result-correction workflow.
 - Stage completion is derived on read; there is no background reconciliation.
 
 ## 16. Non-goals
 
-Explicitly **not** implemented (later phases): automatic group creation,
-automatic draw/ranking/seeding, Elo, federation seeding rules, court allocation,
-venue scheduling, time-slot optimization, live scoring, WebSockets/realtime,
-authentication/authorization, payments, notifications, public spectator pages,
-CSV import/export, AI features, analytics, tournament statistics dashboards,
-double elimination, round-robin generation, consolation brackets, third-place
-matches, best-of-five scoring, and match-result correction. No Phase 7 work was
-started.
+Explicitly **not** implemented (later phases): automatic group creation, Elo,
+federation seeding rules, court allocation, venue scheduling, time-slot
+optimization, live scoring, WebSockets/realtime, authentication/authorization,
+payments, notifications, public spectator pages, CSV import/export, AI features,
+analytics, tournament statistics dashboards, double elimination, consolation
+brackets, third-place matches, best-of-five scoring, and match-result correction.
+Group→knockout qualification is now implemented (TASK-4) and is no longer a
+non-goal.
 
 ## 17. Future extension points
 
-- Seeding/ranking inputs to replace caller-supplied ordering.
-- Byes for non-power-of-two fields.
+- Ranking/Elo inputs to replace the group-standing draw.
 - A result-correction workflow with an audit trail.
 - Consolation/third-place brackets, double elimination.
-- Automatic group→knockout qualification.
 - Court/time scheduling integrated with the bracket.
 
 ## 18. Testing
@@ -481,6 +593,12 @@ started.
 - **Domain unit tests** (`tests/unit/domain/bracket.test.ts`): supported and
   unsupported sizes, round counts, match counts, next-round/match/slot
   calculations, sequences, round names, boundary cases (2, 4, 8, 16).
+- **Domain qualification/seeding tests**
+  (`tests/unit/domain/qualification.test.ts`,
+  `tests/unit/domain/bracket-seeding.test.ts`): config validation, top-N
+  selection, clamping to a small group, ordering by standing position, rejection
+  while a match is outstanding; one-/two-/three-group seeding, uneven fields,
+  bracket sizing, bye spreading and never pairing two byes.
 - **Application unit tests** (`tests/unit/application/knockout.service.test.ts`):
   bracket generation (2/4/8 entries, invalid size, duplicate entries, wrong
   category, inactive entry, already-generated), progression (QF→SF, SF→final,
@@ -488,21 +606,38 @@ started.
   incomplete match rejected, completed match immutable) and stage completion
   (final incomplete → ACTIVE, final completed → COMPLETED, earlier completion
   does not complete the stage).
+- **Application progression tests**
+  (`tests/unit/application/tournament-progression.test.ts`): the whole
+  setup → groups → fixtures → standings → qualification → knockout → final →
+  completion slice, bye auto-advance for an odd field, refusal to advance while a
+  group match is outstanding, a group with no configured qualifier count, and a
+  knockout with no feeder group.
 - **API integration tests** (`tests/integration/api/routes.test.ts`): HTTP
   contract for `POST/GET /stages/:id/bracket` — validation, 400/404/409/422
-  mapping, bracket shape, `TBD` slots.
+  mapping, bracket shape, `TBD` slots. `tests/integration/api/qualification.routes.test.ts`
+  covers `GET /stages/:id/qualification` and `POST /stages/:id/bracket/generate`
+  (200/201/404/409/422), explicit `pairings` with a bye, the both/neither `400`,
+  and `qualifiersPerGroup` validation.
 - **PostgreSQL vertical slice** (`tests/integration/api/vertical-slice.test.ts`):
   full HTTP → service → Prisma → PostgreSQL path including bracket generation,
   first-round start, result recording with progression, final champion and stage
   completion, invalid bracket size, withdrawn entry, duplicate generation,
   progression conflict, cross-category entry, concurrent double completion, the
   fill-only slot guarantee and the knockout stage-completion / bracket-size
-  guards.
-- **Web tests** (`apps/web/src/lib/bracket.test.ts`, `apps/web/tests/flows.test.tsx`):
+  guards; plus the TASK-4 slice that runs two groups of four through
+  qualification into the bracket and champion without inserting any row directly.
+- **Web tests** (`apps/web/src/lib/bracket.test.ts`, `apps/web/tests/flows.test.tsx`,
+  `apps/web/src/components/tournaments/qualification-panel.test.tsx`):
   bracket helpers, bracket setup with confirmation, bracket render with `TBD`
-  slots and winners, no standings for a knockout stage.
+  slots and winners, no standings for a knockout stage, the qualification card
+  (blocked/ready/generate) and the `qualifiersPerGroup` stage configuration.
 - **E2E** (`e2e/knockout-bracket.spec.ts`): the real UI, API and PostgreSQL —
   create tournament → open registration → create category → create four players →
   register entries → create KNOCKOUT stage → generate 4-entry bracket → activate
   the stage → play both semifinals → verify each winner advances → play the final
   → verify the champion and stage completion. Nothing is mocked.
+- **E2E** (`e2e/tournament-progression.spec.ts`): the complete TASK-4 flow —
+  two groups of four configured with `qualifiersPerGroup` in the UI, round-robins
+  generated and played, standings verified, qualification derived from the
+  standings, bracket generated from the qualifiers, both semifinals and the final
+  played, the tournament completed, and the final state verified after a reload.

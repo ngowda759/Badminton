@@ -28,10 +28,15 @@ scoped `EventSource` lifecycle, connection state and event parsing, exposed via
 tournament-scoped refresh bus that turns a realtime event or reconnect into an
 authoritative REST refetch) exist, as does the server-backed collection layer
 (the cursor-paginated `GET /api/v1/tournaments|players|teams` list endpoints and
-the web list pages that read them), and group-stage fixture generation
+the web list pages that read them), group-stage fixture generation
 (`POST /api/v1/stages/:id/fixtures` generates the complete round-robin for a
-GROUP stage from the caller-ordered active entries).
-**Automatic draw/seeding, rankings, authentication, authorization,
+GROUP stage from the caller-ordered active entries), and group→knockout
+progression (TASK-4: a GROUP stage's configured `qualifiersPerGroup` feeds
+`GET /api/v1/stages/:id/qualification` and
+`POST /api/v1/stages/:id/bracket/generate`, which seeds the qualifiers — cross-seed
+for two groups, rank-interleave + snake-fold for three or more — spreads byes and
+writes the bracket from the derived qualifiers, never a hand-written order).
+**Automatic group creation, ranking/Elo systems, authentication, authorization,
 result-correction workflows and Phase 8.6 multi-device hardening are not
 implemented.**
 Do not add those unless the task explicitly asks for a later phase. The
@@ -269,10 +274,35 @@ database — integration tests use `app.inject()` with stub probes.
   stage-unique `sequence` plus the round-robin `roundNumber`, and both slots are always
   filled — a bye (odd group) is never emitted as a match. Generation is rejected with 409 if
   the stage already has matches, so fixtures are never duplicated; retrieval reuses
-  `GET /api/v1/stages/:id/matches` rather than a second read model. Do not add a draw/seeding
-  algorithm, a separate fixture table, or a second retrieval endpoint.
+  `GET /api/v1/stages/:id/matches` rather than a second read model. Group fixtures stay a
+  caller-ordered round-robin; do not add a separate fixture table or a second retrieval
+  endpoint (group→knockout seeding belongs to the bracket path, not the round-robin).
 - An odd-sized group rotates a bye through the circle method; the bye slot must rotate with
   the competitors (splice the popped value back even when it is `undefined`), otherwise the
   same pairing is emitted every round and the round-robin silently degenerates. `sequence`
   is the flat 1..M generation order; `roundNumber` groups the pairings that can be played
   simultaneously.
+- Group→knockout progression (TASK-4) is **derived**, never stored: qualification is the top
+  `qualifiersPerGroup` of each GROUP stage that precedes a KNOCKOUT stage in the same category
+  (lower `sequence`, in sequence order), read through the shared
+  `packages/application/src/services/standings-compute.ts` so it uses exactly the standings the
+  screen shows. The pure selection lives in `packages/domain/src/qualification.ts` and the draw
+  in `packages/domain/src/bracket-seeding.ts` (`seedBracket` / `buildBracketSeed`): one group
+  keeps standing order, two groups cross-seed (`A1 vs Bk`, `B1 vs Ak`, …), three or more
+  rank-interleave then snake-fold; byes go to the strongest (rank-interleaved) qualifiers and a
+  bye pairing carries `second: null`, advanced into round 2 at generation time. There is no
+  separate qualification table and no second bracket representation. A group's selection is
+  scoped to the entries that actually play in that group (`participantEntryIds`), so a
+  sibling-group entry can never qualify from another group. `QualificationService.getView`
+  backs `GET /api/v1/stages/:id/qualification`;
+  `KnockoutBracketService.generateFromQualifiers` backs
+  `POST /api/v1/stages/:id/bracket/generate` and is **rejected while any feeder group match is
+  incomplete** (and when no group feeds the knockout or the count is unset), so stale standings
+  never feed a bracket. Both generation paths and the whole read-seed-write run in one
+  `UnitOfWork.runInTransaction`, and a second generation is a 409 — no duplicate bracket. The
+  `qualifiersPerGroup` column is the only new database state (nullable `smallint` with a
+  positive CHECK in the `add_stage_qualification` migration).
+- `POST /api/v1/stages/:id/bracket` accepts **either** `entryIds` (caller order) **or**
+  `pairings` (explicit first-round pairings, `second: null` for a bye), never both — the
+  qualification path uses `pairings`. Supplying both/neither is a 400. The explicit path stays
+  the caller-controlled draw; do not replace it with automatic seeding.

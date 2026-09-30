@@ -83,7 +83,11 @@ export async function seedTeamWithMembers(
 export async function seedStage(
   client: RepositoryClient,
   categoryId: string,
-  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE' | 'COMPLETED' } = {},
+  input: {
+    sequence?: number;
+    status?: 'PENDING' | 'ACTIVE' | 'COMPLETED';
+    qualifiersPerGroup?: number;
+  } = {},
 ): Promise<string> {
   const stage = await client.stages.create({
     categoryId,
@@ -91,6 +95,7 @@ export async function seedStage(
     type: 'GROUP',
     sequence: input.sequence ?? 1,
     drawSize: null,
+    qualifiersPerGroup: input.qualifiersPerGroup ?? null,
     status: input.status ?? 'PENDING',
   });
   return stage.id;
@@ -115,7 +120,7 @@ export async function seedMatch(
 export async function seedKnockoutStage(
   client: RepositoryClient,
   categoryId: string,
-  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE' } = {},
+  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE'; qualifiersPerGroup?: number } = {},
 ): Promise<string> {
   const stage = await client.stages.create({
     categoryId,
@@ -123,6 +128,7 @@ export async function seedKnockoutStage(
     type: 'KNOCKOUT',
     sequence: input.sequence ?? 1,
     drawSize: null,
+    qualifiersPerGroup: input.qualifiersPerGroup ?? null,
     status: input.status ?? 'PENDING',
   });
   return stage.id;

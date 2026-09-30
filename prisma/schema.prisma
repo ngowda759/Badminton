@@ -205,6 +205,10 @@ model TournamentStage {
   type       StageType
   sequence   Int                @db.SmallInt
   drawSize   Int?               @db.SmallInt
+  // How many competitors advance from each group into this stage's feeder
+  // knockout. Nullable: a GROUP stage, or a knockout not yet configured, has no
+  // configured qualifier count. A row-local CHECK keeps a present value positive.
+  qualifiersPerGroup Int?       @db.SmallInt
   status     StageStatus        @default(PENDING)
   matches    Match[]
   createdAt  DateTime           @default(now()) @db.Timestamptz(3)

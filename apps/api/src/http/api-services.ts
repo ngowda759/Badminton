@@ -6,6 +6,7 @@ import type {
   MatchSchedulingService,
   MatchService,
   PlayerService,
+  QualificationService,
   StandingsService,
   TeamService,
   TournamentCategoryService,
@@ -33,6 +34,7 @@ export interface ApiServices {
   readonly matches: MatchService;
   readonly matchResults: MatchResultService;
   readonly standings: StandingsService;
+  readonly qualification: QualificationService;
   readonly knockout: KnockoutBracketService;
   readonly groupFixtures: GroupFixtureService;
   readonly courts: CourtService;

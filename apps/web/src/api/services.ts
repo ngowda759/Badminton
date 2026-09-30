@@ -21,6 +21,7 @@ import type {
   MatchResultDto,
   PlayerDto,
   PlayerListItemDto,
+  QualificationViewDto,
   RecordMatchResultInput,
   RegisterEntryInput,
   ScheduleMatchInput,
@@ -118,6 +119,10 @@ export interface StageApi {
     input: GenerateKnockoutBracketInput,
     signal?: AbortSignal,
   ): Promise<BracketDto>;
+  /** Generates the bracket from the derived group qualifiers. */
+  generateBracketFromQualifiers(id: string, signal?: AbortSignal): Promise<BracketDto>;
+  /** Reads the derived group qualification view for a KNOCKOUT stage. */
+  qualification(id: string, signal?: AbortSignal): Promise<QualificationViewDto>;
   /** Generates the GROUP stage round-robin from a caller-controlled ordering. */
   generateFixtures(
     id: string,
@@ -243,6 +248,9 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       getBracket: (id, signal) => client.get(`/api/v1/stages/${id}/bracket`, signal),
       generateBracket: (id, input, signal) =>
         client.post(`/api/v1/stages/${id}/bracket`, input, signal),
+      generateBracketFromQualifiers: (id, signal) =>
+        client.post(`/api/v1/stages/${id}/bracket/generate`, undefined, signal),
+      qualification: (id, signal) => client.get(`/api/v1/stages/${id}/qualification`, signal),
       generateFixtures: (id, input, signal) =>
         client.post(`/api/v1/stages/${id}/fixtures`, input, signal),
     },

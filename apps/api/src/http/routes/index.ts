@@ -50,6 +50,7 @@ export function createApiV1Routes(
       matches: services.matches,
       matchResults: services.matchResults,
       standings: services.standings,
+      qualification: services.qualification,
       knockout: services.knockout,
       groupFixtures: services.groupFixtures,
     });

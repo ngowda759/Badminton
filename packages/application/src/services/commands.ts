@@ -87,12 +87,18 @@ export interface CreateStageCommand {
   readonly type: StageType;
   readonly sequence: number;
   readonly drawSize?: number;
+  /**
+   * How many competitors advance from each group into this stage's feeder
+   * knockout. Only meaningful on a KNOCKOUT stage; `undefined` leaves it unset.
+   */
+  readonly qualifiersPerGroup?: number;
 }
 
 export interface UpdateStageCommand {
   readonly name?: string;
   readonly sequence?: number;
   readonly drawSize?: number | null;
+  readonly qualifiersPerGroup?: number | null;
 }
 
 export interface CreateMatchCommand {
@@ -156,12 +162,28 @@ export interface TransitionMatchStatusCommand {
 /**
  * Generates a single-elimination bracket for a KNOCKOUT stage.
  *
- * `entryIds` is the caller-controlled ordering: entries are paired in the
- * supplied order (1 vs 2, 3 vs 4, ...) into round 1. There is deliberately no
- * automatic seeding or ranking - the caller decides the order.
+ * Two mutually exclusive ways to supply the draw:
+ *
+ * - `entryIds` - the caller-controlled ordering: entries are paired in the
+ *   supplied order (1 vs 2, 3 vs 4, ...) into round 1. The count must be a
+ *   supported bracket size. There is deliberately no automatic seeding or
+ *   ranking - the caller decides the order.
+ * - `pairings` - explicit first-round pairings, where `second` may be `null`
+ *   for a bye. Used by qualification, which seeds the qualifiers (cross-seed or
+ *   snake-fold) and spreads byes across the round. The number of pairings is the
+ *   bracket size / 2.
+ *
+ * Exactly one of the two must be supplied.
  */
 export interface GenerateKnockoutBracketCommand {
-  readonly entryIds: readonly string[];
+  readonly entryIds?: readonly string[];
+  readonly pairings?: readonly KnockoutPairingInput[];
+}
+
+/** One first-round pairing; `second` is `null` for a bye. */
+export interface KnockoutPairingInput {
+  readonly first: string;
+  readonly second: string | null;
 }
 
 /** Reads a knockout bracket, optionally refreshing stage completion. */

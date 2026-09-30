@@ -88,6 +88,7 @@ export function StagesPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead>Draw size</TableHead>
+                <TableHead>Qualifiers</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -99,6 +100,7 @@ export function StagesPage() {
                   <TableCell className="font-medium">{stage.name}</TableCell>
                   <TableCell>{humanizeEnum(stage.type)}</TableCell>
                   <TableCell>{orDash(stage.drawSize)}</TableCell>
+                  <TableCell>{orDash(stage.qualifiersPerGroup)}</TableCell>
                   <TableCell>
                     <StatusBadge kind="stage" status={stage.status} />
                   </TableCell>
@@ -133,6 +135,7 @@ function CreateStageCard({
   const [type, setType] = useState<StageType>('GROUP');
   const [sequence, setSequence] = useState('1');
   const [drawSize, setDrawSize] = useState('');
+  const [qualifiersPerGroup, setQualifiersPerGroup] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const mutation = useMutation<unknown>();
 
@@ -142,6 +145,10 @@ function CreateStageCard({
       name: validateRequired(name, 'Name'),
       sequence: validatePositiveInteger(sequence, 'Sequence'),
       drawSize: validateOptionalPositiveInteger(drawSize, 'Draw size'),
+      qualifiersPerGroup:
+        type === 'GROUP'
+          ? validateOptionalPositiveInteger(qualifiersPerGroup, 'Qualifiers per group')
+          : undefined,
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -154,10 +161,14 @@ function CreateStageCard({
         type,
         sequence: Number(sequence),
         ...(drawSize.trim() ? { drawSize: Number(drawSize) } : {}),
+        ...(type === 'GROUP' && qualifiersPerGroup.trim()
+          ? { qualifiersPerGroup: Number(qualifiersPerGroup) }
+          : {}),
       });
       setName('');
       setSequence('1');
       setDrawSize('');
+      setQualifiersPerGroup('');
       onCreated();
     });
   };
@@ -238,6 +249,28 @@ function CreateStageCard({
               />
             )}
           </FormField>
+
+          {type === 'GROUP' ? (
+            <FormField
+              label="Qualifiers per group"
+              error={errors.qualifiersPerGroup}
+              htmlFor="stage-qualifiers"
+            >
+              {({ id, describedBy }) => (
+                <Input
+                  id={id}
+                  type="number"
+                  min={1}
+                  {...(describedBy ? { 'aria-describedby': describedBy } : {})}
+                  aria-invalid={errors.qualifiersPerGroup ? true : undefined}
+                  value={qualifiersPerGroup}
+                  onChange={(event) => {
+                    setQualifiersPerGroup(event.target.value);
+                  }}
+                />
+              )}
+            </FormField>
+          ) : null}
 
           <div className="sm:col-span-2 lg:col-span-4">
             <Button type="submit" disabled={mutation.pending}>
