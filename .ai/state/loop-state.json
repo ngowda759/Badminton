@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "loopId": "AI-001",
+  "status": "completed",
+  "round": 0,
+  "maxReviewRounds": 3,
+  "currentTaskId": "AI-001",
+  "currentPr": {
+    "number": 19,
+    "branch": "automation/ai-development-loop",
+    "headSha": "0000000000000000000000000000000000000000"
+  },
+  "lastVerdict": null,
+  "lastCiStatus": null,
+  "reviewedHeadSha": null,
+  "blockedReason": null,
+  "completedTasks": ["AI-001"],
+  "updatedAt": "2026-09-30T00:00:00Z",
+  "history": [
+    {
+      "at": "2026-09-30T00:00:00Z",
+      "status": "idle",
+      "note": "AI-001 bootstrap: loop infrastructure established. No task is active; the loop starts on the first generated task."
+    },
+    {
+      "at": "2026-09-30T00:00:00Z",
+      "status": "completed",
+      "note": "AI-001 delivered the autonomous loop infrastructure (PR #19). The loop merges it, then generates AI-002 automatically."
+    }
+  ]
+}

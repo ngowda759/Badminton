@@ -1,0 +1,99 @@
+name: AI loop next task
+
+# Automatic task progression: merge -> architect -> implement -> PR.
+#
+# This workflow fires when a pull request is closed. It advances the loop only
+# when that pull request is the loop's own active pull request and it actually
+# merged; a closed-without-merge pull request stops the loop for a human instead
+# of silently starting the next task.
+#
+# There is no manual `workflow_dispatch` on the normal path. The dispatch trigger
+# exists purely as an operator recovery mechanism for a loop that stopped for a
+# human and was then resolved by hand.
+#
+# SECURITY MODEL: the loop's own branch is what merges here, but the checkout is
+# still pinned to the default branch, and the architect conversation is given the
+# repository (not the pull request's code) to inspect. No PR-controlled file is
+# executed.
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Operator recovery note (why the loop is being advanced by hand)
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: ai-loop-next-task
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  next-task:
+    name: Generate and dispatch the next task
+    # Automatic path: an AI-loop pull request that merged into the base branch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       startsWith(github.event.pull_request.head.ref, 'automation/'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the trusted base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch || 'main' }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Validate the loop state before advancing
+        run: node .ai/scripts/validate-loop-config.mjs
+
+      - name: Confirm the merged pull request is the active one
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MERGED_PR: ${{ github.event.pull_request.number }}
+          MERGED_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGED_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: node .ai/scripts/advance-after-merge.mjs
+
+      - name: Enforce exactly one active task
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node .ai/scripts/loop-tasks.mjs enforce-single
+
+      - name: Dispatch the next-task (architect) conversation
+        env:
+          OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
+          OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          OPERATOR_NOTE: ${{ inputs.reason }}
+        run: |
+          {
+            echo "## Merge-gate outcome"
+            echo
+            if [ -n "${OPERATOR_NOTE}" ]; then
+              echo "Operator recovery: ${OPERATOR_NOTE}"
+            else
+              echo "The previous task merged; generate the next task."
+            fi
+          } > /tmp/next-task-context.md
+          node .ai/scripts/dispatch-conversation.mjs \
+            --stage next-task \
+            --context-file /tmp/next-task-context.md
