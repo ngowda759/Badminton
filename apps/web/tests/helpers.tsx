@@ -20,6 +20,7 @@ import type {
   MatchResultDto,
   PlayerDto,
   PlayerListItemDto,
+  QualificationViewDto,
   StageDto,
   StandingRowDto,
   TeamDto,
@@ -142,6 +143,7 @@ export function makeStage(overrides: Partial<StageDto> = {}): StageDto {
     type: 'GROUP',
     sequence: 1,
     drawSize: null,
+    qualifiersPerGroup: null,
     status: 'PENDING',
     createdAt: ISO,
     updatedAt: ISO,
@@ -312,6 +314,42 @@ export function makeBracket(overrides: Partial<BracketDto> = {}): BracketDto {
   };
 }
 
+/** A derived qualification view for a KNOCKOUT stage fed by one group. */
+export function makeQualification(
+  overrides: Partial<QualificationViewDto> = {},
+): QualificationViewDto {
+  return {
+    knockoutStageId: '77777777-7777-4777-8777-777777777777',
+    knockoutStageName: 'Knockout',
+    qualifiersPerGroup: 2,
+    groups: [
+      {
+        groupId: '66666666-6666-4666-8666-666666666666',
+        groupName: 'Group A',
+        sequence: 1,
+        qualifyingCount: 2,
+        competitorCount: 4,
+        qualifiers: [
+          { entryId: '66666666-6666-4666-8666-666666666666', position: 1 },
+          { entryId: '66666666-6666-4666-8666-666666666667', position: 2 },
+        ],
+        complete: true,
+        totalMatches: 6,
+        completedMatches: 6,
+      },
+    ],
+    seeds: ['66666666-6666-4666-8666-666666666666', '66666666-6666-4666-8666-666666666667'],
+    qualifierCount: 2,
+    bracketSize: 2,
+    byeCount: 0,
+    ready: true,
+    blockedReason: null,
+    bracketGenerated: false,
+    standingsByGroup: {},
+    ...overrides,
+  };
+}
+
 export function makeGroupFixtureMatch(
   overrides: Partial<GroupFixtureMatchDto> = {},
 ): GroupFixtureMatchDto {
@@ -411,6 +449,8 @@ export function createStubApi(): Mocked<BadmintonApi> {
       standings: vi.fn(() => Promise.resolve([] as readonly StandingRowDto[])),
       getBracket: vi.fn(() => Promise.resolve(makeBracket())),
       generateBracket: vi.fn(() => Promise.resolve(makeBracket())),
+      generateBracketFromQualifiers: vi.fn(() => Promise.resolve(makeBracket())),
+      qualification: vi.fn(() => Promise.resolve(makeQualification())),
       generateFixtures: vi.fn(() => Promise.resolve(makeGroupFixtures())),
     },
     matches: {

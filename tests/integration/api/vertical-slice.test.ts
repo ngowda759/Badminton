@@ -815,6 +815,220 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     });
   });
 
+  it('drives group qualification into a knockout bracket and champion end to end', async () => {
+    // TASK-4 acceptance slice: the whole competition runs through the REST API
+    // against real PostgreSQL - no fixture/result row is ever inserted directly.
+    // Two groups of four, the top two of each qualify, and the bracket is
+    // generated from the derived qualifiers, not a hand-written entry order.
+    const tournament = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tournaments',
+      payload: {
+        name: 'Progression Slice',
+        startDate: '2027-06-01',
+        endDate: '2027-06-03',
+        timezone: 'Asia/Kolkata',
+      },
+    });
+    const tournamentId = tournament.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/tournaments/${tournamentId}/transition`,
+      payload: { status: 'REGISTRATION_OPEN' },
+    });
+
+    const category = await app.inject({
+      method: 'POST',
+      url: `/api/v1/tournaments/${tournamentId}/categories`,
+      payload: { name: 'Mens Singles', code: 'MS', format: 'SINGLES' },
+    });
+    const categoryId = category.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/transition`,
+      payload: { status: 'OPEN' },
+    });
+
+    const entryIds: string[] = [];
+    for (let index = 1; index <= 8; index += 1) {
+      const playerId = await createPlayerThroughApi(`Progression Player ${String(index)}`);
+      const entry = await app.inject({
+        method: 'POST',
+        url: `/api/v1/categories/${categoryId}/entries`,
+        payload: { playerId },
+      });
+      expect(entry.statusCode).toBe(201);
+      const entryId = entry.json<{ data: { id: string } }>().data.id;
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/entries/${entryId}/confirm`,
+      });
+      entryIds.push(entryId);
+    }
+
+    const createGroup = async (name: string, sequence: number): Promise<string> => {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/api/v1/categories/${categoryId}/stages`,
+        payload: { name, type: 'GROUP', sequence, qualifiersPerGroup: 2 },
+      });
+      expect(response.statusCode).toBe(201);
+      return response.json<{ data: { id: string } }>().data.id;
+    };
+
+    const groupA = await createGroup('Group A', 1);
+    const groupB = await createGroup('Group B', 2);
+    const knockoutStage = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Knockout', type: 'KNOCKOUT', sequence: 3 },
+    });
+    const knockoutStageId = knockoutStage.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${knockoutStageId}/transition`,
+      payload: { status: 'ACTIVE' },
+    });
+
+    // Generate a complete round-robin in each group.
+    for (const [stageId, groupEntries] of [
+      [groupA, entryIds.slice(0, 4)],
+      [groupB, entryIds.slice(4, 8)],
+    ] as const) {
+      const generated = await app.inject({
+        method: 'POST',
+        url: `/api/v1/stages/${stageId}/fixtures`,
+        payload: { entryIds: groupEntries },
+      });
+      expect(generated.statusCode).toBe(201);
+      expect(generated.json<{ data: { matchCount: number } }>().data.matchCount).toBe(6);
+    }
+
+    // Qualification is blocked until every group match is completed.
+    const blocked = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${knockoutStageId}/qualification`,
+    });
+    expect(blocked.json<{ data: { ready: boolean } }>().data.ready).toBe(false);
+    const blockedGenerate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${knockoutStageId}/bracket/generate`,
+    });
+    expect(blockedGenerate.statusCode).toBe(422);
+
+    const playMatch = async (matchId: string): Promise<string> => {
+      await app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/transition`,
+        payload: { status: 'IN_PROGRESS' },
+      });
+      const result = await app.inject({
+        method: 'POST',
+        url: `/api/v1/matches/${matchId}/result`,
+        payload: { games: twoZero },
+      });
+      expect(result.statusCode).toBe(201);
+      return result.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId;
+    };
+
+    // Complete every group match with a 2-0 win for slot 1.
+    for (const stageId of [groupA, groupB]) {
+      const matches = await app.inject({
+        method: 'GET',
+        url: `/api/v1/stages/${stageId}/matches`,
+      });
+      for (const match of matches.json<{ data: readonly { id: string }[] }>().data) {
+        await playMatch(match.id);
+      }
+    }
+
+    // Qualification is now ready and derives exactly four qualifiers.
+    const view = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${knockoutStageId}/qualification`,
+    });
+    const viewData = view.json<{
+      data: {
+        ready: boolean;
+        qualifierCount: number;
+        bracketSize: number;
+        byeCount: number;
+        seeds: readonly string[];
+      };
+    }>().data;
+    expect(viewData.ready).toBe(true);
+    expect(viewData.qualifierCount).toBe(4);
+    expect(viewData.bracketSize).toBe(4);
+    expect(viewData.byeCount).toBe(0);
+    expect(viewData.seeds).toHaveLength(4);
+
+    // Generate the bracket from the qualifiers.
+    const generated = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${knockoutStageId}/bracket/generate`,
+    });
+    expect(generated.statusCode).toBe(201);
+
+    type BracketResponse = {
+      readonly data: {
+        readonly complete: boolean;
+        readonly status: string;
+        readonly rounds: readonly {
+          readonly matches: readonly {
+            readonly matchId: string;
+            readonly participant1: { readonly entryId: string | null };
+            readonly participant2: { readonly entryId: string | null };
+          }[];
+        }[];
+      };
+    };
+    const read = async (): Promise<BracketResponse['data']> => {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/api/v1/stages/${knockoutStageId}/bracket`,
+      });
+      expect(response.statusCode).toBe(200);
+      return response.json<BracketResponse>().data;
+    };
+
+    const first = await read();
+    expect(first.rounds.map((round) => round.matches.length)).toEqual([2, 1]);
+    // Every semi-final slot is a real qualifier derived from a group.
+    for (const semi of first.rounds[0]?.matches ?? []) {
+      expect(viewData.seeds).toContain(semi.participant1.entryId);
+      expect(viewData.seeds).toContain(semi.participant2.entryId);
+    }
+
+    // A second generation is rejected - no duplicate bracket.
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${knockoutStageId}/bracket/generate`,
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const [semi1, semi2] = first.rounds[0]?.matches ?? [];
+    const semi1Winner = await playMatch(semi1?.matchId ?? '');
+    const semi2Winner = await playMatch(semi2?.matchId ?? '');
+
+    const beforeFinal = await read();
+    const final = beforeFinal.rounds[1]?.matches[0];
+    expect(final?.participant1.entryId).toBe(semi1Winner);
+    expect(final?.participant2.entryId).toBe(semi2Winner);
+
+    const champion = await playMatch(final?.matchId ?? '');
+    expect([semi1Winner, semi2Winner]).toContain(champion);
+
+    const completed = await read();
+    expect(completed.complete).toBe(true);
+    expect(completed.status).toBe('COMPLETED');
+
+    // The champion is persisted on the final row, not only reported.
+    const finalRow = await prisma.match.findUniqueOrThrow({
+      where: { id: final?.matchId ?? '' },
+    });
+    expect(finalRow.winnerEntryId).toBe(champion);
+  });
+
   it('records the outbox event in the same transaction as a REST mutation', async () => {
     // Phase 8.3: a REST change to live tournament state must leave a durable
     // realtime_events row committed with it. This exercises the whole stack -

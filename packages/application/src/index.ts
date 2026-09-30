@@ -79,6 +79,7 @@ export type {
   GenerateGroupFixturesCommand,
   GenerateKnockoutBracketCommand,
   GetKnockoutBracketQuery,
+  KnockoutPairingInput,
   RecordMatchGameCommand,
   RecordMatchResultCommand,
   RegisterEntryCommand,
@@ -118,6 +119,17 @@ export {
   type MatchResultService,
 } from './services/match-result.service.ts';
 export { createStandingsService, type StandingsService } from './services/standings.service.ts';
+export { computeStageStandings, type StageStandings } from './services/standings-compute.ts';
+export {
+  createQualificationService,
+  type QualificationService,
+  type ResolvedQualification,
+} from './services/qualification.service.ts';
+export type {
+  GroupQualifiers,
+  QualifiedCompetitor,
+  QualificationView,
+} from './services/qualification.ts';
 export {
   createKnockoutBracketService,
   type KnockoutBracketService,

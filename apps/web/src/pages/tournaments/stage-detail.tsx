@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { BracketSection } from '@/components/tournaments/knockout-bracket.tsx';
+import { QualificationCard } from '@/components/tournaments/qualification-panel.tsx';
 import { GroupFixtureSetup } from '@/components/tournaments/group-fixture-setup.tsx';
 import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
 import { Button } from '@/components/ui/button.tsx';
@@ -249,6 +250,19 @@ export function StageDetailPage() {
       </Card>
 
       {stage.type === 'KNOCKOUT' ? (
+        <QualificationCard
+          stageId={stage.id}
+          categoryId={category.id}
+          bracketGenerated={bracketGenerated}
+          onGenerated={() => {
+            setBracketToken((token) => token + 1);
+            stageQuery.refetch();
+            matchQuery.refetch();
+          }}
+        />
+      ) : null}
+
+      {stage.type === 'KNOCKOUT' ? (
         <Card>
           <CardHeader>
             <CardTitle>Knockout bracket</CardTitle>
@@ -379,8 +393,15 @@ function EditStageForm({
   const [name, setName] = useState(stage.name);
   const [sequence, setSequence] = useState(String(stage.sequence));
   const [drawSize, setDrawSize] = useState(stage.drawSize === null ? '' : String(stage.drawSize));
+  const [qualifiersPerGroup, setQualifiersPerGroup] = useState(
+    stage.qualifiersPerGroup === null ? '' : String(stage.qualifiersPerGroup),
+  );
   const [errors, setErrors] = useState<FieldErrors>({});
   const mutation = useMutation<unknown>();
+
+  // Qualification is configured on the feeder GROUP stage; a knockout stage
+  // reads the qualifiers of the groups that precede it.
+  const configuresQualification = stage.type === 'GROUP';
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -389,6 +410,9 @@ function EditStageForm({
       // The bracket size is fixed once the bracket exists, so it is not
       // validated or sent at all in that state.
       drawSize: drawSizeLocked ? undefined : validateOptionalPositiveInteger(drawSize, 'Draw size'),
+      qualifiersPerGroup: configuresQualification
+        ? validateOptionalPositiveInteger(qualifiersPerGroup, 'Qualifiers per group')
+        : undefined,
     });
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) {
@@ -400,6 +424,9 @@ function EditStageForm({
         name: name.trim(),
         sequence: Number(sequence),
         ...(drawSizeLocked ? {} : { drawSize: drawSize.trim() ? Number(drawSize) : null }),
+        ...(configuresQualification
+          ? { qualifiersPerGroup: qualifiersPerGroup.trim() ? Number(qualifiersPerGroup) : null }
+          : {}),
       });
       onSaved();
     });
@@ -454,6 +481,27 @@ function EditStageForm({
         <p className="text-muted-foreground text-xs sm:col-span-3">
           The bracket size is fixed once the bracket has been generated.
         </p>
+      ) : null}
+      {configuresQualification ? (
+        <FormField
+          label="Qualifiers per group"
+          error={errors.qualifiersPerGroup}
+          htmlFor="edit-stage-qualifiers"
+        >
+          {({ id, describedBy }) => (
+            <Input
+              id={id}
+              type="number"
+              min={1}
+              {...(describedBy ? { 'aria-describedby': describedBy } : {})}
+              aria-invalid={errors.qualifiersPerGroup ? true : undefined}
+              value={qualifiersPerGroup}
+              onChange={(event) => {
+                setQualifiersPerGroup(event.target.value);
+              }}
+            />
+          )}
+        </FormField>
       ) : null}
       <div className="sm:col-span-3">
         <Button type="submit" disabled={mutation.pending}>

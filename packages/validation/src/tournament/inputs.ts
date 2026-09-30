@@ -146,6 +146,9 @@ export const createStageInputSchema = z.object({
   type: z.enum(['GROUP', 'KNOCKOUT']),
   sequence: positiveIntegerSchema,
   drawSize: positiveIntegerSchema.optional(),
+  // How many competitors advance from each group into this stage's feeder
+  // knockout. Only meaningful on a KNOCKOUT stage; validated as positive.
+  qualifiersPerGroup: positiveIntegerSchema.optional(),
 });
 
 export const updateStageInputSchema = z
@@ -153,6 +156,7 @@ export const updateStageInputSchema = z
     name: nameSchema,
     sequence: positiveIntegerSchema,
     drawSize: positiveIntegerSchema.nullable(),
+    qualifiersPerGroup: positiveIntegerSchema.nullable(),
   })
   .partial();
 
@@ -183,9 +187,39 @@ export const addMatchParticipantInputSchema = z.object({
  * the stage's category and whether they are active are application/domain rules
  * enforced by `KnockoutBracketService`, not by Zod.
  */
-export const generateKnockoutBracketInputSchema = z.object({
-  entryIds: z.array(z.uuid('Each entry id must be a UUID.')).min(1, 'Provide at least one entry.'),
-});
+/**
+ * Knockout-bracket generation request.
+ *
+ * Two mutually exclusive shapes, matching `GenerateKnockoutBracketCommand`:
+ *
+ * - `entryIds` - the caller-controlled ordering; entries pair in the supplied
+ *   order into round 1 (no automatic seeding).
+ * - `pairings` - explicit first-round pairings, where `second` may be `null`
+ *   for a bye. Used when the caller has seeded the qualifiers.
+ *
+ * Whether the entries belong to the stage's category and whether the stage
+ * already has a bracket are application/domain rules.
+ */
+export const generateKnockoutBracketInputSchema = z
+  .object({
+    entryIds: z
+      .array(z.uuid('Each entry id must be a UUID.'))
+      .min(1, 'Provide at least one entry.')
+      .optional(),
+    pairings: z
+      .array(
+        z.object({
+          first: z.uuid('Each entry id must be a UUID.'),
+          second: z.uuid('Each entry id must be a UUID.').nullable(),
+        }),
+      )
+      .min(1, 'Provide at least one pairing.')
+      .optional(),
+  })
+  .refine(
+    (value) => (value.entryIds === undefined) !== (value.pairings === undefined),
+    'Provide either entryIds or pairings, but not both.',
+  );
 
 /**
  * Group-fixture generation request.

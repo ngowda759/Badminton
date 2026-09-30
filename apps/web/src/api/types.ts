@@ -126,6 +126,8 @@ export interface StageDto {
   readonly type: StageType;
   readonly sequence: number;
   readonly drawSize: number | null;
+  /** How many competitors advance from each feeder group; null when unset. */
+  readonly qualifiersPerGroup: number | null;
   readonly status: StageStatus;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -413,12 +415,15 @@ export interface CreateStageInput {
   readonly type: StageType;
   readonly sequence: number;
   readonly drawSize?: number;
+  /** How many competitors advance from each feeder group into a knockout. */
+  readonly qualifiersPerGroup?: number;
 }
 
 export interface UpdateStageInput {
   readonly name?: string;
   readonly sequence?: number;
   readonly drawSize?: number | null;
+  readonly qualifiersPerGroup?: number | null;
 }
 
 export interface CreateMatchInput {
@@ -451,6 +456,48 @@ export interface RecordMatchResultInput {
 /** Generates a knockout bracket from a caller-supplied entry ordering. */
 export interface GenerateKnockoutBracketInput {
   readonly entryIds: readonly string[];
+}
+
+/** One qualified competitor with its final group placing. */
+export interface QualifiedCompetitorDto {
+  readonly entryId: string;
+  readonly position: number;
+}
+
+/** The qualifiers of one feeder group. */
+export interface GroupQualifiersDto {
+  readonly groupId: string;
+  readonly groupName: string;
+  readonly sequence: number;
+  readonly qualifyingCount: number;
+  readonly competitorCount: number;
+  readonly qualifiers: readonly QualifiedCompetitorDto[];
+  readonly complete: boolean;
+  readonly totalMatches: number;
+  readonly completedMatches: number;
+}
+
+/**
+ * The derived qualification view for a KNOCKOUT stage.
+ *
+ * Qualification is never stored: this is the top `qualifiersPerGroup` of every
+ * feeder group, the resulting bracket shape and whether the knockout is ready to
+ * be generated. The knockout stage is only ready once every group match is
+ * completed.
+ */
+export interface QualificationViewDto {
+  readonly knockoutStageId: string | null;
+  readonly knockoutStageName: string | null;
+  readonly qualifiersPerGroup: number | null;
+  readonly groups: readonly GroupQualifiersDto[];
+  readonly seeds: readonly string[];
+  readonly qualifierCount: number;
+  readonly bracketSize: number;
+  readonly byeCount: number;
+  readonly ready: boolean;
+  readonly blockedReason: string | null;
+  readonly bracketGenerated: boolean;
+  readonly standingsByGroup: Readonly<Record<string, readonly StandingRowDto[]>>;
 }
 
 /** Generates a GROUP stage round-robin from a caller-supplied entry ordering. */

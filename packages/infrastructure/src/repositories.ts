@@ -469,6 +469,20 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
+    async createMany(data: readonly CreateMatchData[]) {
+      return translatePersistenceErrors(async () => {
+        // One insert for the whole generated set, so a fixture generation is a
+        // single statement inside the unit of work rather than one round trip
+        // per match. `createManyAndReturn` yields the created rows in one call.
+        if (data.length === 0) {
+          return [];
+        }
+        const rows = await db.match.createManyAndReturn({
+          data: data.map((match) => ({ ...match })),
+        });
+        return rows.map(toMatch);
+      });
+    },
     async listCompletedByStage(stageId: string) {
       return translatePersistenceErrors(async () => {
         const rows = await db.match.findMany({
@@ -648,6 +662,17 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
       return translatePersistenceErrors(async () =>
         toMatchParticipant(await db.matchParticipant.create({ data })),
       );
+    },
+    async createMany(data: readonly CreateMatchParticipantData[]) {
+      if (data.length === 0) {
+        return [];
+      }
+      return translatePersistenceErrors(async () => {
+        const rows = await db.matchParticipant.createManyAndReturn({
+          data: data.map((participant) => ({ ...participant })),
+        });
+        return rows.map(toMatchParticipant);
+      });
     },
     async listByMatch(matchId: string) {
       return translatePersistenceErrors(async () => {

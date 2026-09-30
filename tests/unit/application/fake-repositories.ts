@@ -606,6 +606,15 @@ function buildClient(state: State): RepositoryClient {
       state.matches.set(row.id, row);
       return row;
     },
+    async createMany(data: readonly CreateMatchData[]): Promise<readonly Match[]> {
+      // Mirrors the adapter: one call inserts the whole set, but each row still
+      // respects the stage-unique sequence rule.
+      const created: Match[] = [];
+      for (const entry of data) {
+        created.push(await matches.create(entry));
+      }
+      return created;
+    },
     async findById(id) {
       return state.matches.get(id);
     },
@@ -791,6 +800,15 @@ function buildClient(state: State): RepositoryClient {
       };
       state.matchParticipants.set(row.id, row);
       return row;
+    },
+    async createMany(
+      data: readonly CreateMatchParticipantData[],
+    ): Promise<readonly MatchParticipant[]> {
+      const created: MatchParticipant[] = [];
+      for (const entry of data) {
+        created.push(await matchParticipants.create(entry));
+      }
+      return created;
     },
     async listByMatch(matchId) {
       return [...state.matchParticipants.values()].filter((row) => row.matchId === matchId);

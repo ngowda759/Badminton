@@ -190,6 +190,7 @@ describe('TournamentDashboardService', () => {
       type: 'KNOCKOUT',
       sequence: 2,
       drawSize: 4,
+      qualifiersPerGroup: null,
       status: 'ACTIVE',
     });
 

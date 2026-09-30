@@ -119,6 +119,7 @@ describe('TournamentStageService.transitionStatus', () => {
       type: 'KNOCKOUT',
       sequence: 1,
       drawSize: 4,
+      qualifiersPerGroup: null,
       status: 'ACTIVE',
     });
     await repos.client.matches.create({
@@ -142,6 +143,7 @@ describe('TournamentStageService.transitionStatus', () => {
       type: 'KNOCKOUT',
       sequence: 1,
       drawSize: null,
+      qualifiersPerGroup: null,
       status: 'ACTIVE',
     });
 
@@ -158,6 +160,7 @@ describe('TournamentStageService.transitionStatus', () => {
       type: 'KNOCKOUT',
       sequence: 1,
       drawSize: 2,
+      qualifiersPerGroup: null,
       status: 'ACTIVE',
     });
     await repos.client.matches.create({
@@ -182,6 +185,7 @@ describe('TournamentStageService.drawSize immutability', () => {
       type: 'KNOCKOUT',
       sequence: 1,
       drawSize,
+      qualifiersPerGroup: null,
       status: 'ACTIVE',
     });
     return stage.id;

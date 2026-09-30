@@ -57,6 +57,9 @@ export function createTournamentStageService(
       if (command.drawSize !== undefined) {
         assertPositive(command.drawSize, 'drawSize');
       }
+      if (command.qualifiersPerGroup !== undefined) {
+        assertPositive(command.qualifiersPerGroup, 'qualifiersPerGroup');
+      }
 
       const category = await client.categories.findById(categoryId);
       if (!category) {
@@ -74,6 +77,7 @@ export function createTournamentStageService(
         type: command.type,
         sequence: command.sequence,
         drawSize: command.drawSize ?? null,
+        qualifiersPerGroup: command.qualifiersPerGroup ?? null,
         status: 'PENDING',
       });
     },
@@ -89,6 +93,7 @@ export function createTournamentStageService(
         name?: string;
         sequence?: number;
         drawSize?: number | null;
+        qualifiersPerGroup?: number | null;
       } = {};
 
       if (command.sequence !== undefined) {
@@ -107,6 +112,9 @@ export function createTournamentStageService(
       if (command.drawSize !== undefined && command.drawSize !== null) {
         assertPositive(command.drawSize, 'drawSize');
       }
+      if (command.qualifiersPerGroup !== undefined && command.qualifiersPerGroup !== null) {
+        assertPositive(command.qualifiersPerGroup, 'qualifiersPerGroup');
+      }
 
       if (command.drawSize !== undefined) {
         await assertDrawSizeMutable(client, current, command.drawSize);
@@ -117,6 +125,9 @@ export function createTournamentStageService(
       }
       if (command.drawSize !== undefined) {
         data.drawSize = command.drawSize;
+      }
+      if (command.qualifiersPerGroup !== undefined) {
+        data.qualifiersPerGroup = command.qualifiersPerGroup;
       }
 
       return client.stages.update(id, data);

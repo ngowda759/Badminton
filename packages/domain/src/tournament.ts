@@ -111,6 +111,12 @@ export interface TournamentStage {
   readonly type: StageType;
   readonly sequence: number;
   readonly drawSize: number | null;
+  /**
+   * How many competitors advance from each group into this stage's feeder
+   * knockout. `null` when unset (a GROUP stage, or a knockout not yet
+   * configured). Qualification reads it from the feeder GROUP stage.
+   */
+  readonly qualifiersPerGroup: number | null;
   readonly status: StageStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;

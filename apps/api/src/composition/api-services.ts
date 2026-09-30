@@ -7,6 +7,7 @@ import {
   createMatchSchedulingService,
   createMatchService,
   createPlayerService,
+  createQualificationService,
   createRealtimeEventService,
   createStandingsService,
   createTeamService,
@@ -39,6 +40,7 @@ import type { ApiServices } from '../http/api-services.ts';
 export function createApiServices(client: RepositoryClient, unitOfWork: UnitOfWork): ApiServices {
   const progression = createKnockoutProgressionService();
   const events = createRealtimeEventService();
+  const qualification = createQualificationService(client);
   return {
     tournaments: createTournamentService(client, unitOfWork, events),
     categories: createTournamentCategoryService(client, unitOfWork, events),
@@ -49,7 +51,8 @@ export function createApiServices(client: RepositoryClient, unitOfWork: UnitOfWo
     matches: createMatchService(client, unitOfWork, events),
     matchResults: createMatchResultService(client, unitOfWork, events, progression),
     standings: createStandingsService(client),
-    knockout: createKnockoutBracketService(client, unitOfWork),
+    qualification,
+    knockout: createKnockoutBracketService(client, unitOfWork, qualification),
     groupFixtures: createGroupFixtureService(unitOfWork),
     courts: createCourtService(client, unitOfWork, events),
     scheduling: createMatchSchedulingService(client, unitOfWork, events),

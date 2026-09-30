@@ -127,6 +127,19 @@ export {
   isBracketFinalCompleted,
 } from './bracket.ts';
 export type { BracketSize, NextBracketPosition } from './bracket.ts';
+export { buildBracketSeed, seedBracket } from './bracket-seeding.ts';
+export type { BracketSeedResult, SeededGroup, SeededPairing } from './bracket-seeding.ts';
+export {
+  validateQualificationConfig,
+  selectQualifiers,
+  flattenQualifiers,
+} from './qualification.ts';
+export type {
+  GroupQualification,
+  QualificationConfig,
+  QualificationResult,
+  QualificationStanding,
+} from './qualification.ts';
 export {
   APPLICATION_ERROR_CODES,
   ApplicationError,

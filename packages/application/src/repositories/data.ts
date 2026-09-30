@@ -96,6 +96,7 @@ export interface CreateStageData {
   readonly type: StageType;
   readonly sequence: number;
   readonly drawSize: number | null;
+  readonly qualifiersPerGroup: number | null;
   readonly status: StageStatus;
 }
 
@@ -103,6 +104,7 @@ export interface UpdateStageData {
   readonly name?: string;
   readonly sequence?: number;
   readonly drawSize?: number | null;
+  readonly qualifiersPerGroup?: number | null;
 }
 
 export interface CreateMatchData {

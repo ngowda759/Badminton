@@ -314,6 +314,7 @@ describe('StandingsService.getStageStandings', () => {
       type: 'KNOCKOUT',
       sequence: 3,
       drawSize: 4,
+      qualifiersPerGroup: null,
       status: 'PENDING',
     });
 
@@ -398,6 +399,7 @@ describe('StandingsService.getStageStandings', () => {
       type: 'KNOCKOUT',
       sequence: 2,
       drawSize: 4,
+      qualifiersPerGroup: null,
       status: 'PENDING',
     });
     await expect(standings.getStageStandings(knockout.id)).rejects.toBeInstanceOf(
