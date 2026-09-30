@@ -154,8 +154,26 @@ Response:
 
 `nextCursor` is the last returned row's id when more rows remain, or `null` on
 the last page; pass it back as `cursor` to fetch the next page. Pagination is
-cursor-based (Prisma `cursor` + `skip: 1` over a unique id), so no `OFFSET` scan
-is performed and the dataset is never loaded unbounded.
+cursor-based, never `OFFSET`-scanned: the repository issues one `findMany` with
+`take: limit + 1` (the extra row proves whether another page exists) and Prisma
+expands `cursor: { id }` into a **keyset predicate over the whole ordering
+tuple**. For the `(createdAt desc, id desc)` order that predicate compares the
+cursor row's `createdAt` and `id`, so a page resumes strictly after the cursor
+even when `createdAt` values differ or tie:
+
+```sql
+WHERE (("createdAt" = (SELECT "createdAt" … WHERE id = $cursor)
+        AND "id" <= (SELECT "id" … WHERE id = $cursor))
+   OR  ("createdAt" < (SELECT "createdAt" … WHERE id = $cursor)))
+ORDER BY "createdAt" DESC, "id" DESC
+LIMIT $take OFFSET $skip   -- $skip is only ever 0 or 1
+```
+
+The `id desc` tiebreaker is load-bearing: without it Prisma emits a non-unique
+`createdAt <= cursor` comparison whose result depends on physical row order, so
+rows can be skipped or repeated at a page boundary that falls inside a timestamp
+tie. This behaviour is covered by `tests/integration/database/collection-pagination-database.test.ts`
+against real PostgreSQL.
 
 Ordering is deterministic and newest first for every collection:
 

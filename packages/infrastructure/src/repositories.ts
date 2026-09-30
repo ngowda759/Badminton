@@ -98,9 +98,13 @@ function createTournamentRepository(db: Db): TournamentRepository {
     },
     listPage(query: ListQuery) {
       return translatePersistenceErrors(async () => {
-        // Prisma cursor pagination: the unique `id` cursor plus `skip: 1`
-        // resumes strictly after the previous page under the (createdAt, id)
-        // ordering, with no OFFSET scan. Newest first.
+        // Prisma expands the `id` cursor into a keyset predicate over the whole
+        // (createdAt, id) ordering - it looks the cursor row's `createdAt` up in
+        // a subquery - so `skip: 1` resumes strictly after the previous page
+        // even when `createdAt` values differ or tie. The `id desc` tiebreaker
+        // is what makes that predicate unique; without it Prisma would emit a
+        // non-unique `createdAt <= cursor` comparison that can skip or repeat
+        // rows. `skip` is only ever 0 or 1, so no OFFSET scan. Newest first.
         const rows = await db.tournament.findMany({
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: query.limit + 1,
@@ -191,9 +195,10 @@ function createPlayerRepository(db: Db): PlayerRepository {
     },
     listPage(query: ListQuery) {
       return translatePersistenceErrors(async () => {
-        // Prisma cursor pagination on the unique `id`: `skip: 1` resumes strictly
-        // after the previous page under the (createdAt, id) ordering, no OFFSET
-        // scan. Newest first, matching the tournament collection.
+        // Same keyset mechanism as the tournament list: the unique `id` cursor
+        // plus `skip: 1` resumes strictly after the previous page under the
+        // (createdAt, id) ordering, so differing or tied `createdAt` values are
+        // handled correctly. No OFFSET scan. Newest first.
         const rows = await db.player.findMany({
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: query.limit + 1,
@@ -232,8 +237,9 @@ function createTeamRepository(db: Db): TeamRepository {
     },
     async listPageWithMemberCount(query: ListQuery) {
       return translatePersistenceErrors(async () => {
-        // One page of teams, then one grouped `count` over just those team ids -
-        // the member count is never fetched with a query per team.
+        // One page of teams (same keyset cursor over (createdAt, id) as the
+        // tournament and player lists), then one grouped `count` over just those
+        // team ids - the member count is never fetched with a query per team.
         const rows = await db.team.findMany({
           orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: query.limit + 1,

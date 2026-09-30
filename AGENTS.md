@@ -232,3 +232,13 @@ database — integration tests use `app.inject()` with stub probes.
   the page's team ids — no per-team query. The web pages use `useCollection`
   (`apps/web/src/hooks/use-collection.ts`), the project's own cursor-paged loader built on
   `useApiQuery` conventions (no TanStack Query).
+- The `(createdAt desc, id desc)` cursor is a real keyset cursor: Prisma expands
+  `cursor: { id }, skip: 1` into a predicate over the whole ordering tuple (it reads the
+  cursor row's `createdAt` in a subquery), so pages resume strictly after the cursor with
+  no skips or duplicates even when `createdAt` values differ or tie. The `id desc`
+  tiebreaker is load-bearing — dropping it makes Prisma emit a non-unique
+  `createdAt <= cursor` comparison that depends on physical row order. `skip` is only ever
+  0 or 1, so there is no `OFFSET` scan. Do not replace this with `OFFSET` pagination or a
+  naive `id`-only comparison. Real-PostgreSQL coverage lives in
+  `tests/integration/database/collection-pagination-database.test.ts` (the in-memory fake
+  stamps one fixed `createdAt`, so it can only exercise the id tiebreaker).
