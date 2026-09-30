@@ -31,8 +31,11 @@ import type {
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  ListPage,
+  ListQuery,
   MatchGameWithMatch,
   MatchScheduleData,
+  TeamWithMemberCount,
   UpdateCategoryData,
   UpdateCourtData,
   UpdateMatchData,
@@ -98,6 +101,8 @@ export interface CourtRepository {
 export interface TournamentRepository {
   create(data: CreateTournamentData): Promise<Tournament>;
   findById(id: string): Promise<Tournament | undefined>;
+  /** One page of tournaments, newest first, resuming after `query.cursor`. */
+  listPage(query: ListQuery): Promise<ListPage<Tournament>>;
   update(id: string, data: UpdateTournamentData): Promise<Tournament>;
   updateStatus(id: string, status: Tournament['status']): Promise<Tournament>;
 }
@@ -116,6 +121,8 @@ export interface PlayerRepository {
   findById(id: string): Promise<Player | undefined>;
   findByEmail(email: string): Promise<Player | undefined>;
   findByPhone(phone: string): Promise<Player | undefined>;
+  /** One page of players, newest first then id, resuming after `query.cursor`. */
+  listPage(query: ListQuery): Promise<ListPage<Player>>;
   /** Players for several ids, so the dashboard avoids a per-participant query. */
   listByIds(ids: readonly string[]): Promise<readonly Player[]>;
   update(id: string, data: UpdatePlayerData): Promise<Player>;
@@ -124,6 +131,8 @@ export interface PlayerRepository {
 export interface TeamRepository {
   create(data: CreateTeamData): Promise<Team>;
   findById(id: string): Promise<Team | undefined>;
+  /** One page of teams with member counts, newest first, after `query.cursor`. */
+  listPageWithMemberCount(query: ListQuery): Promise<ListPage<TeamWithMemberCount>>;
   /** Teams for several ids, so the dashboard avoids a per-participant query. */
   listByIds(ids: readonly string[]): Promise<readonly Team[]>;
   update(id: string, data: UpdateTeamData): Promise<Team>;

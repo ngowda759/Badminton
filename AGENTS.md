@@ -26,7 +26,9 @@ publishing (each live-tournament mutation records its outbox row in the same
 scoped `EventSource` lifecycle, connection state and event parsing, exposed via
 `useTournamentRealtime`) and the Phase 8.5 live UI synchronization (the
 tournament-scoped refresh bus that turns a realtime event or reconnect into an
-authoritative REST refetch) exist.
+authoritative REST refetch) exist, as does the server-backed collection layer
+(the cursor-paginated `GET /api/v1/tournaments|players|teams` list endpoints and
+the web list pages that read them).
 **Automatic draw/seeding, rankings, authentication, authorization,
 result-correction workflows and Phase 8.6 multi-device hardening are not
 implemented.**
@@ -215,3 +217,30 @@ database — integration tests use `app.inject()` with stub probes.
   `corsOrigins` (the app's `CORS_ORIGINS` allowlist) is applied to the hijacked SSE
   response in `apps/api/src/http/routes/realtime.routes.ts` as well as to ordinary routes,
   because `reply.hijack()` bypasses `@fastify/cors`.
+- The tournament/player/team collection reads are server-backed. `GET /api/v1/tournaments`,
+  `/players` and `/teams` return one cursor-paginated page
+  (`{ data: { items, nextCursor } }`), so the web list pages read from PostgreSQL instead
+  of browser session storage; `use-recent.tsx` was removed and the browser is no longer a
+  list source. Each service exposes `list(query)` → `ListPage<…>` over a repository
+  `listPage`/`listPageWithMemberCount` (`packages/infrastructure/src/repositories.ts`,
+  Prisma `cursor` + bounded `skip: 1`, never arbitrary `OFFSET`). Ordering is deterministic
+  and **newest first** for every collection (`createdAt` desc, `id` desc) so a newly created
+  record stays on the first page — the create → list acceptance flow must not depend on
+  paging. Query validation lives in `packages/validation/src/list.ts` (`limit` 1–100 default
+  20, UUID `cursor`); the API maps pages through the list DTOs in `apps/api/src/http/dto.ts`
+  (never raw Prisma/domain models). Team `memberCount` comes from one grouped count over
+  the page's team ids — no per-team query. The web pages use `useCollection`
+  (`apps/web/src/hooks/use-collection.ts`), the project's own cursor-paged loader built on
+  `useApiQuery` conventions (no TanStack Query).
+- The `(createdAt desc, id desc)` cursor is a real keyset cursor: Prisma expands
+  `cursor: { id }, skip: 1` into a predicate over the whole ordering tuple (it reads the
+  cursor row's `createdAt` in a subquery), so pages resume strictly after the cursor with
+  no skips or duplicates even when `createdAt` values differ or tie. The `id desc`
+  tiebreaker is load-bearing — dropping it makes Prisma emit a non-unique
+  `createdAt <= cursor` comparison that depends on physical row order. Prisma implements the
+  cursor by skipping the cursor row itself, so the SQL carries `OFFSET $skip`, but `skip` is
+  bounded to `0`/`1` (a constant-time skip of the single cursor row), never an
+  unbounded/arbitrary `OFFSET page * size` that grows with the page number. Do not replace
+  this with arbitrary `OFFSET` pagination or a naive `id`-only comparison. Real-PostgreSQL
+  coverage lives in `tests/integration/database/collection-pagination-database.test.ts` (the
+  in-memory fake stamps one fixed `createdAt`, so it can only exercise the id tiebreaker).

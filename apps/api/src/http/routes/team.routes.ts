@@ -3,12 +3,14 @@ import {
   addTeamMemberInputSchema,
   createTeamInputSchema,
   idParamSchema,
+  listQuerySchema,
   teamMemberParamSchema,
   updateTeamInputSchema,
 } from '@badminton/validation';
 import type { FastifyPluginCallback } from 'fastify';
 
-import { compact, validate } from '../request.ts';
+import { toListResponse, toTeamListItem } from '../dto.ts';
+import { compact, normalizeListQuery, validate } from '../request.ts';
 import { data } from '../response.ts';
 
 export interface TeamRoutesOptions {
@@ -28,6 +30,12 @@ export const teamRoutes: FastifyPluginCallback<TeamRoutesOptions> = (app, option
     const body = validate(createTeamInputSchema, request.body);
     const team = await teams.create(compact(body));
     return reply.status(201).send(data(team));
+  });
+
+  app.get('/teams', async (request) => {
+    const query = validate(listQuerySchema, request.query);
+    const page = await teams.list(normalizeListQuery(query));
+    return data(toListResponse(page, toTeamListItem));
   });
 
   app.get('/teams/:id', async (request) => {

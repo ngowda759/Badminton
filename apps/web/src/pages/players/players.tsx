@@ -1,18 +1,29 @@
 import { useState, type SubmitEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import type { PlayerListItemDto } from '@/api/types.ts';
 import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
-import { EmptyState } from '@/components/states.tsx';
+import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { Alert, AlertDescription } from '@/components/ui/alert.tsx';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableWrapper,
+} from '@/components/ui/table.tsx';
+import { useCollection, type CollectionResult } from '@/hooks/use-collection.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { useRecent } from '@/hooks/use-recent.tsx';
 import { fieldErrors } from '@/lib/errors.ts';
+import { formatCalendarDate } from '@/lib/format.ts';
 import {
   compactErrors,
   validateOptionalEmail,
@@ -24,47 +35,32 @@ import {
 /**
  * Player management.
  *
- * Phase 3 exposes no player collection or search endpoint, so the page does not
- * invent one: it offers creation and a list of recently created/opened players
- * (each re-fetched by id). No fake data is displayed.
+ * The list is server-backed: `GET /api/v1/players` returns persisted players
+ * newest first. Creating a player refetches the same list, so a new player
+ * appears from server state - never from browser storage.
  */
 export function PlayersPage() {
-  const { state } = useRecent();
+  const api = useApi();
+  const collection = useCollection(['players'], (params, signal) =>
+    api.players.list(params, signal),
+  );
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Players"
-        description="Create players and open the ones you have recently worked with."
-      />
+      <PageHeader title="Players" description="Create players and open their details." />
 
-      <CreatePlayerCard />
+      <CreatePlayerCard
+        onCreated={() => {
+          collection.refetch();
+        }}
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent players</CardTitle>
+          <CardTitle>All players</CardTitle>
         </CardHeader>
-        <CardContent>
-          {state.players.length === 0 ? (
-            <EmptyState
-              title="No players yet"
-              description="Create a player to begin building teams and registering entries."
-            />
-          ) : (
-            <ul className="divide-border divide-y" data-testid="recent-players">
-              {state.players.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-3 py-2">
-                  <Link
-                    className="text-primary text-sm font-medium underline-offset-4 hover:underline"
-                    to={`/players/${item.id}`}
-                  >
-                    {item.label}
-                  </Link>
-                  <span className="text-muted-foreground truncate text-xs">{item.id}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardContent className="space-y-4">
+          <PlayerList collection={collection} />
         </CardContent>
       </Card>
 
@@ -73,7 +69,85 @@ export function PlayersPage() {
   );
 }
 
-function CreatePlayerCard() {
+function PlayerList({ collection }: { readonly collection: CollectionResult<PlayerListItemDto> }) {
+  const { state, hasMore, loadingMore, loadMore, loadMoreError, refetch } = collection;
+
+  if (state.status === 'loading') {
+    return <LoadingState label="Loading players…" />;
+  }
+
+  if (state.status === 'error') {
+    return <ErrorState error={state.error} title="Could not load players" onRetry={refetch} />;
+  }
+
+  if (state.items.length === 0) {
+    return (
+      <EmptyState
+        title="No players yet"
+        description="Create a player to begin building teams and registering entries."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="player-list">
+      <TableWrapper>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Player</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {state.items.map((player) => (
+              <TableRow key={player.id}>
+                <TableCell className="font-medium">
+                  <Link
+                    className="text-primary underline-offset-4 hover:underline"
+                    to={`/players/${player.id}`}
+                  >
+                    {player.name}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground whitespace-nowrap">
+                  {formatCalendarDate(player.createdAt)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/players/${player.id}`}>View</Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableWrapper>
+
+      {loadMoreError ? (
+        <ErrorState error={loadMoreError} title="Could not load more players" onRetry={loadMore} />
+      ) : null}
+
+      {hasMore ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={loadingMore}
+            onClick={() => {
+              loadMore();
+            }}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CreatePlayerCard({ onCreated }: { readonly onCreated: () => void }) {
   const api = useApi();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -81,7 +155,6 @@ function CreatePlayerCard() {
   const [errors, setErrors] = useState<FieldErrors>({});
   const [created, setCreated] = useState<string | undefined>(undefined);
   const mutation = useMutation<unknown>();
-  const { remember } = useRecent();
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -101,11 +174,11 @@ function CreatePlayerCard() {
         ...(email.trim() ? { email: email.trim() } : {}),
         ...(phone.trim() ? { phone: phone.trim() } : {}),
       });
-      remember('players', { id: player.id, label: player.name });
       setCreated(player.name);
       setName('');
       setEmail('');
       setPhone('');
+      onCreated();
     });
   };
 

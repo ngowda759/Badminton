@@ -9,6 +9,7 @@ import {
   type Player,
 } from '@badminton/domain';
 
+import type { ListPage, ListQuery } from '../repositories/data.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { CreatePlayerCommand, UpdatePlayerCommand } from './commands.ts';
 
@@ -25,6 +26,8 @@ export interface PlayerService {
   create(command: CreatePlayerCommand): Promise<Player>;
   update(id: string, command: UpdatePlayerCommand): Promise<Player>;
   getById(id: string): Promise<Player>;
+  /** One page of players, newest first, for the operator's list screen. */
+  list(query: ListQuery): Promise<ListPage<Player>>;
 }
 
 export function createPlayerService(client: RepositoryClient): PlayerService {
@@ -92,6 +95,12 @@ export function createPlayerService(client: RepositoryClient): PlayerService {
 
     async getById(id: string): Promise<Player> {
       return requirePlayer(client, id);
+    },
+
+    async list(query: ListQuery): Promise<ListPage<Player>> {
+      // Read-only, single query: no transaction. Ordering and cursor belong to
+      // the repository so the page is deterministic.
+      return client.players.listPage(query);
     },
   };
 }

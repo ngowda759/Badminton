@@ -1,29 +1,45 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import type { TournamentDto } from '@/api/types.ts';
+import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
+import { ErrorState } from '@/components/error-state.tsx';
+import { EmptyState, LoadingState } from '@/components/states.tsx';
+import { StatusBadge } from '@/components/status-badge.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { Input } from '@/components/ui/input.tsx';
-import { EmptyState } from '@/components/states.tsx';
-import { useRecent } from '@/hooks/use-recent.tsx';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableWrapper,
+} from '@/components/ui/table.tsx';
+import { useCollection, type CollectionResult } from '@/hooks/use-collection.ts';
+import { formatCalendarDate, orDash } from '@/lib/format.ts';
 
 /**
- * Tournament entry point and recent list.
+ * Tournament entry point and collection list.
  *
- * Phase 3 exposes no tournament collection endpoint, so this page does not
- * fabricate one: it directs the operator to create a tournament and lists the
- * tournaments this browser has actually received from the API (each opened by
- * id and re-fetched). No fake or hard-coded data is shown.
+ * The list is server-backed: `GET /api/v1/tournaments` returns persisted
+ * tournaments newest first, so records survive a browser restart and are
+ * visible from any device. The page holds no local index of tournaments.
  */
 export function TournamentEntryPage() {
-  const { state } = useRecent();
+  const api = useApi();
+  const collection = useCollection(['tournaments'], (params, signal) =>
+    api.tournaments.list(params, signal),
+  );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Tournaments"
-        description="Create a tournament or open one you have recently worked on."
+        description="Create a tournament or open one that is already set up."
         actions={
           <Button asChild>
             <Link to="/tournaments/new">Create tournament</Link>
@@ -33,38 +49,110 @@ export function TournamentEntryPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent tournaments</CardTitle>
+          <CardTitle>All tournaments</CardTitle>
         </CardHeader>
-        <CardContent>
-          {state.tournaments.length === 0 ? (
-            <EmptyState
-              title="No tournaments yet"
-              description="Create the first tournament to begin setting up categories, entries, stages and matches."
-              action={
-                <Button asChild variant="outline">
-                  <Link to="/tournaments/new">Create tournament</Link>
-                </Button>
-              }
-            />
-          ) : (
-            <ul className="divide-border divide-y" data-testid="recent-tournaments">
-              {state.tournaments.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-3 py-2">
-                  <Link
-                    className="text-primary text-sm font-medium underline-offset-4 hover:underline"
-                    to={`/tournaments/${item.id}`}
-                  >
-                    {item.label}
-                  </Link>
-                  <span className="text-muted-foreground truncate text-xs">{item.id}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardContent className="space-y-4">
+          <TournamentList collection={collection} />
         </CardContent>
       </Card>
 
       <OpenByIdCard />
+    </div>
+  );
+}
+
+function TournamentList({ collection }: { readonly collection: CollectionResult<TournamentDto> }) {
+  const { state, hasMore, loadingMore, loadMore, loadMoreError, refetch } = collection;
+
+  if (state.status === 'loading') {
+    return <LoadingState label="Loading tournaments…" />;
+  }
+
+  if (state.status === 'error') {
+    return <ErrorState error={state.error} title="Could not load tournaments" onRetry={refetch} />;
+  }
+
+  if (state.items.length === 0) {
+    return (
+      <EmptyState
+        title="No tournaments yet"
+        description="Create the first tournament to begin setting up categories, entries, stages and matches."
+        action={
+          <Button asChild variant="outline">
+            <Link to="/tournaments/new">Create tournament</Link>
+          </Button>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="tournament-list">
+      <TableWrapper>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tournament</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Dates</TableHead>
+              <TableHead>Location</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {state.items.map((tournament) => (
+              <TableRow key={tournament.id}>
+                <TableCell className="font-medium">
+                  <Link
+                    className="text-primary underline-offset-4 hover:underline"
+                    to={`/tournaments/${tournament.id}`}
+                  >
+                    {tournament.name}
+                  </Link>
+                </TableCell>
+                <TableCell>
+                  <StatusBadge kind="tournament" status={tournament.status} />
+                </TableCell>
+                <TableCell className="text-muted-foreground whitespace-nowrap">
+                  {formatCalendarDate(tournament.startDate)} –{' '}
+                  {formatCalendarDate(tournament.endDate)}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {orDash(tournament.location)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/tournaments/${tournament.id}`}>Open</Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableWrapper>
+
+      {loadMoreError ? (
+        <ErrorState
+          error={loadMoreError}
+          title="Could not load more tournaments"
+          onRetry={loadMore}
+        />
+      ) : null}
+
+      {hasMore ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={loadingMore}
+            onClick={() => {
+              loadMore();
+            }}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

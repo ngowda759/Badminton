@@ -135,3 +135,69 @@ describe('error model', () => {
     expect(new BusinessRuleViolationError('x')).toBeInstanceOf(Error);
   });
 });
+
+describe('PlayerService.list', () => {
+  it('returns an empty page when there are no players', async () => {
+    const page = await players.list({ limit: 20 });
+    expect(page.items).toEqual([]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('orders players newest first with a deterministic id tiebreaker', async () => {
+    const created = [
+      await players.create({ name: 'Zoe' }),
+      await players.create({ name: 'Alice' }),
+      await players.create({ name: 'Mia' }),
+    ];
+
+    const page = await players.list({ limit: 20 });
+    const expected = [...created].map((player) => player.id).sort((a, b) => b.localeCompare(a));
+    expect(page.items.map((player) => player.id)).toEqual(expected);
+  });
+
+  it('paginates with a cursor', async () => {
+    const created = [
+      await players.create({ name: 'Alice' }),
+      await players.create({ name: 'Bob' }),
+      await players.create({ name: 'Cara' }),
+    ];
+
+    const first = await players.list({ limit: 2 });
+    expect(first.items).toHaveLength(2);
+    const second = await players.list({
+      limit: 2,
+      ...(first.nextCursor ? { cursor: first.nextCursor } : {}),
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+
+    const seen = [...first.items, ...second.items].map((player) => player.id);
+    expect(new Set(seen)).toEqual(new Set(created.map((item) => item.id)));
+  });
+});
+
+describe('TeamService.list', () => {
+  it('returns an empty page when there are no teams', async () => {
+    const page = await teams.list({ limit: 20 });
+    expect(page.items).toEqual([]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('returns teams newest first with a member count', async () => {
+    const first = await players.create({ name: 'Alice' });
+    const second = await players.create({ name: 'Bob' });
+    const smash = await teams.create({
+      name: 'Smash Masters',
+      memberPlayerIds: [first.id, second.id],
+    });
+    const ninjas = await teams.create({ name: 'Net Ninjas' });
+
+    const page = await teams.list({ limit: 20 });
+    const expected = [smash.id, ninjas.id].sort((a, b) => b.localeCompare(a));
+    expect(page.items.map((team) => team.id)).toEqual(expected);
+
+    const memberCounts = new Map(page.items.map((team) => [team.id, team.memberCount]));
+    expect(memberCounts.get(smash.id)).toBe(2);
+    expect(memberCounts.get(ninjas.id)).toBe(0);
+  });
+});

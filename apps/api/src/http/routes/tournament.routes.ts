@@ -3,13 +3,15 @@ import {
   createCategoryInputSchema,
   createTournamentInputSchema,
   idParamSchema,
+  listQuerySchema,
   tournamentIdParamSchema,
   tournamentTransitionInputSchema,
   updateTournamentInputSchema,
 } from '@badminton/validation';
 import type { FastifyPluginCallback } from 'fastify';
 
-import { compact, validate } from '../request.ts';
+import { toListResponse, toTournamentListItem } from '../dto.ts';
+import { compact, normalizeListQuery, validate } from '../request.ts';
 import { data } from '../response.ts';
 
 export interface TournamentRoutesOptions {
@@ -31,6 +33,12 @@ export const tournamentRoutes: FastifyPluginCallback<TournamentRoutesOptions> = 
     const body = validate(createTournamentInputSchema, request.body);
     const tournament = await tournaments.create(compact(body));
     return reply.status(201).send(data(tournament));
+  });
+
+  app.get('/tournaments', async (request) => {
+    const query = validate(listQuerySchema, request.query);
+    const page = await tournaments.list(normalizeListQuery(query));
+    return data(toListResponse(page, toTournamentListItem));
   });
 
   app.get('/tournaments/:id', async (request) => {

@@ -11,6 +11,7 @@ import type {
   RealtimeEventType,
   StageStatus,
   StageType,
+  Team,
   TournamentStatus,
 } from '@badminton/domain';
 
@@ -154,6 +155,42 @@ export interface CreateMatchGameData {
   readonly participant1Points: number;
   readonly participant2Points: number;
   readonly winnerSlot: MatchSlot;
+}
+
+/**
+ * A normalized list/pagination query.
+ *
+ * `limit` is the maximum rows for one page; `cursor` resumes strictly after a
+ * previously returned row id. The route layer produces this from the validated
+ * query string (`@badminton/validation`'s `listQuerySchema`).
+ */
+export interface ListQuery {
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+/**
+ * A page of a cursor-paginated list read.
+ *
+ * `items` holds at most the requested `limit` rows; `nextCursor` is the id to
+ * resume strictly after, or `null` when this is the last page. The cursor is
+ * opaque to the caller - it is the last row's id under the list's deterministic
+ * ordering.
+ */
+export interface ListPage<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+/**
+ * A team read together with its derived member count.
+ *
+ * The count comes from a grouped aggregate in the same read path, so a team
+ * list never issues one query per team.
+ */
+export interface TeamWithMemberCount {
+  readonly team: Team;
+  readonly memberCount: number;
 }
 
 /**

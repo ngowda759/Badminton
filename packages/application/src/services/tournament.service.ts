@@ -14,6 +14,7 @@ import {
 
 import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
 import type { RealtimeEventService } from '../realtime/event.service.ts';
+import type { ListPage, ListQuery } from '../repositories/data.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type {
@@ -40,6 +41,8 @@ export interface TournamentService {
   update(id: string, command: UpdateTournamentCommand): Promise<Tournament>;
   transitionStatus(id: string, command: TransitionTournamentStatusCommand): Promise<Tournament>;
   getById(id: string): Promise<Tournament>;
+  /** One page of tournaments, newest first, for the operator's list screen. */
+  list(query: ListQuery): Promise<ListPage<Tournament>>;
 }
 
 export function createTournamentService(
@@ -139,6 +142,12 @@ export function createTournamentService(
 
     async getById(id: string): Promise<Tournament> {
       return requireTournament(client, id);
+    },
+
+    async list(query: ListQuery): Promise<ListPage<Tournament>> {
+      // Read-only, single query: no transaction, no event. The repository owns
+      // the ordering and the cursor; the service just forwards the page query.
+      return client.tournaments.listPage(query);
     },
   };
 }
