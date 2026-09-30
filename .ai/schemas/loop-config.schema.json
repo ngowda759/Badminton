@@ -14,6 +14,7 @@
     "requiredChecks",
     "protectedPaths",
     "mergeGate",
+    "review",
     "automation",
     "limits",
     "paths"
@@ -52,6 +53,20 @@
         "requireCiGreen": { "type": "boolean" },
         "requireReviewPassed": { "type": "boolean" },
         "requireHumanApproval": { "type": "boolean" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "endpoint", "model", "schema", "markerName"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "endpoint": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "modelEnvVar": { "type": "string", "minLength": 1 },
+        "schema": { "type": "string", "minLength": 1 },
+        "markerName": { "type": "string", "minLength": 1 },
+        "commentOnEveryRound": { "type": "boolean" }
       }
     },
     "reviewers": {

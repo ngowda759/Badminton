@@ -145,9 +145,18 @@ never a read model.
 
 ## AI development loop
 
-The repository owns a closed loop: ChatGPT architect → OpenHands implementation →
-GitHub PR → GitHub Actions CI → ChatGPT review → OpenHands fixes the same PR (up
-to `MAX_REVIEW_ROUNDS = 3`) → human merge gate → next-task generation.
+The repository owns a closed, automatic loop: ChatGPT architect → OpenHands
+implementation → GitHub PR → GitHub Actions CI → ChatGPT review → OpenHands fixes
+the same PR → CI → ChatGPT re-review (up to `maxReviewRounds = 3`) → human merge
+gate → next-task generation.
+
+- ChatGPT is the architect **and the reviewer**; OpenHands is the implementer and
+  the fixer. OpenHands never reviews its own work: the review stage is
+  `.ai/scripts/chatgpt-review.mjs` (`AI loop review` workflow), which waits for CI,
+  records a round, posts the findings and dispatches a fix on the same PR.
+- A push from an OpenHands fix fires `synchronize`, so the next review round runs
+  with no manual step. A head SHA that a previous review already covered is never
+  reviewed twice.
 
 - Configuration, prompts, schemas and state live in `.ai/`; the full guide is
   `docs/ai-development-loop.md`.

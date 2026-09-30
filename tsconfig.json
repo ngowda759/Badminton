@@ -18,6 +18,7 @@
     "packages/config/src",
     "prisma",
     "tests",
+    ".ai/scripts",
     "vitest.config.ts",
     "playwright.config.ts",
     "prisma.config.ts"

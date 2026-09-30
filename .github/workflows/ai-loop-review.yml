@@ -1,25 +1,50 @@
 name: AI loop review
 
-# Starts an OpenHands review conversation for a pull request that carries the
-# review label. The loop never reviews or merges on its own: this workflow only
-# assembles the repository-owned review prompt and dispatches one conversation.
+# The ChatGPT review stage of the AI development loop.
 #
-# When the OPENHANDS_API_KEY secret is absent the dispatch script skips cleanly,
-# so the workflow is safe to merge before the secret is configured.
+# ChatGPT is the reviewer; OpenHands is the implementer/fixer. This workflow never
+# dispatches OpenHands as a reviewer — a self-review would be the loop's only
+# authoritative verdict, which defeats the purpose of having one.
+#
+# Flow:
+#
+#   pull_request (opened|synchronize|reopened|ready_for_review)
+#          |
+#          v
+#   wait for the required CI checks to finish
+#          |
+#          v
+#   .ai/scripts/chatgpt-review.mjs
+#          |
+#          +-- approved          -> ai-ready (a human still merges)
+#          +-- changes-requested -> post findings, dispatch OpenHands on the SAME PR
+#          +-- blocked / round 3 -> ai-blocked, stop for a human
+#
+# The OpenHands fix pushes to the same branch, which fires `synchronize` and
+# starts the next round automatically. No manual button is needed between a fix
+# and its re-review.
+#
+# Anti-storm measures:
+#   - the run is scoped to `automation/**` branches or a PR carrying `ai-review`,
+#     so unrelated pull requests are never reviewed;
+#   - `.ai/scripts/chatgpt-review.mjs` refuses to review a head SHA that a
+#     previous review comment already covers (marker `ai-loop-review round=… head=…`),
+#     so a duplicate trigger is a no-op rather than a second review;
+#   - one run per pull request at a time, newest wins.
+#
+# Security: the pull request is data, never code. Nothing from the PR is checked
+# out, installed, built or sourced here — the diff is read as text and sent to
+# the reviewer. `pull_request` (not `pull_request_target`) is used deliberately,
+# so fork pull requests receive a read-only token and no secrets.
 
 on:
   pull_request:
-    types: [labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       pr_number:
         description: Pull request number to review
         required: true
-        type: string
-      round:
-        description: Review round (1..maxReviewRounds)
-        required: false
-        default: "1"
         type: string
 
 concurrency:
@@ -28,13 +53,18 @@ concurrency:
 
 permissions:
   contents: read
+  checks: read
+  pull-requests: write
+  issues: write
 
 jobs:
   review:
-    name: Dispatch OpenHands review
+    name: ChatGPT review
+    # Scoped to AI-loop pull requests so an unrelated PR is never reviewed.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.label.name == 'ai-review'
+      startsWith(github.event.pull_request.head.ref, 'automation/') ||
+      contains(github.event.pull_request.labels.*.name, 'ai-review')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -45,6 +75,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Validate the loop state
+        run: node .ai/scripts/validate-loop-config.mjs
+
       - name: Resolve the pull request head
         id: pr
         env:
@@ -52,35 +85,52 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         run: |
           gh pr view "$PR_NUMBER" \
-            --json number,headRefName,headRefOid \
-            --jq '"number=\(.number)\nbranch=\(.headRefName)\nhead=\(.headRefOid)"' \
+            --json number,headRefName,headRefOid,isCrossRepository \
+            --jq '"number=\(.number)\nbranch=\(.headRefName)\nhead=\(.headRefOid)\ncross=\(.isCrossRepository)"' \
             >> "$GITHUB_OUTPUT"
 
-      - name: Assemble the review context
+      # The review cannot run without the reviewer credential. Warn and skip
+      # rather than fail, so an unconfigured secret never turns this check red
+      # and blocks an otherwise green pull request. The reviewer script itself
+      # still fails loudly if it is invoked without the key, so a review can
+      # never be silently skipped once the credential exists.
+      - name: Check the reviewer credential
+        id: creds
         env:
-          ROUND: ${{ inputs.round || '1' }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
-          HEAD_BRANCH: ${{ steps.pr.outputs.branch }}
-          HEAD_SHA: ${{ steps.pr.outputs.head }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          {
-            echo "## Pull request under review"
-            echo
-            echo "- PR: #${PR_NUMBER}"
-            echo "- Head branch: ${HEAD_BRANCH}"
-            echo "- Head SHA: ${HEAD_SHA}"
-            echo "- Review round: ${ROUND}"
-            echo
-            echo "Read the pull request diff and its CI check results before deciding."
-          } > /tmp/review-context.md
+          if [ -n "$OPENAI_API_KEY" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OPENAI_API_KEY is not configured, so no review can run. The loop is inert until the secret is added (Settings -> Secrets and variables -> Actions)."
+            echo "### Review skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "OPENAI_API_KEY is not configured, so the ChatGPT review cannot run." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Dispatch the review conversation
+      # A fork PR gets a read-only token and would be reviewed against a diff we
+      # cannot verify. Skip it rather than produce a review we cannot stand behind.
+      - name: Wait for the required CI checks
+        if: steps.pr.outputs.cross != 'true' && steps.creds.outputs.available == 'true'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .ai/scripts/wait-for-ci.mjs \
+            --pr "${{ steps.pr.outputs.number }}" \
+            --timeout-seconds 900 \
+            --interval-seconds 15
+
+      - name: Run the ChatGPT review
+        if: steps.pr.outputs.cross != 'true' && steps.creds.outputs.available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL }}
           OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
           OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
         run: |
-          node .ai/scripts/dispatch-conversation.mjs \
-            --stage review \
-            --pr "${{ steps.pr.outputs.number }}" \
-            --branch "${{ steps.pr.outputs.branch }}" \
-            --context-file /tmp/review-context.md
+          node .ai/scripts/chatgpt-review.mjs --pr "${{ steps.pr.outputs.number }}"
+
+      - name: Report the loop state
+        if: always() && steps.pr.outputs.cross != 'true'
+        run: node .ai/scripts/loop-state.mjs status

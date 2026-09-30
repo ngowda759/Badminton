@@ -5,14 +5,20 @@ inherits this contract. Stage prompts add to it; they never weaken it.
 
 ## Roles
 
-| Role        | Actor          | Responsibility                                         |
-| ----------- | -------------- | ------------------------------------------------------ |
-| Architect   | ChatGPT        | Writes the task brief and the acceptance criteria      |
-| Implementer | OpenHands      | Implements the brief on a branch and opens one PR      |
-| CI          | GitHub Actions | Lint, typecheck, test, build, end-to-end               |
-| Reviewer    | ChatGPT        | Reviews the diff against the brief; verdict + findings |
-| Fixer       | OpenHands      | Fixes review findings on the **same** PR               |
-| Merge gate  | Human          | Decides whether to merge; automation never merges      |
+| Role         | Actor          | Responsibility                                         |
+| ------------ | -------------- | ------------------------------------------------------ |
+| Architect    | ChatGPT        | Writes the task brief and the acceptance criteria      |
+| Implementer  | OpenHands      | Implements the brief on a branch and opens one PR      |
+| CI           | GitHub Actions | Lint, typecheck, test, build, end-to-end               |
+| Reviewer     | ChatGPT        | Reviews the diff against the brief; verdict + findings |
+| Fixer        | OpenHands      | Fixes review findings on the **same** PR               |
+| Orchestrator | GitHub Actions | Waits for CI, runs the review, routes the verdict      |
+| Merge gate   | Human          | Decides whether to merge; automation never merges      |
+
+The reviewer and the implementer are **different actors on purpose**. OpenHands
+never reviews its own work: it implements, then fixes what ChatGPT reports. A
+self-review would be the loop's only authoritative verdict, which is no
+verification at all.
 
 ## Non-negotiable rules
 
@@ -62,3 +68,8 @@ merge gate (human decision)
 The round counter increments on each review. When `round` reaches
 `maxReviewRounds` and findings remain, the loop marks the task `blocked` and
 stops for a human instead of looping forever.
+
+The reviewer is **ChatGPT**, driven by `.ai/scripts/chatgpt-review.mjs` from the
+`AI loop review` workflow. The fixer is **OpenHands**, dispatched on the same PR
+branch. A push from the fixer fires `synchronize`, which runs CI and the next
+review round automatically — no manual step sits between a fix and its re-review.

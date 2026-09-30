@@ -43,8 +43,11 @@ is `docs/phase-7-courts-dashboard.md`; Phase 8 realtime is
 - `.ai/` — the AI development loop: `loop.config.json` (knobs and guardrails),
   `prompts/` (architect, implementation, review, fix, next-task), `schemas/`
   (JSON Schemas for config/state/briefs/reviews), `state/` (durable state, task
-  queue, append-only review log) and `scripts/` (dependency-free validation and
-  state helpers). See `docs/ai-development-loop.md`.
+  queue, append-only review log) and `scripts/` (dependency-free validation,
+  state, review and CI-wait helpers). See `docs/ai-development-loop.md`.
+  ChatGPT is the architect and the reviewer; OpenHands is the implementer and the
+  fixer. The review stage is `.ai/scripts/chatgpt-review.mjs`, never an OpenHands
+  conversation.
 - `.openhands/skills/badminton-development/` — the repository skill loaded by
   automated agents.
 - `apps/api` — Fastify API. `app.ts` is the factory, `server.ts` owns `listen`.

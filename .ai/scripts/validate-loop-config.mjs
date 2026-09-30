@@ -107,6 +107,13 @@ if (config !== null && state !== null) {
       fail(`loop.config.paths points at a missing file: ${configuredPath}`);
     }
   }
+
+  if (config.review !== undefined && !existsSync(resolve(root, config.review.schema))) {
+    fail(`loop.config.review.schema points at a missing file: ${config.review.schema}`);
+  }
+  if (config.review !== undefined && config.review.endpoint.startsWith('http://')) {
+    fail('loop.config.review.endpoint must use https');
+  }
 }
 
 if (state !== null && queue !== null) {

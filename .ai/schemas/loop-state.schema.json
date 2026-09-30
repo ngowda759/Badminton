@@ -27,7 +27,9 @@
         "ci-running",
         "reviewing",
         "fixing",
+        "ready",
         "merge-gate",
+        "human-merge",
         "blocked",
         "complete"
       ]

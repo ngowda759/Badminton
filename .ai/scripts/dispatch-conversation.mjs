@@ -7,9 +7,14 @@
  * files and posts it to the OpenHands Cloud API. It never implements, reviews or
  * merges anything itself, and it never prints the API key.
  *
+ * OpenHands is the implementer and the fixer. Reviewing is ChatGPT's job and is
+ * driven by `.ai/scripts/chatgpt-review.mjs`, so there is deliberately no
+ * `review` stage here — dispatching OpenHands to review its own work would make
+ * the loop's only authoritative review self-certified.
+ *
  * Usage:
  *   node .ai/scripts/dispatch-conversation.mjs --stage implement --task AI-002-T1
- *   node .ai/scripts/dispatch-conversation.mjs --stage review --task AI-002-T1 --pr 42
+ *   node .ai/scripts/dispatch-conversation.mjs --stage fix --pr 42 --branch automation/x --task AI-002-T1
  *   node .ai/scripts/dispatch-conversation.mjs --stage next-task --dry-run
  *
  * Environment:
@@ -27,7 +32,6 @@ const config = JSON.parse(readFileSync(resolve(root, '.ai', 'loop.config.json'),
 
 const STAGE_PROMPTS = {
   implement: ['system.md', 'implementation.md'],
-  review: ['system.md', 'review.md'],
   fix: ['system.md', 'fix.md'],
   'next-task': ['system.md', 'next-task.md'],
   architect: ['system.md', 'architect.md'],
@@ -35,7 +39,6 @@ const STAGE_PROMPTS = {
 
 const STAGE_TITLES = {
   implement: 'Implement',
-  review: 'Review',
   fix: 'Fix',
   'next-task': 'Next task',
   architect: 'Architect',
@@ -119,9 +122,7 @@ function buildPrompt(args) {
 
 const args = parseArgs(process.argv.slice(2));
 if (typeof args.stage !== 'string') {
-  console.error(
-    'usage: dispatch-conversation.mjs --stage <implement|review|fix|next-task|architect>',
-  );
+  console.error('usage: dispatch-conversation.mjs --stage <implement|fix|next-task|architect>');
   process.exit(2);
 }
 

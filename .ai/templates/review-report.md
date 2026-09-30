@@ -33,4 +33,4 @@
 
 ---
 
-This review was produced by an AI agent (OpenHands) on behalf of the user.
+This review was produced by an AI agent (ChatGPT, orchestrated by GitHub Actions) on behalf of the user.

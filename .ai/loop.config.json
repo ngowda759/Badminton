@@ -14,9 +14,18 @@
     ".env.*"
   ],
   "secrets": {
-    "required": ["OPENHANDS_API_KEY"],
-    "optional": ["OPENHANDS_HOST"],
-    "note": "GITHUB_TOKEN is provided by GitHub Actions and must never be committed. OPENHANDS_HOST is an Actions variable, not a secret."
+    "required": ["OPENHANDS_API_KEY", "OPENAI_API_KEY"],
+    "optional": ["OPENHANDS_HOST", "OPENAI_REVIEW_MODEL"],
+    "note": "GITHUB_TOKEN is provided by GitHub Actions and must never be committed. OPENHANDS_HOST and OPENAI_REVIEW_MODEL are Actions variables, not secrets. OPENAI_API_KEY is the ChatGPT reviewer credential; OPENHANDS_API_KEY is the implementer/fixer credential."
+  },
+  "review": {
+    "provider": "openai",
+    "endpoint": "https://api.openai.com/v1/responses",
+    "model": "gpt-5.6-sol",
+    "modelEnvVar": "OPENAI_REVIEW_MODEL",
+    "schema": ".ai/schemas/review-report.schema.json",
+    "markerName": "ai-loop-review",
+    "commentOnEveryRound": true
   },
   "mergeGate": {
     "enabled": false,

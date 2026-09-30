@@ -351,9 +351,16 @@ only exists for the duration of the job.
 
 ## AI development loop
 
-The repository owns a closed development loop — ChatGPT architect → OpenHands
-implementation → GitHub PR → GitHub Actions CI → ChatGPT review → OpenHands fixes the
-same PR (up to `MAX_REVIEW_ROUNDS = 3`) → human merge gate → next-task generation.
+The repository owns a closed, automatic development loop — ChatGPT architect →
+OpenHands implementation → GitHub PR → GitHub Actions CI → ChatGPT review →
+OpenHands fixes the same PR → CI → ChatGPT re-review (up to
+`maxReviewRounds = 3`) → human merge gate → next-task generation.
+
+ChatGPT is the architect **and the reviewer**; OpenHands is the implementer **and
+the fixer**; GitHub Actions is CI and the orchestrator; the human approves task
+briefs and performs the final merge. OpenHands never reviews its own work — the
+review stage is `.ai/scripts/chatgpt-review.mjs`, and the push from an OpenHands
+fix triggers the next review round automatically.
 
 The loop is infrastructure only: it never implements product features, never redesigns
 the web application, never touches production data, and never merges a pull request.
@@ -367,7 +374,7 @@ workflow permissions and remaining manual setup are in
 | `ci.yml`                 | Unchanged product CI (lint, typecheck, test, build, e2e)              |
 | `ai-loop-validate.yml`   | Validates the loop config, state, schemas and workflow structure      |
 | `ai-loop-implement.yml`  | Dispatches one OpenHands implementation conversation (manual)         |
-| `ai-loop-review.yml`     | Dispatches one OpenHands review conversation on the `ai-review` label |
+| `ai-loop-review.yml`     | Waits for CI, runs the ChatGPT review, routes the verdict (automatic) |
 | `ai-loop-merge-gate.yml` | Reports merge readiness; never merges                                 |
 | `ai-loop-next-task.yml`  | Dispatches next-task generation after the human merge gate            |
 

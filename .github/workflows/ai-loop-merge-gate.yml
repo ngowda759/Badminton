@@ -75,7 +75,7 @@ jobs:
             echo '```'
             echo
             echo "- Required CI check: \`Lint, typecheck, test, build\`"
-            echo "- Required review label: \`ai-review\` (review must be approved)"
+            echo "- Required review: ChatGPT verdict \`approved\` (label \`ai-ready\`)"
             echo "- Required approval: human"
             echo
             echo "This workflow does not merge and holds read-only permissions."

@@ -28,6 +28,8 @@
     "test:e2e": "playwright test",
     "loop:validate": "node .ai/scripts/validate-loop-config.mjs && node .ai/scripts/validate-workflows.mjs",
     "loop:status": "node .ai/scripts/loop-state.mjs status",
+    "loop:review": "node .ai/scripts/chatgpt-review.mjs",
+    "loop:wait-for-ci": "node .ai/scripts/wait-for-ci.mjs",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",

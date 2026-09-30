@@ -10,10 +10,15 @@
  *   node .ai/scripts/loop-state.mjs status
  *   node .ai/scripts/loop-state.mjs set --status implementing --task AI-002-T1 --note "..."
  *   node .ai/scripts/loop-state.mjs set --status ci-running --pr 42 --branch automation/x --head <sha>
+ *   node .ai/scripts/loop-state.mjs set --status reviewing --force --note "recovering"
  *   node .ai/scripts/loop-state.mjs next-round --note "round 2 review requested changes"
  *   node .ai/scripts/loop-state.mjs log --task AI-002-T1 --pr 42 --round 1 \
  *       --verdict changes-requested --ci failure [--findings findings.json]
  *   node .ai/scripts/loop-state.mjs reset --note "task merged"
+ *
+ * `set --status` is checked against the loop's state machine (see TRANSITIONS
+ * below). An illegal step is refused unless `--force` is passed, and a forced
+ * step is recorded in the history exactly like a legal one.
  *
  * Every mutation re-validates the state against the schemas and exits non-zero
  * on an invalid result. It never touches the network and never prints secrets.
@@ -36,6 +41,34 @@ const reviewLogPath = resolve(root, '.ai/state/review-log.jsonl');
 const schemasDir = resolve(root, '.ai/schemas');
 
 const config = JSON.parse(readFileSync(configPath, 'utf8'));
+
+/**
+ * The explicit state machine of the loop.
+ *
+ * Each key is a status and each value is the set of statuses it may move to.
+ * `blocked` is reachable from anywhere: a stage that cannot proceed must always
+ * be allowed to stop for a human. `--force` exists for recovery, and every
+ * forced transition is recorded in the history like any other.
+ */
+const TRANSITIONS = {
+  idle: ['task-selected', 'implementing'],
+  'task-selected': ['implementing'],
+  implementing: ['ci-running'],
+  'ci-running': ['reviewing', 'fixing'],
+  reviewing: ['fixing', 'ready', 'human-merge'],
+  fixing: ['ci-running', 'reviewing'],
+  ready: ['human-merge', 'complete'],
+  'merge-gate': ['ready', 'human-merge', 'complete'],
+  'human-merge': ['complete'],
+  blocked: ['idle', 'implementing', 'reviewing', 'fixing', 'human-merge'],
+  complete: ['idle'],
+};
+
+function isTransitionAllowed(from, to) {
+  if (from === to) return true;
+  if (to === 'blocked') return true;
+  return (TRANSITIONS[from] ?? []).includes(to);
+}
 
 function nowIso() {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -115,7 +148,28 @@ function commandStatus() {
 
 function commandSet(args) {
   const state = readState();
-  if (args.status !== undefined) state.status = requireString(args, 'status');
+  const previousStatus = state.status;
+
+  if (args.status !== undefined) {
+    const next = requireString(args, 'status');
+    if (!isTransitionAllowed(previousStatus, next)) {
+      if (args.force !== true) {
+        console.error(
+          `refusing the transition ${previousStatus} -> ${next}: not a legal step of the loop state machine`,
+        );
+        console.error(
+          `  legal next states from ${previousStatus}: ${(TRANSITIONS[previousStatus] ?? []).join(', ') || '(none)'}, blocked`,
+        );
+        console.error(
+          '  pass --force to record the transition anyway (it is logged in the history)',
+        );
+        process.exit(1);
+      }
+      console.error(`forcing the transition ${previousStatus} -> ${next}`);
+    }
+    state.status = next;
+  }
+
   if (args.round !== undefined) state.round = toInteger(args.round, 'round');
   if (args.task !== undefined) state.currentTaskId = args.task === 'none' ? null : args.task;
   if (args.pr !== undefined) {
