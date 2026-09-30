@@ -7,6 +7,8 @@ import { PageHeader } from '@/components/page-header.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
+import { PlayerSelector } from '@/components/player-selector.tsx';
+import { TeamSelector } from '@/components/team-selector.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
@@ -33,9 +35,11 @@ import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 /**
  * Category entries: list, registration and lifecycle.
  *
- * Singles categories take a player id, doubles categories take a team id. The
- * backend stays authoritative for membership, team size, duplicates and
- * category compatibility; failures are displayed rather than pre-empted.
+ * Singles categories take a player, doubles categories take a team. The
+ * competitor is chosen from the server-backed collection (`GET /api/v1/players`
+ * or `/teams`) rather than typed as a UUID. The backend stays authoritative for
+ * membership, team size, duplicates and category compatibility; failures are
+ * displayed rather than pre-empted.
  */
 export function EntriesPage() {
   const api = useApi();
@@ -299,6 +303,14 @@ function RegisterEntryCard({ category, disabled, onRegistered }: RegisterEntryCa
     });
   };
 
+  const selector = {
+    value: competitorId,
+    onValueChange: setCompetitorId,
+    disabled,
+    required: true,
+    htmlFor: 'entry-competitor',
+  } as const;
+
   return (
     <Card>
       <CardHeader>
@@ -306,26 +318,14 @@ function RegisterEntryCard({ category, disabled, onRegistered }: RegisterEntryCa
       </CardHeader>
       <CardContent className="space-y-4">
         <form
-          className="grid max-w-2xl gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end"
+          className="grid max-w-2xl gap-4 sm:grid-cols-[2fr_1fr_auto] sm:items-start"
           onSubmit={submit}
         >
-          <FormField
-            label={category.format === 'SINGLES' ? 'Player ID' : 'Team ID'}
-            required
-            htmlFor="entry-competitor"
-          >
-            {({ id, describedBy }) => (
-              <Input
-                id={id}
-                {...(describedBy ? { 'aria-describedby': describedBy } : {})}
-                value={competitorId}
-                disabled={disabled}
-                onChange={(event) => {
-                  setCompetitorId(event.target.value);
-                }}
-              />
-            )}
-          </FormField>
+          {category.format === 'SINGLES' ? (
+            <PlayerSelector label="Player" {...selector} />
+          ) : (
+            <TeamSelector label="Team" {...selector} />
+          )}
 
           <FormField label="Seed" htmlFor="entry-seed">
             {({ id, describedBy }) => (
@@ -343,7 +343,7 @@ function RegisterEntryCard({ category, disabled, onRegistered }: RegisterEntryCa
             )}
           </FormField>
 
-          <Button type="submit" disabled={disabled || mutation.pending}>
+          <Button type="submit" disabled={disabled || competitorId === '' || mutation.pending}>
             {mutation.pending ? 'Registering…' : 'Register'}
           </Button>
         </form>

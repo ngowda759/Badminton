@@ -48,23 +48,20 @@ test.describe('tournament setup', () => {
     await page.getByRole('button', { name: 'Open', exact: true }).click();
     await expect(page.getByText('Open', { exact: true }).first()).toBeVisible();
 
-    // Create a player and capture its id for registration.
+    // Create a player, then register it by selecting it from the server-backed list.
     await page.goto('/players');
     await page.getByLabel(/^Name/).fill(playerName);
     await page.getByRole('button', { name: 'Create player' }).click();
     const playerLink = page.getByRole('link', { name: playerName });
     await expect(playerLink).toBeVisible();
 
-    const playerHref = await playerLink.getAttribute('href');
-    const playerId = playerHref?.split('/').pop() ?? '';
-    expect(playerId.length).toBeGreaterThan(0);
-
     // Register the player in the category.
     await page.goto(`${tournamentUrl}/categories`);
     await page.getByRole('link', { name: 'Open' }).first().click();
     await page.getByRole('link', { name: 'Entries' }).click();
 
-    await page.getByLabel(/^Player ID/).fill(playerId);
+    await page.getByLabel('Player').click();
+    await page.getByRole('option', { name: playerName }).click();
     await page.getByRole('button', { name: 'Register' }).click();
 
     // The entry now appears in the list, resolved to the player's name.
