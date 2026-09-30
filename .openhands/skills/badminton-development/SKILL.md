@@ -147,8 +147,9 @@ never a read model.
 
 The repository owns a closed, automatic loop: ChatGPT architect → OpenHands
 implementation → GitHub PR → GitHub Actions CI → ChatGPT review → OpenHands fixes
-the same PR → CI → ChatGPT re-review (up to `maxReviewRounds = 3`) → human merge
-gate → next-task generation.
+the same PR → CI → ChatGPT re-review (up to `maxReviewRounds = 3`) → merge gate
+(automatic) → next-task generation. A human is an exception handler only: the
+loop stops for one on a genuine hard stop, never on the normal path.
 
 - ChatGPT is the architect **and the reviewer**; OpenHands is the implementer and
   the fixer. OpenHands never reviews its own work: the review stage is
@@ -161,8 +162,12 @@ gate → next-task generation.
 - Configuration, prompts, schemas and state live in `.ai/`; the full guide is
   `docs/ai-development-loop.md`.
 - The loop is **infrastructure only**: never implement product features outside a
-  task brief, never redesign the web application, never touch production data,
-  and never merge a pull request.
+  task brief, never redesign the web application and never touch production data.
+  The **merge gate** merges automatically, but only when the review is
+  `approved`, required CI is green, the approval matches the head commit and no
+  protected path changed. Never merge by hand and never bypass branch protection.
+- One task at a time (`maxConcurrentTasks` is `1`): never start a task while
+  another is implementing, fixing, reviewing or awaiting merge.
 - Record progress with `node .ai/scripts/loop-state.mjs` (never edit the state
   JSON by hand) and validate with
   `node .ai/scripts/validate-loop-config.mjs`.

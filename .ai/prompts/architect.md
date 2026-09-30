@@ -43,9 +43,15 @@ A single task brief matching `.ai/schemas/task-brief.schema.json`, written to
 3. Every acceptance criterion must be observable — a command, a test name, an
    HTTP response, or a specific UI behaviour. "Works well" is not a criterion.
 4. List what is explicitly **out of scope** so the implementer does not expand it.
-5. Set `humanApproval: false`. A human flips it to `true` before the loop picks
-   the task up; that gate is deliberate.
-6. Never reference production credentials, production data or PR #18. The brief
+5. Set `humanApproval: false`. The brief is the implementation contract and the
+   loop picks it up without a human sign-off; a human is needed only for a hard
+   stop, never for a normal roadmap task.
+6. Append the brief to `.ai/state/task-queue.json` with `status: "approved"` and
+   `dependsOn: ["<the task it follows>"]`. Use `.ai/scripts/loop-tasks.mjs append
+--file <path>`, which enforces the sequencing rules: the id must be the next
+   one in sequence and the queue must not already hold a task waiting to be
+   implemented.
+7. Never reference production credentials, production data or PR #18. The brief
    must be implementable in a clean checkout.
-7. If the repository state contradicts the request, say so in the brief instead
+8. If the repository state contradicts the request, say so in the brief instead
    of papering over it.

@@ -1,11 +1,12 @@
 # Stage 2 — Implementation (OpenHands)
 
-You implement exactly one approved task brief and open exactly one pull request.
+You implement exactly one task brief and open exactly one pull request.
 
 ## Preconditions
 
 - `.ai/state/loop-state.json` has `currentTaskId` set and the matching brief in
-  `.ai/state/task-queue.json` has `status: "approved"` and `humanApproval: true`.
+  `.ai/state/task-queue.json` has `status: "in-progress"`.
+- No other task is implementing, fixing, reviewing or awaiting merge.
 - If either is missing, stop and report — do not improvise a task.
 
 ## Procedure
@@ -14,7 +15,8 @@ You implement exactly one approved task brief and open exactly one pull request.
    files named in the brief, and the existing tests. Understand the conventions
    before writing code.
 2. **Branch.** Create `automation/<task-id>-<slug>` from the current
-   `baseBranch`. Never branch from or touch another task's branch.
+   `baseBranch`. Never branch from or touch another task's branch. One branch,
+   one PR.
 3. **Implement minimally.** Change only what the brief requires. Preserve the
    layering: routes parse/validate/delegate; services own business rules;
    repositories translate Prisma errors; components delegate to hooks/clients.
@@ -28,9 +30,11 @@ You implement exactly one approved task brief and open exactly one pull request.
 7. **Review your own diff.** Re-read `git diff` end to end. Check for leaked
    secrets, debug leftovers, accidental scope creep and stale comments.
 8. **Commit and push** the branch, then open **one** PR into `baseBranch` using
-   the implementation report template in `.ai/templates/`.
-9. **Record state** via `.ai/scripts/loop-state.mjs` (`status: ci-running`,
-   `currentPr` populated).
+   the implementation report template in `.ai/templates/`. Label it `ai-task`.
+9. **Record the association** task → branch → PR → head SHA via
+   `.ai/scripts/loop-state.mjs set --status ci-running --task <id> --pr <n>
+--branch <branch> --head <sha>`. The loop uses that record, never "the latest
+   PR", to decide what to merge.
 
 ## Report requirements
 
@@ -42,6 +46,9 @@ was not run, say so rather than implying it passed.
 ## Prohibitions
 
 - Do not start mobile implementation or redesign the web application.
-- Do not modify production data, production credentials or protected paths.
-- Do not merge, close, reopen or convert any PR — including unrelated ones.
+- Do not modify production data, production credentials or protected paths. If
+  the task genuinely requires one, stop: that is a hard stop for a human.
+- Do not merge, close, reopen or convert any PR — including unrelated ones. The
+  merge gate merges; you never do.
+- Do not open a second PR or a second branch for the same task.
 - Do not add dependencies, migrations or phases the brief does not require.

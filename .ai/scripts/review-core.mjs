@@ -436,7 +436,8 @@ export function decisionFor({ verdict, ciStatus, round, maxReviewRounds }) {
       status: 'blocked',
       addLabels: ['ai-blocked'],
       removeLabels: ['ai-ready'],
-      message: 'The reviewer blocked this pull request. A human decision is required.',
+      message:
+        'The reviewer blocked this pull request (hard stop: reviewer-blocked). A human decision is required.',
     };
   }
 
@@ -448,8 +449,8 @@ export function decisionFor({ verdict, ciStatus, round, maxReviewRounds }) {
         addLabels: ['ai-blocked'],
         removeLabels: ['ai-ready'],
         message:
-          `Maximum automated review rounds reached (${round}/${maxReviewRounds}). ` +
-          'Human intervention required.',
+          `Maximum automated review rounds reached (${round}/${maxReviewRounds}) ` +
+          '(hard stop: max-rounds-exceeded). Human intervention required.',
       };
     }
     return {
@@ -464,10 +465,11 @@ export function decisionFor({ verdict, ciStatus, round, maxReviewRounds }) {
   if (verdict === 'approved' && ciStatus === 'success') {
     return {
       action: 'ready',
-      status: 'ready',
+      status: 'ready-to-merge',
       addLabels: ['ai-ready'],
       removeLabels: ['ai-blocked'],
-      message: 'Approved with green CI. Ready for the human merge decision; the loop never merges.',
+      message:
+        'Approved with green CI. The merge gate re-checks every condition and merges automatically.',
     };
   }
 
@@ -478,6 +480,16 @@ export function decisionFor({ verdict, ciStatus, round, maxReviewRounds }) {
     removeLabels: [],
     message: `Approved but CI is ${ciStatus}; waiting for a green build before marking ready.`,
   };
+}
+
+/**
+ * The blocking findings a fix round must still address.
+ *
+ * Advisory findings (minor/nit) do not by themselves justify stopping the loop
+ * at the round limit, so the caller can tell the two apart.
+ */
+export function unresolvedBlockingFindings(report) {
+  return (report?.findings ?? []).filter((finding) => BLOCKING_SEVERITIES.has(finding.severity));
 }
 
 /** Render a review report as the PR comment body, marker first. */

@@ -5,6 +5,7 @@
   "baseBranch": "main",
   "branchPrefix": "automation/",
   "ciWorkflow": "CI",
+  "ciWorkflowFile": ".github/workflows/ci.yml",
   "requiredChecks": ["Lint, typecheck, test, build"],
   "protectedPaths": [
     "prisma/migrations/**",
@@ -28,23 +29,32 @@
     "commentOnEveryRound": true
   },
   "mergeGate": {
-    "enabled": false,
+    "enabled": true,
     "requireCiGreen": true,
     "requireReviewPassed": true,
-    "requireHumanApproval": true
+    "requireHumanApproval": false
   },
   "reviewers": {
     "architect": "ChatGPT",
     "implementer": "OpenHands",
-    "ci": "GitHub Actions"
+    "ci": "GitHub Actions",
+    "merge": "GitHub Actions"
   },
   "automation": {
+    "enabled": true,
+    "autoAdvanceTasks": true,
+    "autoMerge": true,
+    "maxConcurrentTasks": 1,
+    "nextTaskEnabled": true,
+    "stopOnHumanReviewRequired": true,
+    "stopOnProtectedPath": true,
     "triggerLabel": "ai-task",
     "reviewLabel": "ai-review",
     "blockedLabel": "ai-blocked",
     "readyLabel": "ai-ready",
-    "nextTaskEnabled": true,
-    "nextTaskBranchPrefix": "automation/next-task-"
+    "nextTaskBranchPrefix": "automation/next-task-",
+    "mergeMethod": "squash",
+    "useNativeAutoMerge": true
   },
   "limits": {
     "maxChangedFiles": 60,
@@ -53,6 +63,7 @@
   "paths": {
     "state": ".ai/state/loop-state.json",
     "queue": ".ai/state/task-queue.json",
-    "reviewLog": ".ai/state/review-log.jsonl"
+    "reviewLog": ".ai/state/review-log.jsonl",
+    "taskDocs": "docs/tasks"
   }
 }

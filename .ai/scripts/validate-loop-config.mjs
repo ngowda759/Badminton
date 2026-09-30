@@ -20,6 +20,7 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { validateAgainstSchema } from './loop-schema.mjs';
+import { ACTIVE_STATUSES, validateTaskSequence } from './loop-core.mjs';
 
 const root =
   process.env.AI_LOOP_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -102,9 +103,12 @@ if (config !== null && state !== null) {
     }
   }
 
-  for (const configuredPath of Object.values(config.paths)) {
+  // The machine-readable state files must exist. `taskDocs` is a directory the
+  // architect writes briefs into, so it is created on demand, not required here.
+  for (const [name, configuredPath] of Object.entries(config.paths)) {
+    if (name === 'taskDocs') continue;
     if (!existsSync(resolve(root, configuredPath))) {
-      fail(`loop.config.paths points at a missing file: ${configuredPath}`);
+      fail(`loop.config.paths.${name} points at a missing file: ${configuredPath}`);
     }
   }
 
@@ -114,6 +118,37 @@ if (config !== null && state !== null) {
   if (config.review !== undefined && config.review.endpoint.startsWith('http://')) {
     fail('loop.config.review.endpoint must use https');
   }
+
+  // The autonomous architecture is a configuration contract, not a preference:
+  // a config that disables auto-merge or the next-task transition would silently
+  // break the loop's normal path.
+  if (config.automation.enabled === true) {
+    if (config.mergeGate.requireHumanApproval === true) {
+      fail(
+        'mergeGate.requireHumanApproval must be false while automation.enabled is true; a human merge gate contradicts the autonomous loop',
+      );
+    }
+    if (config.automation.autoMerge === true && config.mergeGate.enabled !== true) {
+      fail('automation.autoMerge requires mergeGate.enabled');
+    }
+    if (config.automation.autoMerge === true && config.mergeGate.requireCiGreen !== true) {
+      fail('automation.autoMerge requires mergeGate.requireCiGreen');
+    }
+    if (config.automation.autoMerge === true && config.mergeGate.requireReviewPassed !== true) {
+      fail('automation.autoMerge requires mergeGate.requireReviewPassed');
+    }
+    if (config.automation.autoAdvanceTasks === true && config.automation.nextTaskEnabled !== true) {
+      fail('automation.autoAdvanceTasks requires automation.nextTaskEnabled');
+    }
+  }
+
+  // A stopped loop must say why, so the human inheriting it does not have to
+  // reconstruct the reason from the history.
+  if (['blocked', 'human-review-required'].includes(state.status)) {
+    if (typeof state.blockedReason !== 'string' || state.blockedReason.length === 0) {
+      fail(`loop-state.status is "${state.status}" but blockedReason is not set`);
+    }
+  }
 }
 
 if (state !== null && queue !== null) {
@@ -121,12 +156,51 @@ if (state !== null && queue !== null) {
   const duplicates = ids.filter((id, index) => ids.indexOf(id) !== index);
   for (const duplicate of new Set(duplicates)) fail(`duplicate task id in queue: ${duplicate}`);
 
+  for (const error of validateTaskSequence(ids)) fail(error);
+
+  const inFlight = queue.tasks.filter((task) =>
+    ['in-progress', 'in-review', 'ready-to-merge'].includes(task.status),
+  );
+  if (inFlight.length > config.automation.maxConcurrentTasks) {
+    fail(
+      `${inFlight.length} tasks are active (${inFlight.map((task) => task.id).join(', ')}); ` +
+        `maxConcurrentTasks is ${config.automation.maxConcurrentTasks}`,
+    );
+  }
+
+  const awaitingImplementation = queue.tasks.filter((task) =>
+    ['proposed', 'queued', 'approved'].includes(task.status),
+  );
+  if (awaitingImplementation.length > 1) {
+    fail(
+      `${awaitingImplementation.length} tasks are waiting to be implemented ` +
+        `(${awaitingImplementation.map((task) => task.id).join(', ')}); the queue must hold at most one`,
+    );
+  }
+
   if (state.currentTaskId !== null) {
     const active = queue.tasks.find((task) => task.id === state.currentTaskId);
     if (active === undefined) {
       fail(`loop-state.currentTaskId ${state.currentTaskId} is not present in the task queue`);
-    } else if (active.humanApproval !== true) {
-      fail(`active task ${state.currentTaskId} has not been approved by a human`);
+    } else if (active.status === 'done' && ACTIVE_STATUSES.includes(state.status)) {
+      // A task may legitimately be `done` while the loop sits between tasks
+      // (`completed`, `next-task`, `idle`) or is stopped; what is impossible is
+      // a finished task while the loop still claims to be working on it.
+      fail(`active task ${state.currentTaskId} is done but the loop status is "${state.status}"`);
+    }
+  }
+
+  if (state.currentPr !== null && state.currentTaskId !== null) {
+    const active = queue.tasks.find((task) => task.id === state.currentTaskId);
+    if (
+      active !== undefined &&
+      active.pr !== undefined &&
+      active.pr !== null &&
+      active.pr !== state.currentPr.number
+    ) {
+      fail(
+        `task ${state.currentTaskId} records PR #${active.pr} but the loop state records PR #${state.currentPr.number}`,
+      );
     }
   }
 }

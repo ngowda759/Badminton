@@ -14,6 +14,7 @@ on:
       - ".ai/**"
       - ".github/workflows/**"
       - "docs/ai-development-loop.md"
+      - "docs/tasks/**"
       - ".openhands/skills/**"
       - "tests/unit/ai-loop/**"
   push:
@@ -22,6 +23,7 @@ on:
       - ".ai/**"
       - ".github/workflows/**"
       - "docs/ai-development-loop.md"
+      - "docs/tasks/**"
       - ".openhands/skills/**"
       - "tests/unit/ai-loop/**"
 
@@ -51,5 +53,11 @@ jobs:
       - name: Validate workflow structure
         run: node .ai/scripts/validate-workflows.mjs
 
+      - name: Assert the trusted workflows never run pull-request code
+        run: node .ai/scripts/assert-trusted-review.mjs
+
       - name: Report the loop state
         run: node .ai/scripts/loop-state.mjs status
+
+      - name: Report the task queue
+        run: node .ai/scripts/loop-tasks.mjs status

@@ -14,23 +14,23 @@ ChatGPT architect  →  OpenHands implementation  →  GitHub PR
         │                           approved                  changes-requested
         │                              │                               │
         │                              ▼                               ▼
-        │                        Human merge                   OpenHands fix
-        │                                                              │
-        │                                                    (same PR, CI, re-review)
-        │                                                              │
-   next-task generation  ←  merge gate  ←  ─────────────────────────────┘
-                                                   (max 3 review rounds)
+        │                       merge gate (auto)               OpenHands fix
+        │                              │                    (same PR, CI, re-review)
+        │                              ▼                               │
+   next-task generation  ◄──────  merge  ◄────────────────────────────┘
+                                          (max 3 review rounds)
 ```
 
 The loop is **infrastructure only**. It never implements product features, never
-redesigns the web application, never touches production data and never merges a
-pull request on its own. Each stage is a separate, auditable step.
+redesigns the web application and never touches production data. It **does** merge
+— through the merge gate, and only when every automated condition passes. Each
+stage is a separate, auditable step.
 
 **Roles.** ChatGPT is the architect and the reviewer. OpenHands is the
-implementer and the fixer. GitHub Actions is CI and the orchestrator. The human
-approves task briefs and performs the final merge. OpenHands never reviews its
-own work — the review stage is `.ai/scripts/chatgpt-review.mjs`, not an OpenHands
-conversation.
+implementer and the fixer. GitHub Actions is CI, the orchestrator and the merge
+gate. The human is an exception handler for hard stops only. OpenHands never
+reviews its own work — the review stage is `.ai/scripts/chatgpt-review.mjs`, not
+an OpenHands conversation.
 
 ## Contents
 
@@ -79,7 +79,7 @@ change.
   decision. Automation only reports readiness.
 - `protectedPaths` (production data, CI definitions, secrets) require human
   review and are never edited by the loop automatically.
-- Task briefs must declare `humanApproval: true` before the loop picks them up.
+- Task briefs carry `humanApproval: false`; the loop picks them up automatically.
 - A head SHA that a previous review already covered is never reviewed twice.
 - No stage reads or writes production data; every stage is a repository-local
   file or GitHub API operation.

@@ -14,22 +14,22 @@ ChatGPT architect  →  OpenHands implementation  →  GitHub PR
         │                           approved                  changes-requested
         │                              │                               │
         │                              ▼                               ▼
-        │                        Human merge                   OpenHands fix
-        │                                                              │
-        │                                                              ▼
-        │                                                             CI
-        │                                                              │
-        │                                                              ▼
-        │                                                    ChatGPT re-review
-        │                                                              │
-        │                                                   (round+1, max 3)
-        │                                                              │
-   next-task generation  ←  merge gate  ←  ─────────────────────────────┘
+        │                       merge gate (auto)               OpenHands fix
+        │                              │                               │
+        │                              ▼                               ▼
+        │                          merge → CI ───────────────────────► CI
+        │                              │                               │
+        │                              │                               ▼
+        │                              │                     ChatGPT re-review
+        │                              │                      (round+1, max 3)
+        │                              ▼
+   next-task generation  ◄────────────┘
 ```
 
 Every stage is a separate, auditable step. The loop is **infrastructure only**:
-it never implements product features, never redesigns the web application, never
-touches production data, and never merges a pull request.
+it never implements product features, never redesigns the web application and
+never touches production data. It **does** merge — but only through the merge
+gate, and only when every automated condition passes.
 
 ## Who does what
 
@@ -37,8 +37,8 @@ touches production data, and never merges a pull request.
 | -------------- | ---------------------------------------- |
 | ChatGPT        | Architect (task briefs) and **reviewer** |
 | OpenHands      | Implementer and **fixer**                |
-| GitHub Actions | CI and orchestrator                      |
-| Human          | Task approval and final merge            |
+| GitHub Actions | CI, orchestrator and **merge gate**      |
+| Human          | Exception handler only (hard stops)      |
 
 The reviewer and the implementer are different actors **by design**. OpenHands
 never reviews its own work: it implements, then fixes what ChatGPT reports. The
@@ -81,8 +81,8 @@ end-to-end tests. The required check name comes from `requiredChecks` in
 
 ### 4. Review — ChatGPT (automatic)
 
-`ai-loop-review.yml` fires on `opened`, `synchronize`, `reopened` and
-`ready_for_review`, waits for the required checks to finish
+`ai-loop-review.yml` is triggered by the `CI` workflow completing
+(`workflow_run`), waits for the required checks to finish
 (`.ai/scripts/wait-for-ci.mjs`), then runs `.ai/scripts/chatgpt-review.mjs`:
 
 1. reads the PR (title, body, diff, checks, existing comments) as **data**;
@@ -110,69 +110,126 @@ author's commits, and never merges.
 The push fires `synchronize`, which runs CI and the next review round — no manual
 step sits between a fix and its re-review.
 
-### 6. Merge gate — human
+### 6. Merge gate — automatic
 
-`mergeGate.enabled` is `false`: automation only reports readiness. On `approved`
-with green CI the loop applies `ai-ready`. The human checks CI, the review
-verdict, the acceptance criteria, protected paths and the change size, then
-merges — or returns the PR for another round, or blocks it.
+`ai-loop-merge-gate.yml` runs after the review. It re-derives **every** condition
+at merge time rather than trusting the earlier review — a push or a label change
+between approval and merge would otherwise be merged on stale evidence:
 
-### 7. Next-task generation — ChatGPT
+- the pull request is open, targets `main`, is not a fork, and is the loop's
+  recorded active pull request;
+- the branch uses the loop prefix (`automation/`);
+- the latest review verdict is `approved` **and** it records the current head
+  commit (`headMatchesApproval`);
+- every required check is green (`requiredChecks` in `.ai/loop.config.json`);
+- the pull request is mergeable;
+- no protected path or credential file changed.
 
-Proposes exactly one next task and resets the loop to `idle` / round `0`.
+When all of that holds it arms GitHub's **native auto-merge**, so the merge
+happens through the protected path and respects branch protection rather than
+racing it. A protected-path or credential change exits `3` (a human must merge);
+any other failure exits `1` and the loop stops.
+
+### 7. Next task — automatic
+
+`ai-loop-next-task.yml` fires when the pull request closes. If the loop's own
+pull request merged it records the task `done`, carries the reviewer's final
+findings onto the task, moves the loop through `completed` to `next-task`, and
+dispatches the architect conversation. `ai-loop-implement.yml` then fires on the
+`task-queue.json` push and dispatches the implementation — no human step sits
+between a merge and the next task.
+
+A pull request closed **without** merging is a hard stop (`merge-conflict`): the
+loop must not silently generate the next task when its own pull request was
+abandoned.
+
+### 8. Next-task generation — ChatGPT
+
+Proposes exactly one next task, appends it with `status: "approved"` and
+`humanApproval: false`, and stops. The queue change fires `ai-loop-implement.yml`,
+which dispatches the implementation. The loop is not reset to `idle`: it moves to
+`next-task` and then to `implementing`, so the round counter and the task
+association are never lost.
 
 ## The review round limit
 
 `maxReviewRounds` defaults to `3`. The round increments on each review; when it
-reaches the limit with findings still open, the loop applies `ai-blocked`, marks
-the task `blocked` and stops for a human instead of looping forever. It does not
-dispatch another fix at that point.
+reaches the limit with **blocking** findings still open, the loop applies
+`ai-blocked`, records `hard stop: max-rounds-exceeded` and stops for a human
+instead of looping forever. It does not dispatch another fix at that point. A
+limit reached with only advisory (`minor`/`nit`) findings left is not a hard
+stop.
 
 ## Anti-storm protection
 
 A review costs money and time, so a duplicate trigger must be a no-op:
 
-- the workflow is scoped to `automation/**` branches or a PR carrying
-  `ai-review`, so unrelated pull requests are never reviewed;
+- the review resolves its pull request through `.ai/scripts/resolve-review-pr.mjs`
+  and acts only on an open, same-repository pull request whose branch uses the
+  loop prefix or that carries `ai-review` — unrelated pull requests are ignored;
 - the reviewer refuses to review a head SHA that any previous review comment
   already covers, which holds even when the state file is stale;
-- one run per pull request at a time (`concurrency`), newest wins.
+- one run per pull request at a time (`concurrency`, `cancel-in-progress: false`),
+  so a re-run never races an in-flight review.
 
 ## State machine
 
 `loop-state.mjs set --status` enforces the loop's transitions:
 
 ```
-idle → implementing → ci-running → reviewing ─┬→ ready → human-merge → complete
-      ↑                                       └→ fixing → ci-running → reviewing
-      └── blocked ← (any state)
+completed → next-task → implementing → ci-running → reviewing
+                                   ↑                    │
+                                   │        ┌───────────┴───────────┐
+                                   │        │                       │
+                                   │   ready-to-merge          fixing → ci-running
+                                   │        │                       │
+                                   │      merging              reviewing (round+1)
+                                   │        │
+                                   └── completed ←────────────┘
+
+blocked / human-review-required  ←  (any state)
 ```
 
-`blocked` is reachable from anywhere, because a stage that cannot proceed must
-always be able to stop for a human. An illegal step is refused unless `--force`
-is passed, and a forced step is recorded in the history like any legal one.
+`blocked` and `human-review-required` are reachable from anywhere, because a stage
+that cannot proceed must always be able to stop for a human. An illegal step is
+refused unless `--force` is passed, and a forced step is recorded in the history
+like any legal one.
 
 ## Guardrails encoded in the repository
 
 - `protectedPaths` in `.ai/loop.config.json` (`prisma/migrations/**`,
   `prisma/seed.ts`, `.github/workflows/ci.yml`, `.env`, `.env.*`) are flagged by
-  `detect-changed-areas.mjs` and require human review.
+  `detect-changed-areas.mjs` **and** re-checked at review and merge time. A
+  protected-path or credential change is a hard stop: the loop never merges it.
 - `limits.maxChangedFiles` / `limits.maxDiffLines` bound a single change.
-- A task with `humanApproval: false` is never picked up; the validator fails the
-  loop if an unapproved task becomes active.
+- `maxConcurrentTasks` is `1`: the validator fails the loop if two tasks are
+  active, if two tasks are waiting to be implemented, or if a task is out of
+  sequence. `loop-tasks.mjs start` refuses a second implementation directly.
+- `mergeGate.requireHumanApproval` must be `false` while `automation.enabled` is
+  `true`, and `automation.autoMerge` requires `mergeGate.enabled`,
+  `requireCiGreen` and `requireReviewPassed` — the validator refuses a config that
+  contradicts the autonomous architecture.
 - `.ai/state/review-log.jsonl` is append-only and schema-validated. A review is
   never overwritten.
+- The trusted workflows are guarded by `assert-trusted-review.mjs`, which fails
+  if a `workflow_run` job checks out PR-controlled code, installs or runs it,
+  drops `persist-credentials: false`, or gains `contents: write`.
 
 ## Workflows
 
-| Workflow                 | Trigger                                                                   | Purpose                                                  |
-| ------------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `ci.yml`                 | PR / push to `main`                                                       | Unchanged product CI                                     |
-| `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill) | Validate config, state, schemas and workflow structure   |
-| `ai-loop-implement.yml`  | manual (`task_id`)                                                        | Dispatch one OpenHands implementation conversation       |
-| `ai-loop-review.yml`     | PR `opened`/`synchronize`/`reopened`/`ready_for_review`, or manual        | Wait for CI, run the ChatGPT review, route the verdict   |
-| `ai-loop-merge-gate.yml` | PR activity, or manual                                                    | Report merge readiness (never merges)                    |
-| `ai-loop-next-task.yml`  | manual                                                                    | Dispatch the next-task conversation after the merge gate |
+| Workflow                 | Trigger                                                                   | Purpose                                                |
+| ------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `ci.yml`                 | PR / push to `main`                                                       | Unchanged product CI                                   |
+| `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill) | Validate config, state, schemas and workflow structure |
+| `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                      | Wait for CI, run the ChatGPT review, route the verdict |
+| `ai-loop-merge-gate.yml` | `workflow_run` after the review, or manual                                | Re-check every gate, then merge (or stop for a human)  |
+| `ai-loop-next-task.yml`  | PR `closed` (merged loop PR), or manual recovery                          | Record the merge, dispatch the architect               |
+| `ai-loop-implement.yml`  | push to `main` touching `.ai/state/task-queue.json`, or manual recovery   | Dispatch the implementation conversation               |
+
+The two `workflow_run` workflows are the loop's most privileged and are
+deliberately separated from the pull request's own workflows: they run with the
+base repository's token and secrets, check out **only** the default branch, and
+never install or execute pull-request-controlled code.
 
 ## Required GitHub Secrets
 
@@ -200,27 +257,44 @@ secret at all.
 ## Required permissions
 
 - `ai-loop-validate.yml`: `contents: read`.
-- `ai-loop-implement.yml`: `contents: read`.
+- `ai-loop-implement.yml`: `contents: read`, `pull-requests: read`.
 - `ai-loop-review.yml`: `contents: read`, `checks: read`,
   `pull-requests: write`, `issues: write` — enough to read the PR and its checks
-  and to post the review comment and labels, and nothing more.
-- `ai-loop-merge-gate.yml`: `contents: read`, `checks: read`,
-  `pull-requests: read`.
-- `ai-loop-next-task.yml`: `contents: read`.
+  and to post the review comment and labels, and nothing more. **No
+  `contents: write`**: the review stage cannot push or merge.
+- `ai-loop-merge-gate.yml`: `contents: write`, `checks: read`,
+  `pull-requests: write` — the minimum a merge needs, and the only workflow in
+  the loop that can merge.
+- `ai-loop-next-task.yml`: `contents: read`, `pull-requests: read`,
+  `issues: write`.
 
-No workflow requests `contents: write`. Nothing in the loop can push, and nothing
-in the loop can merge — pushing a fix is an OpenHands conversation action
-performed with the user's own credentials, under the human's review.
+Only the merge gate can write. The review, next-task and implement workflows
+cannot push or merge, and `assert-trusted-review.mjs` fails the build if one of
+them gains `contents: write`.
 
 ## Security
 
-The review workflow runs with `pull_request`, never `pull_request_target`, so a
-fork pull request receives a read-only token and no secrets. Nothing from the PR
-is checked out, installed, built or sourced: the diff is read as text and sent to
-the reviewer, and the workflow explicitly skips a cross-repository pull request
-rather than reviewing a diff it cannot verify. The OpenHands fix stage is
-different on purpose — OpenHands is authenticated to the repository branch and is
-responsible for implementing the requested fix.
+The review and merge-gate workflows are triggered by `workflow_run`, so they run
+with the **base repository's** token and secrets even when the pull request came
+from a fork. That is deliberate — it is what lets them post a review and merge —
+and it is why both are held to a strict model:
+
+- they check out the **default branch only**, with an explicit
+  `ref: ${{ github.event.repository.default_branch }}` and
+  `persist-credentials: false`;
+- they never run `npm ci`/`npm install`/`npm run`, never `source` a repository
+  file, and never touch `node_modules`;
+- the pull request is read as **data** through `gh pr view` / `gh pr diff` /
+  `gh pr checks` and passed to the model as text;
+- a cross-repository (fork) pull request is refused rather than reviewed;
+- `.ai/scripts/assert-trusted-review.mjs` enforces all of the above and runs in
+  the validation workflow and in both trusted workflows, so a regression fails
+  the build instead of shipping a privilege-escalation bug.
+
+`ci.yml` is deliberately **not** a `workflow_run` trigger, so a pull request
+cannot reach the privileged workflows by editing the CI workflow. The OpenHands
+implement/fix stages are different on purpose — OpenHands is authenticated to the
+repository branch and is responsible for implementing the requested change.
 
 ## Validation
 
@@ -248,14 +322,23 @@ node .ai/scripts/loop-state.mjs reset --note "task merged"
 
 ## Manual setup still required
 
+The loop is autonomous once these one-time settings exist:
+
 1. Add the `ai-review`, `ai-task`, `ai-ready` and `ai-blocked` labels to the
    repository (the loop reads them from `.ai/loop.config.json`).
 2. Create the `OPENAI_API_KEY` and `OPENHANDS_API_KEY` secrets (and optionally
    the `OPENHANDS_HOST` and `OPENAI_REVIEW_MODEL` variables).
-3. Protect `main`: require the `CI` check and require at least one human review
-   before merge. The loop relies on branch protection for its merge gate.
-4. Decide who approves task briefs. A brief is only actionable once a human
-   flips `humanApproval` to `true` in `.ai/state/task-queue.json`.
+3. Protect `main` and require the `CI` check. Because the merge gate uses
+   GitHub's **native auto-merge**, branch protection is honoured: the merge waits
+   for the required checks rather than bypassing them. If you also require a human
+   review, the auto-merge will wait for it — that is a policy choice, not a loop
+   requirement.
+4. Enable auto-merge on the repository
+   (Settings → General → _Allow auto-merge_) if you want the gate to arm native
+   auto-merge. Without it the gate falls back to an explicit `gh pr merge`, which
+   still refuses a non-mergeable pull request.
+5. Create the task queue's first entry, or let the architect generate it. No
+   human approval of a brief is required — `humanApproval` is always `false`.
 
 ## Limitations
 
@@ -271,8 +354,18 @@ node .ai/scripts/loop-state.mjs reset --note "task merged"
   pinned actions, explicit permissions). GitHub parses the YAML authoritatively
   on push; `node --check` covers the scripts, but no local run replaces the
   GitHub parser.
-- The loop does not (and must not) merge. `mergeGate.enabled` stays `false`
-  until a human changes it, and even then the merge is a human action.
+- The merge gate's fallback path (an explicit `gh pr merge` when native
+  auto-merge is unavailable) merges immediately when the pull request is already
+  mergeable; the native path is preferred because it goes through branch
+  protection. If you require a human review on `main`, only the native path can
+  satisfy it — do not disable auto-merge on the repository in that case.
+- `resolve-review-pr.mjs` resolves the pull request from the `workflow_run`
+  event, the head branch or the manual input. A `workflow_run` on a fork has no
+  pull request number, so a fork contribution is only reviewed when its branch
+  uses the loop prefix — which is intentional.
+- The architect and next-task stages call the OpenHands Cloud API
+  (`dispatch-conversation.mjs`) and the ChatGPT Responses API
+  (`chatgpt-review.mjs`); the loop cannot run without both credentials.
 - **Known pre-existing e2e flake.** `e2e/phase8-6-hardening.spec.ts:213`
   ("a reconnect after missed events recovers the authoritative state") fails
   intermittently on `main` and on unrelated branches; it reproduces on the

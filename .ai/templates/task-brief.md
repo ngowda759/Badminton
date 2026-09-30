@@ -1,12 +1,12 @@
 # <task-id> — <title>
 
-| Field          | Value                                              |
-| -------------- | -------------------------------------------------- |
-| Task id        | `<task-id>`                                        |
-| Phase          | <phase>                                            |
-| Status         | proposed                                           |
-| Human approval | required (flip `humanApproval` to `true` to queue) |
-| Depends on     | <task ids, or "none">                              |
+| Field          | Value                                                   |
+| -------------- | ------------------------------------------------------- |
+| Task id        | `<task-id>`                                             |
+| Phase          | <phase>                                                 |
+| Status         | proposed                                                |
+| Human approval | not required — the brief is the implementation contract |
+| Depends on     | <task ids, or "none">                                   |
 
 ## Summary
 

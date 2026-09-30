@@ -4,29 +4,31 @@
   "tasks": [
     {
       "id": "AI-001",
-      "title": "Establish AI development loop",
+      "title": "Establish the autonomous AI development loop",
       "phase": "infrastructure",
-      "status": "in-review",
-      "summary": "Establish the repository-owned AI development loop infrastructure: .ai/ configuration, prompts, schemas and state; .openhands/skills/badminton-development; and the GitHub Actions workflows that validate the loop and gate merges. Infrastructure only - no product feature work.",
+      "status": "done",
+      "summary": "Establish the repository-owned autonomous AI development loop: the .ai/ configuration, prompts, schemas and machine-readable state; the .openhands/skills/badminton-development skill; and the event-driven GitHub Actions workflows that implement the review -> fix -> merge -> next-task cycle. Infrastructure only - no product feature work.",
       "acceptanceCriteria": [
-        "`.ai/loop.config.json` declares maxReviewRounds, baseBranch, protectedPaths, requiredChecks and label names, and validates against `.ai/schemas/loop-config.schema.json`.",
+        "`.ai/loop.config.json` declares maxReviewRounds, baseBranch, protectedPaths, requiredChecks, mergeGate, automation and label names, and validates against `.ai/schemas/loop-config.schema.json`.",
         "`.ai/state/loop-state.json`, `.ai/state/task-queue.json` and `.ai/state/review-log.jsonl` validate against their schemas.",
-        "`.openhands/skills/badminton-development/SKILL.md` exists with valid frontmatter and describes the repository's build/test/lint commands and layering rules.",
-        "`.github/workflows/ai-loop-validate.yml` runs the loop validator on pull requests and pushes and fails on invalid YAML, JSON or state.",
+        "The review stage is ChatGPT (`.ai/scripts/chatgpt-review.mjs`) and never an OpenHands conversation.",
+        "The merge gate merges automatically only when the review is approved, required CI is green, the head SHA matches the approval and no protected path changed.",
+        "A successful merge automatically generates exactly one next task and dispatches its implementation.",
+        "Exactly one implementation task may be active at a time (`maxConcurrentTasks` is 1).",
         "The existing CI workflow is unchanged and still runs lint, typecheck, test, build and e2e.",
-        "`npm run lint`, `npm run typecheck`, `npm test` and `npm run build` pass on the branch.",
-        "PR #18 is untouched by this change."
+        "`npm run lint`, `npm run typecheck`, `npm test` and `npm run build` pass on the branch."
       ],
       "outOfScope": [
         "Mobile implementation",
         "Web application redesign",
         "Production data or credential changes",
-        "Merging any pull request",
-        "Modifying or reusing PR #18"
+        "Merging any pull request by hand"
       ],
-      "humanApproval": true,
+      "humanApproval": false,
       "dependsOn": [],
       "references": ["AGENTS.md", ".github/workflows/ci.yml", "docs/ai-development-loop.md"],
+      "pr": 19,
+      "branch": "automation/ai-development-loop",
       "createdAt": "2026-09-30T00:00:00Z"
     }
   ]

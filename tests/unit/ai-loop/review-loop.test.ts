@@ -309,16 +309,16 @@ describe('loop decision', () => {
     expect(decision.message).toContain('Human intervention required');
   });
 
-  it('marks ready on a green approval and never merges', () => {
+  it('marks ready-to-merge on a green approval and hands the decision to the gate', () => {
     const decision = decisionFor({
       verdict: 'approved',
       ciStatus: 'success',
       round: 2,
       maxReviewRounds: 3,
     });
-    expect(decision).toMatchObject({ action: 'ready', status: 'ready' });
+    expect(decision).toMatchObject({ action: 'ready', status: 'ready-to-merge' });
     expect(decision.addLabels).toEqual(['ai-ready']);
-    expect(decision.message).toContain('never merges');
+    expect(decision.message).toContain('merge gate');
   });
 
   it('does not mark ready while CI is not green', () => {
@@ -747,45 +747,50 @@ describe('loop state machine transitions', () => {
     ).status;
   }
 
-  it('walks the documented path from idle to ready', () => {
+  it('walks the autonomous path from implementing to ready-to-merge', () => {
+    // The seeded state is `completed`, so the loop is armed to start the next
+    // task; the path below is the normal one-task cycle.
+    expect(set(['--status', 'next-task']).status).toBe(0);
     expect(set(['--status', 'implementing']).status).toBe(0);
     expect(set(['--status', 'ci-running']).status).toBe(0);
     expect(set(['--status', 'reviewing']).status).toBe(0);
     expect(set(['--status', 'fixing']).status).toBe(0);
     expect(set(['--status', 'ci-running']).status).toBe(0);
     expect(set(['--status', 'reviewing']).status).toBe(0);
-    expect(set(['--status', 'ready']).status).toBe(0);
-    expect(status()).toBe('ready');
+    expect(set(['--status', 'ready-to-merge']).status).toBe(0);
+    expect(status()).toBe('ready-to-merge');
   });
 
   it('refuses a transition the loop does not define', () => {
     const result = set(['--status', 'complete']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('refusing the transition idle -> complete');
-    expect(status()).toBe('idle');
+    expect(result.stderr).toContain('refusing the transition completed -> complete');
+    expect(status()).toBe('completed');
   });
 
   it('allows blocking from any state without --force', () => {
+    expect(set(['--status', 'next-task']).status).toBe(0);
     expect(set(['--status', 'implementing']).status).toBe(0);
     expect(set(['--status', 'blocked']).status).toBe(0);
     expect(status()).toBe('blocked');
   });
 
   it('records a forced transition in the history', () => {
-    expect(set(['--status', 'complete', '--force', '--note', 'recovering']).status).toBe(0);
+    expect(set(['--status', 'implementing', '--force', '--note', 'recovering']).status).toBe(0);
     const state = JSON.parse(readFileSync(join(scratch, '.ai/state/loop-state.json'), 'utf8')) as {
       history: { note: string }[];
     };
     expect(state.history.at(-1)?.note).toBe('recovering');
   });
 
-  it('allows the human-merge terminal state', () => {
+  it('allows the human-review-required terminal state', () => {
+    expect(set(['--status', 'next-task']).status).toBe(0);
     expect(set(['--status', 'implementing']).status).toBe(0);
     expect(set(['--status', 'ci-running']).status).toBe(0);
     expect(set(['--status', 'reviewing']).status).toBe(0);
-    expect(set(['--status', 'ready']).status).toBe(0);
-    expect(set(['--status', 'human-merge']).status).toBe(0);
-    expect(status()).toBe('human-merge');
+    expect(set(['--status', 'ready-to-merge']).status).toBe(0);
+    expect(set(['--status', 'human-review-required']).status).toBe(0);
+    expect(status()).toBe('human-review-required');
   });
 });
 
@@ -811,7 +816,9 @@ describe('review stage is not dispatched to OpenHands', () => {
     expect(workflow).toContain('chatgpt-review.mjs');
     expect(workflow).toContain('wait-for-ci.mjs');
     expect(workflow).not.toContain('--stage review');
-    expect(workflow).toContain('isCrossRepository');
+    // The reviewer reads the pull request as data through the API; it never
+    // checks the head out.
+    expect(workflow).toContain('resolve-review-pr.mjs');
   });
 });
 

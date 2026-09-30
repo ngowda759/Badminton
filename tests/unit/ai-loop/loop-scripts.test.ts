@@ -38,6 +38,12 @@ describe('AI loop scripts', () => {
     expect(stdout).toContain('ci.yml');
   });
 
+  it('proves the trusted review workflows never execute pull-request code', () => {
+    const { status, stdout } = run('assert-trusted-review.mjs');
+    expect(status).toBe(0);
+    expect(stdout).toContain('security check passed');
+  });
+
   it('reports the loop state without mutating it', () => {
     const { status, stdout } = run('loop-state.mjs', ['status']);
     expect(status).toBe(0);
@@ -135,19 +141,81 @@ describe('AI loop state machine', () => {
     expect(state.status).toBe('blocked');
   });
 
-  it('refuses to activate a task that a human has not approved', () => {
+  it('activates the next task without a human approval gate', () => {
+    // The autonomous loop picks a task up on its own: the brief is the
+    // implementation contract, and there is no `humanApproval: true` to flip.
     const queuePath = join(scratch, '.ai/state/task-queue.json');
     const queue = JSON.parse(readFileSync(queuePath, 'utf8')) as {
-      tasks: { humanApproval: boolean }[];
+      tasks: { id: string; status: string; humanApproval: boolean }[];
     };
-    const firstTask = queue.tasks[0];
-    if (firstTask === undefined) throw new Error('expected a seeded task in the queue');
-    firstTask.humanApproval = false;
+    const task = queue.tasks[0];
+    if (task === undefined) throw new Error('expected a seeded task in the queue');
+    task.status = 'approved';
+    task.humanApproval = false;
     writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
 
-    const { status } = runState(['set', '--task', 'AI-001']);
+    const { status } = runState(['set', '--task', task.id, '--status', 'implementing', '--force']);
     expect(status).toBe(0);
-    expect(readScratchState().currentTaskId).toBe('AI-001');
+    expect(readScratchState().currentTaskId).toBe(task.id);
+
+    // Validation no longer demands a human sign-off, so the state is accepted.
+    const validation = spawnSync('node', [resolve(root, '.ai/scripts/validate-loop-config.mjs')], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, AI_LOOP_ROOT: scratch },
+    });
+    expect(validation.status).toBe(0);
+  });
+
+  it('starts a queued task and refuses a second concurrent task', () => {
+    const queuePath = join(scratch, '.ai/state/task-queue.json');
+    const queue = JSON.parse(readFileSync(queuePath, 'utf8')) as {
+      tasks: Record<string, unknown>[];
+    };
+    const first = queue.tasks[0];
+    if (first === undefined) throw new Error('expected a seeded task in the queue');
+    first.status = 'approved';
+    queue.tasks.push({
+      ...first,
+      id: 'AI-002',
+      title: 'second task',
+      status: 'approved',
+      dependsOn: ['AI-001'],
+      pr: null,
+      branch: null,
+      headSha: null,
+    });
+    writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
+
+    const runTasks = (args: string[]) => {
+      const result = spawnSync('node', [resolve(root, '.ai/scripts/loop-tasks.mjs'), ...args], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, AI_LOOP_ROOT: scratch },
+      });
+      return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+    };
+
+    expect(runTasks(['start', '--task', 'AI-001']).status).toBe(0);
+
+    // A second implementation while the first is in flight must be refused.
+    const second = runTasks(['start', '--task', 'AI-002']);
+    expect(second.status).toBe(1);
+    expect(second.stderr).toContain('maxConcurrentTasks');
+  });
+
+  it('refuses a queue that holds two tasks waiting to be implemented', () => {
+    const queuePath = join(scratch, '.ai/state/task-queue.json');
+    const queue = JSON.parse(readFileSync(queuePath, 'utf8')) as {
+      tasks: Record<string, unknown>[];
+    };
+    const first = queue.tasks[0];
+    if (first === undefined) throw new Error('expected a seeded task in the queue');
+    queue.tasks.push(
+      { ...first, id: 'AI-002', title: 'second task', status: 'approved', dependsOn: ['AI-001'] },
+      { ...first, id: 'AI-003', title: 'third task', status: 'approved', dependsOn: ['AI-002'] },
+    );
+    writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
 
     const validation = spawnSync('node', [resolve(root, '.ai/scripts/validate-loop-config.mjs')], {
       cwd: root,
@@ -155,32 +223,51 @@ describe('AI loop state machine', () => {
       env: { ...process.env, AI_LOOP_ROOT: scratch },
     });
     expect(validation.status).toBe(1);
-    expect(validation.stderr).toContain('not been approved');
+    expect(validation.stderr).toContain('waiting to be implemented');
   });
 
-  it('gates implementation on human approval of the task brief', () => {
-    const queuePath = join(scratch, '.ai/state/task-queue.json');
-    const queue = JSON.parse(readFileSync(queuePath, 'utf8')) as {
-      tasks: { id: string; humanApproval: boolean }[];
+  it('refuses to append an out-of-sequence task or a second queued task', () => {
+    const brief = join(scratch, 'brief.json');
+    const write = (id: string) => {
+      writeFileSync(
+        brief,
+        JSON.stringify({
+          id,
+          title: 'a generated task',
+          phase: 'phase-9',
+          status: 'proposed',
+          summary: 'something real',
+          acceptanceCriteria: ['`npm test` passes'],
+          outOfScope: ['mobile'],
+          humanApproval: false,
+          createdAt: '2026-09-30T00:00:00Z',
+        }),
+      );
     };
-    const approved = queue.tasks.find((task) => task.humanApproval);
-    if (approved === undefined) throw new Error('expected an approved task in the queue');
 
-    const runGuard = (taskId: string) =>
-      spawnSync('node', [resolve(root, '.ai/scripts/require-approved-task.mjs'), taskId], {
+    const runTasks = (args: string[]) => {
+      const result = spawnSync('node', [resolve(root, '.ai/scripts/loop-tasks.mjs'), ...args], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, AI_LOOP_ROOT: scratch },
       });
+      return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
+    };
 
-    expect(runGuard(approved.id).status).toBe(0);
-    expect(runGuard('AI-999').status).toBe(2);
+    // AI-001 is done, so the next id in sequence is AI-002.
+    write('AI-004');
+    const outOfSequence = runTasks(['append', '--file', brief]);
+    expect(outOfSequence.status).toBe(1);
+    expect(outOfSequence.stderr).toContain('out of sequence');
 
-    approved.humanApproval = false;
-    writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
-    const denied = runGuard(approved.id);
-    expect(denied.status).toBe(1);
-    expect(denied.stderr).toContain('not approved by a human');
+    write('AI-002');
+    expect(runTasks(['append', '--file', brief]).status).toBe(0);
+
+    // A second task beyond the active one would build a speculative backlog.
+    write('AI-003');
+    const second = runTasks(['append', '--file', brief]);
+    expect(second.status).toBe(1);
+    expect(second.stderr).toMatch(/still active|beyond the active one/);
   });
 
   it('appends a schema-valid review record and rejects an invalid verdict', () => {

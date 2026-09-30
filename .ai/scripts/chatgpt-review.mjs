@@ -53,6 +53,7 @@ import {
   validateReport,
 } from './review-core.mjs';
 import { validateAgainstSchema } from './loop-schema.mjs';
+import { credentialViolations, protectedPathViolations } from './loop-core.mjs';
 
 const root =
   process.env.AI_LOOP_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -151,6 +152,41 @@ function repositoryRules() {
   return text.length > 20_000 ? `${text.slice(0, 20_000)}\n\n[truncated]` : text;
 }
 
+/**
+ * The paths the pull request changes, as GitHub reports them.
+ *
+ * `--changed-paths-file` exists so tests can drive the protected-path hard stop
+ * without a network round trip.
+ */
+function changedPaths(args, prNumber, repoArgs) {
+  if (typeof args['changed-paths-file'] === 'string') {
+    if (!existsSync(args['changed-paths-file'])) {
+      fail(`--changed-paths-file not found: ${args['changed-paths-file']}`, 2);
+    }
+    return readFileSync(args['changed-paths-file'], 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+  const files = ghJson(['pr', 'view', String(prNumber), ...repoArgs, '--json', 'files']);
+  return (files.files ?? []).map((file) => file.path).filter((path) => typeof path === 'string');
+}
+
+/**
+ * Protected-path hard stop.
+ *
+ * The loop must never merge a change to a migration, the CI definition or a
+ * credential file on its own judgement, so this is checked before the reviewer
+ * is even asked and short-circuits to a human.
+ */
+function protectedPathStop(paths) {
+  const protectedHits = protectedPathViolations(paths, config.protectedPaths);
+  const credentials = credentialViolations(paths);
+  if (config.automation.stopOnProtectedPath !== true) return null;
+  if (protectedHits.length === 0 && credentials.length === 0) return null;
+  return { protectedHits, credentials };
+}
+
 function buildInstructions() {
   return [readPrompt('system.md'), readPrompt('review.md')].join('\n\n---\n\n');
 }
@@ -239,7 +275,7 @@ function appendReviewLog(report) {
   log(`recorded review round ${report.round} (${report.verdict}) in ${config.paths.reviewLog}`);
 }
 
-function setLoopState({ status, round, pr, taskId }) {
+function setLoopState({ status, round, pr, taskId, verdict, ciStatus }) {
   const args = [
     resolve(root, '.ai/scripts/loop-state.mjs'),
     'set',
@@ -255,6 +291,10 @@ function setLoopState({ status, round, pr, taskId }) {
     pr.headRefName,
     '--head',
     pr.headRefOid,
+    '--verdict',
+    verdict,
+    '--ci',
+    ciStatus,
     '--note',
     `chatgpt review round ${round}: ${status}`,
   ];
@@ -343,6 +383,71 @@ async function main() {
 
   if (plan.action === 'skip') {
     log(`no review needed: ${plan.reason}`);
+    process.exit(0);
+  }
+
+  // A protected-path change is a hard stop that outranks the reviewer: the loop
+  // must not merge a migration, a CI definition or a credential file on its own
+  // judgement, so the pull request is parked for a human before any review.
+  const paths = changedPaths(args, prNumber, repoArgs);
+  const pathStop = protectedPathStop(paths);
+  if (pathStop !== null) {
+    const detail = [
+      ...pathStop.protectedHits.map((path) => `- ${path} (protected path)`),
+      ...pathStop.credentials.map((path) => `- ${path} (credential file)`),
+    ];
+    log(`protected-path hard stop on PR #${prNumber}:`);
+    for (const line of detail) log(`  ${line}`);
+
+    if (dryRun) {
+      log('dry run: the loop would stop here for a human (hard stop: protected-path).');
+      process.exit(0);
+    }
+
+    const comment = [
+      `<!-- ${config.review.markerName} round=${plan.round} head=${pr.headRefOid} verdict=blocked -->`,
+      '',
+      '## AI review - hard stop: protected path',
+      '',
+      `- **Head SHA:** ${pr.headRefOid}`,
+      '',
+      'This pull request changes files the loop must never merge on its own judgement:',
+      '',
+      ...detail,
+      '',
+      'The loop has stopped and will not review, fix or merge it. A human must review the change',
+      'and merge it manually if it is correct. No further task will start until this is resolved.',
+      '',
+      '---',
+      '',
+      'This review was produced by an AI agent (ChatGPT, orchestrated by GitHub Actions) on behalf of the user.',
+    ].join('\n');
+    const commentFile = resolve(root, '.ai/state/.review-comment.md');
+    writeFileSync(commentFile, `${comment}\n`);
+    tryGh(['pr', 'comment', String(prNumber), ...repoArgs, '--body-file', commentFile]);
+
+    const stop = spawnSync(
+      'node',
+      [
+        resolve(root, '.ai/scripts/loop-state.mjs'),
+        'stop',
+        '--event',
+        'protected-path',
+        '--status',
+        'human-review-required',
+        '--note',
+        `PR #${prNumber} changes ${[...pathStop.protectedHits, ...pathStop.credentials].join(', ')}`,
+      ],
+      { cwd: root, encoding: 'utf8' },
+    );
+    if (stop.status !== 0) log(`note: could not record the stop: ${stop.stderr.trim()}`);
+
+    applyLabels({
+      pr,
+      add: [config.automation.blockedLabel],
+      remove: [config.automation.readyLabel],
+    });
+    log('stopped for a human; the loop will not continue on this pull request.');
     process.exit(0);
   }
 
@@ -506,7 +611,14 @@ async function main() {
   if (!posted.ok) fail(`failed to post the review comment: ${posted.stderr.trim()}`);
   log(`posted the round ${report.round} review to PR #${prNumber}`);
 
-  setLoopState({ status: decision.status, round: plan.round, pr, taskId: report.taskId });
+  setLoopState({
+    status: decision.status,
+    round: plan.round,
+    pr,
+    taskId: report.taskId,
+    verdict: report.verdict,
+    ciStatus: ci.status,
+  });
   applyLabels({ pr, add: decision.addLabels, remove: decision.removeLabels });
 
   if (decision.action === 'fix') {
