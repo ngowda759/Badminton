@@ -129,3 +129,45 @@ describe('TournamentService.transitionStatus', () => {
     ).rejects.toBeInstanceOf(InvalidStateTransitionError);
   });
 });
+
+describe('TournamentService.list', () => {
+  it('returns an empty page when there are no tournaments', async () => {
+    const page = await service.list({ limit: 20 });
+    expect(page.items).toEqual([]);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('returns tournaments newest first with a stable id tiebreaker', async () => {
+    const created = [
+      await service.create({ ...validInput, name: 'One' }),
+      await service.create({ ...validInput, name: 'Two' }),
+      await service.create({ ...validInput, name: 'Three' }),
+    ];
+
+    const page = await service.list({ limit: 20 });
+    const expected = [...created].sort((left, right) => right.id.localeCompare(left.id));
+    expect(page.items.map((tournament) => tournament.id)).toEqual(expected.map((item) => item.id));
+  });
+
+  it('caps the page at the requested limit and resumes after the cursor', async () => {
+    const created = [
+      await service.create({ ...validInput, name: 'One' }),
+      await service.create({ ...validInput, name: 'Two' }),
+      await service.create({ ...validInput, name: 'Three' }),
+    ];
+
+    const first = await service.list({ limit: 2 });
+    expect(first.items).toHaveLength(2);
+    expect(first.nextCursor).toBe(first.items[1]?.id ?? null);
+
+    const second = await service.list({
+      limit: 2,
+      ...(first.nextCursor ? { cursor: first.nextCursor } : {}),
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.nextCursor).toBeNull();
+
+    const seen = [...first.items, ...second.items].map((tournament) => tournament.id);
+    expect(new Set(seen)).toEqual(new Set(created.map((item) => item.id)));
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
@@ -10,7 +10,6 @@ import { StatusBadge } from '@/components/status-badge.tsx';
 import { useTournament } from '@/components/tournaments/context.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { useRecent } from '@/hooks/use-recent.tsx';
 import { tournamentNextStatuses } from '@/lib/lifecycle.ts';
 import { formatCalendarDate, orDash } from '@/lib/format.ts';
 
@@ -18,12 +17,7 @@ import { formatCalendarDate, orDash } from '@/lib/format.ts';
 export function TournamentDetailsPage() {
   const api = useApi();
   const { tournament, refetch } = useTournament();
-  const { remember } = useRecent();
   const mutation = useMutation<unknown>();
-
-  useEffect(() => {
-    remember('tournaments', { id: tournament.id, label: tournament.name });
-  }, [remember, tournament.id, tournament.name]);
 
   const links = [
     { to: 'dashboard', label: 'Dashboard' },

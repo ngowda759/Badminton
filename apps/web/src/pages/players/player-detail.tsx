@@ -12,7 +12,6 @@ import { FormField } from '@/components/form-field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { useRecent } from '@/hooks/use-recent.tsx';
 import { fieldErrors } from '@/lib/errors.ts';
 import {
   compactErrors,
@@ -26,7 +25,6 @@ import {
 export function PlayerDetailPage() {
   const api = useApi();
   const { playerId = '' } = useParams();
-  const { remember } = useRecent();
 
   const { state, refetch } = useApiQuery<PlayerDto>(['player', playerId], (signal) =>
     api.players.get(playerId, signal),
@@ -62,8 +60,7 @@ export function PlayerDetailPage() {
         <CardContent>
           <EditPlayerForm
             player={player}
-            onSaved={(updated) => {
-              remember('players', { id: updated.id, label: updated.name });
+            onSaved={() => {
               refetch();
             }}
           />

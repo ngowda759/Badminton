@@ -12,6 +12,8 @@ import type {
   CreateTeamMemberData,
   CreateTournamentData,
   CourtRepository,
+  ListPage,
+  ListQuery,
   MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
@@ -21,6 +23,7 @@ import type {
   RepositoryClient,
   TeamMemberRepository,
   TeamRepository,
+  TeamWithMemberCount,
   TournamentCategoryRepository,
   TournamentEntryRepository,
   TournamentRepository,
@@ -66,6 +69,20 @@ type Db = PrismaClient | TransactionClient;
 
 const UNIQUE_LOOKUP = { take: 1 } as const;
 
+/**
+ * Turns a cursor-paginated `findMany` result into a `ListPage`.
+ *
+ * The repository reads `limit + 1` rows: the extra row proves whether another
+ * page exists without a second `count` query. `nextCursor` is the last returned
+ * row's id, or `null` on the final page.
+ */
+function toPage<T extends { readonly id: string }>(rows: readonly T[], limit: number): ListPage<T> {
+  const items = rows.slice(0, limit);
+  const last = items[items.length - 1];
+  const hasMore = rows.length > limit;
+  return { items, nextCursor: hasMore && last ? last.id : null };
+}
+
 function createTournamentRepository(db: Db): TournamentRepository {
   return {
     create(data: CreateTournamentData) {
@@ -77,6 +94,19 @@ function createTournamentRepository(db: Db): TournamentRepository {
       return translatePersistenceErrors(async () => {
         const row = await db.tournament.findUnique({ where: { id } });
         return row ? toTournament(row) : undefined;
+      });
+    },
+    listPage(query: ListQuery) {
+      return translatePersistenceErrors(async () => {
+        // Prisma cursor pagination: the unique `id` cursor plus `skip: 1`
+        // resumes strictly after the previous page under the (createdAt, id)
+        // ordering, with no OFFSET scan. Newest first.
+        const rows = await db.tournament.findMany({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: query.limit + 1,
+          ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        });
+        return toPage(rows.map(toTournament), query.limit);
       });
     },
     update(id: string, data: UpdateTournamentData) {
@@ -159,6 +189,19 @@ function createPlayerRepository(db: Db): PlayerRepository {
         return row ? toPlayer(row) : undefined;
       });
     },
+    listPage(query: ListQuery) {
+      return translatePersistenceErrors(async () => {
+        // Prisma cursor pagination on the unique `id`: `skip: 1` resumes strictly
+        // after the previous page under the (createdAt, id) ordering, no OFFSET
+        // scan. Newest first, matching the tournament collection.
+        const rows = await db.player.findMany({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: query.limit + 1,
+          ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        });
+        return toPage(rows.map(toPlayer), query.limit);
+      });
+    },
     async listByIds(ids: readonly string[]) {
       return translatePersistenceErrors(async () => {
         if (ids.length === 0) {
@@ -187,6 +230,27 @@ function createTeamRepository(db: Db): TeamRepository {
         return row ? toTeam(row) : undefined;
       });
     },
+    async listPageWithMemberCount(query: ListQuery) {
+      return translatePersistenceErrors(async () => {
+        // One page of teams, then one grouped `count` over just those team ids -
+        // the member count is never fetched with a query per team.
+        const rows = await db.team.findMany({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: query.limit + 1,
+          ...(query.cursor ? { cursor: { id: query.cursor }, skip: 1 } : {}),
+        });
+        const page = toPage(rows.map(toTeam), query.limit);
+        const counts = await countTeamMembers(
+          db,
+          page.items.map((team) => team.id),
+        );
+        const items: TeamWithMemberCount[] = page.items.map((team) => ({
+          team,
+          memberCount: counts.get(team.id) ?? 0,
+        }));
+        return { items, nextCursor: page.nextCursor };
+      });
+    },
     async listByIds(ids: readonly string[]) {
       return translatePersistenceErrors(async () => {
         if (ids.length === 0) {
@@ -202,6 +266,22 @@ function createTeamRepository(db: Db): TeamRepository {
       );
     },
   };
+}
+
+/** Grouped member counts for the given teams; empty input issues no query. */
+async function countTeamMembers(
+  db: Db,
+  teamIds: readonly string[],
+): Promise<ReadonlyMap<string, number>> {
+  if (teamIds.length === 0) {
+    return new Map();
+  }
+  const grouped = await db.teamMember.groupBy({
+    by: ['teamId'],
+    where: { teamId: { in: [...teamIds] } },
+    _count: { _all: true },
+  });
+  return new Map(grouped.map((group) => [group.teamId, group._count._all]));
 }
 
 function createTeamMemberRepository(db: Db): TeamMemberRepository {

@@ -82,6 +82,7 @@ buildApp()  →  app.listen()  →  SIGINT/SIGTERM  →  app.close() → prisma.
 
 | Method   | Path                                           | Service     |
 | -------- | ---------------------------------------------- | ----------- |
+| `GET`    | `/api/v1/tournaments`                          | tournaments |
 | `POST`   | `/api/v1/tournaments`                          | tournaments |
 | `GET`    | `/api/v1/tournaments/:id`                      | tournaments |
 | `PATCH`  | `/api/v1/tournaments/:id`                      | tournaments |
@@ -91,9 +92,11 @@ buildApp()  →  app.listen()  →  SIGINT/SIGTERM  →  app.close() → prisma.
 | `GET`    | `/api/v1/categories/:id`                       | categories  |
 | `PATCH`  | `/api/v1/categories/:id`                       | categories  |
 | `POST`   | `/api/v1/categories/:id/transition`            | categories  |
+| `GET`    | `/api/v1/players`                              | players     |
 | `POST`   | `/api/v1/players`                              | players     |
 | `GET`    | `/api/v1/players/:id`                          | players     |
 | `PATCH`  | `/api/v1/players/:id`                          | players     |
+| `GET`    | `/api/v1/teams`                                | teams       |
 | `POST`   | `/api/v1/teams`                                | teams       |
 | `GET`    | `/api/v1/teams/:id`                            | teams       |
 | `PATCH`  | `/api/v1/teams/:id`                            | teams       |
@@ -120,15 +123,59 @@ buildApp()  →  app.listen()  →  SIGINT/SIGTERM  →  app.close() → prisma.
 | `GET`    | `/api/v1/matches/:matchId/participants`        | matches     |
 | `POST`   | `/api/v1/matches/:matchId/participants`        | matches     |
 
-Only operations already supported by the Phase 2 services are exposed. Listing
-tournaments across the collection is **not** implemented, because the
-application layer does not provide it; no new query system was invented for the
-API.
+Only operations already supported by the application layer are exposed. The
+`GET` collection endpoints (`/tournaments`, `/players`, `/teams`) are
+cursor-paginated list reads; the application services gained matching `list`
+methods rather than the API inventing a query system of its own.
 
 `GET /api/v1/tournaments/:tournamentId/events` is the Phase 8.2 realtime
 endpoint; it is a Server-Sent Events stream rather than a JSON resource and is
 documented in [`phase-8-realtime.md`](./phase-8-realtime.md). It is a
 notification channel only — REST remains authoritative.
+
+### Collection endpoints
+
+`GET /api/v1/tournaments`, `GET /api/v1/players` and `GET /api/v1/teams` return
+one page of a persisted collection so the web UI lists records from the
+database instead of browser session storage.
+
+Query parameters (all optional):
+
+| Parameter | Type    | Default | Notes                                                        |
+| --------- | ------- | ------- | ------------------------------------------------------------ |
+| `limit`   | integer | `20`    | 1–100 inclusive; a value outside the range fails with `400`. |
+| `cursor`  | UUID    | —       | Opaque cursor from the previous page's `nextCursor`.         |
+
+Response:
+
+```json
+{ "data": { "items": [{ "id": "…" }], "nextCursor": "…" } }
+```
+
+`nextCursor` is the last returned row's id when more rows remain, or `null` on
+the last page; pass it back as `cursor` to fetch the next page. Pagination is
+cursor-based (Prisma `cursor` + `skip: 1` over a unique id), so no `OFFSET` scan
+is performed and the dataset is never loaded unbounded.
+
+Ordering is deterministic and newest first for every collection:
+
+- Tournaments — `createdAt` descending, `id` descending.
+- Players — `createdAt` descending, `id` descending.
+- Teams — `createdAt` descending, `id` descending.
+
+Newest-first ordering keeps a freshly created record on the first page, so the
+create → list flow shows it immediately without paging.
+
+List DTOs expose only operator-facing fields:
+
+| Collection  | Fields                                                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------------------------- |
+| Tournaments | `id`, `name`, `description`, `status`, `startDate`, `endDate`, `location`, `timezone`, `createdAt`, `updatedAt` |
+| Players     | `id`, `name`, `email`, `phone`, `createdAt`, `updatedAt`                                                        |
+| Teams       | `id`, `name`, `memberCount`, `createdAt`, `updatedAt`                                                           |
+
+`memberCount` is a derived count over the page's team ids in one grouped read,
+so listing teams never issues a query per team (no N+1).
 
 ### Lifecycle
 
@@ -164,11 +211,15 @@ Single resource:
 { "data": { "id": "…", "…": "…" } }
 ```
 
-Collection:
+Collection (cursor-paginated, Phase "collection APIs"):
 
 ```json
-{ "data": [] }
+{ "data": { "items": [], "nextCursor": null } }
 ```
+
+Nested collections that are fully owned by a parent (a tournament's categories,
+a category's stages, a match's participants) remain plain arrays
+(`{ "data": [] }`) because they are bounded and not independently paginated.
 
 Status codes: `201` on create, `200` on read/update/transition, `204` on member
 removal (the only bodyless operation). All JSON responses use

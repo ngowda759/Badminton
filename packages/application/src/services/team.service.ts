@@ -8,9 +8,25 @@ import {
   type TeamMember,
 } from '@badminton/domain';
 
+import type { ListPage, ListQuery } from '../repositories/data.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { AddTeamMemberCommand, CreateTeamCommand } from './commands.ts';
+
+/**
+ * A team as shown in the collection list.
+ *
+ * Carries the team's own fields plus a derived `memberCount`, so the list can
+ * show a useful summary without exposing every member (or issuing a query per
+ * team). The count is computed by one grouped aggregate in the repository.
+ */
+export interface TeamSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+  readonly memberCount: number;
+}
 
 /**
  * Team service.
@@ -25,6 +41,8 @@ export interface TeamService {
   create(command: CreateTeamCommand): Promise<Team>;
   update(id: string, command: { name: string }): Promise<Team>;
   getById(id: string): Promise<Team>;
+  /** One page of teams with member counts, newest first, for the list screen. */
+  list(query: ListQuery): Promise<ListPage<TeamSummary>>;
   listMembers(teamId: string): Promise<readonly TeamMember[]>;
   addMember(teamId: string, command: AddTeamMemberCommand): Promise<TeamMember>;
   removeMember(teamId: string, playerId: string): Promise<void>;
@@ -69,6 +87,22 @@ export function createTeamService(client: RepositoryClient, unitOfWork: UnitOfWo
 
     async getById(id: string): Promise<Team> {
       return requireTeam(client, id);
+    },
+
+    async list(query: ListQuery): Promise<ListPage<TeamSummary>> {
+      // Read-only, and the repository returns the member counts already joined
+      // in one grouped read - the service adds no per-team query.
+      const page = await client.teams.listPageWithMemberCount(query);
+      return {
+        items: page.items.map(({ team, memberCount }) => ({
+          id: team.id,
+          name: team.name,
+          createdAt: team.createdAt,
+          updatedAt: team.updatedAt,
+          memberCount,
+        })),
+        nextCursor: page.nextCursor,
+      };
     },
 
     async listMembers(teamId: string): Promise<readonly TeamMember[]> {

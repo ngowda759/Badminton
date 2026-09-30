@@ -2,11 +2,13 @@ import type { PlayerService } from '@badminton/application';
 import {
   createPlayerInputSchema,
   idParamSchema,
+  listQuerySchema,
   updatePlayerInputSchema,
 } from '@badminton/validation';
 import type { FastifyPluginCallback } from 'fastify';
 
-import { compact, validate } from '../request.ts';
+import { toListResponse, toPlayerListItem } from '../dto.ts';
+import { compact, normalizeListQuery, validate } from '../request.ts';
 import { data } from '../response.ts';
 
 export interface PlayerRoutesOptions {
@@ -27,6 +29,12 @@ export const playerRoutes: FastifyPluginCallback<PlayerRoutesOptions> = (app, op
     const body = validate(createPlayerInputSchema, request.body);
     const player = await players.create(compact(body));
     return reply.status(201).send(data(player));
+  });
+
+  app.get('/players', async (request) => {
+    const query = validate(listQuerySchema, request.query);
+    const page = await players.list(normalizeListQuery(query));
+    return data(toListResponse(page, toPlayerListItem));
   });
 
   app.get('/players/:id', async (request) => {

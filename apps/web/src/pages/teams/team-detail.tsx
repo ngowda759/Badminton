@@ -22,7 +22,6 @@ import {
 } from '@/components/ui/table.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { useRecent } from '@/hooks/use-recent.tsx';
 import { fieldErrors } from '@/lib/errors.ts';
 import { compactErrors, validateRequired, type FieldErrors } from '@/lib/form-validation.ts';
 
@@ -30,7 +29,6 @@ import { compactErrors, validateRequired, type FieldErrors } from '@/lib/form-va
 export function TeamDetailPage() {
   const api = useApi();
   const { teamId = '' } = useParams();
-  const { remember } = useRecent();
 
   const teamQuery = useApiQuery<TeamDto>(['team', teamId], (signal) =>
     api.teams.get(teamId, signal),
@@ -75,8 +73,7 @@ export function TeamDetailPage() {
         <CardContent>
           <RenameTeamForm
             team={team}
-            onSaved={(updated) => {
-              remember('teams', { id: updated.id, label: updated.name });
+            onSaved={() => {
               teamQuery.refetch();
             }}
           />

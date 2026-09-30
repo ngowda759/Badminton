@@ -20,11 +20,11 @@ import type {
   StageDto,
   StandingRowDto,
   TeamDto,
+  TeamListItemDto,
   TeamMemberDto,
   TournamentDashboardDto,
   TournamentDto,
 } from '@/api/types.ts';
-import { RecentProvider } from '@/hooks/use-recent.tsx';
 
 /** Fixed timestamps so DTOs are deterministic in tests. */
 const ISO = '2026-10-01T00:00:00.000Z';
@@ -76,6 +76,17 @@ export function makeTeam(overrides: Partial<TeamDto> = {}): TeamDto {
   return {
     id: '44444444-4444-4444-8444-444444444444',
     name: 'Smash Masters',
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  };
+}
+
+export function makeTeamListItem(overrides: Partial<TeamListItemDto> = {}): TeamListItemDto {
+  return {
+    id: '44444444-4444-4444-8444-444444444444',
+    name: 'Smash Masters',
+    memberCount: 0,
     createdAt: ISO,
     updatedAt: ISO,
     ...overrides,
@@ -310,6 +321,9 @@ export function createStubApi(): Mocked<BadmintonApi> {
     tournaments: {
       create: vi.fn(() => Promise.resolve(makeTournament())),
       get: vi.fn(() => Promise.resolve(makeTournament())),
+      list: vi.fn(() =>
+        Promise.resolve({ items: [] as readonly TournamentDto[], nextCursor: null }),
+      ),
       update: vi.fn(() => Promise.resolve(makeTournament())),
       transition: vi.fn(() => Promise.resolve(makeTournament())),
     },
@@ -323,11 +337,15 @@ export function createStubApi(): Mocked<BadmintonApi> {
     players: {
       create: vi.fn(() => Promise.resolve(makePlayer())),
       get: vi.fn(() => Promise.resolve(makePlayer())),
+      list: vi.fn(() => Promise.resolve({ items: [] as readonly PlayerDto[], nextCursor: null })),
       update: vi.fn(() => Promise.resolve(makePlayer())),
     },
     teams: {
       create: vi.fn(() => Promise.resolve(makeTeam())),
       get: vi.fn(() => Promise.resolve(makeTeam())),
+      list: vi.fn(() =>
+        Promise.resolve({ items: [] as readonly TeamListItemDto[], nextCursor: null }),
+      ),
       update: vi.fn(() => Promise.resolve(makeTeam())),
       listMembers: vi.fn(() => Promise.resolve([] as readonly TeamMemberDto[])),
       addMember: vi.fn(() => Promise.resolve(makeTeamMember())),
@@ -383,7 +401,7 @@ export interface RenderWithProvidersOptions {
   readonly api?: BadmintonApi;
 }
 
-/** Renders a tree with the API, recent-items and router providers attached. */
+/** Renders a tree with the API and router providers attached. */
 export function renderWithProviders(
   ui: ReactNode,
   options: RenderWithProvidersOptions = {},
@@ -391,9 +409,7 @@ export function renderWithProviders(
   const api = options.api ?? createStubApi();
   return render(
     <ApiProvider api={api}>
-      <RecentProvider>
-        <MemoryRouter initialEntries={[options.route ?? '/']}>{ui}</MemoryRouter>
-      </RecentProvider>
+      <MemoryRouter initialEntries={[options.route ?? '/']}>{ui}</MemoryRouter>
     </ApiProvider>,
   );
 }

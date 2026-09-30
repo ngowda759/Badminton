@@ -1,61 +1,59 @@
 import { useState, type SubmitEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
+import type { TeamListItemDto } from '@/api/types.ts';
 import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
-import { EmptyState } from '@/components/states.tsx';
+import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
 import { FormField } from '@/components/form-field.tsx';
 import { Input } from '@/components/ui/input.tsx';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableWrapper,
+} from '@/components/ui/table.tsx';
+import { useCollection, type CollectionResult } from '@/hooks/use-collection.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { useRecent } from '@/hooks/use-recent.tsx';
 import { fieldErrors } from '@/lib/errors.ts';
+import { formatCalendarDate } from '@/lib/format.ts';
 import { compactErrors, validateRequired, type FieldErrors } from '@/lib/form-validation.ts';
 
 /**
  * Team management.
  *
- * Phase 3 exposes no team collection endpoint, so the page offers creation and
- * a list of recently created/opened teams (re-fetched by id). Membership is
- * managed on the team detail page; the doubles "exactly two members" rule is
- * enforced at registration, not in this generic editor.
+ * The list is server-backed: `GET /api/v1/teams` returns persisted teams name
+ * ascending with a member count (one grouped read, no per-team query). Creating
+ * a team refetches the same list so the new team appears from server state.
+ * Membership is managed on the team detail page; the doubles "exactly two
+ * members" rule is enforced at registration, not in this generic editor.
  */
 export function TeamsPage() {
-  const { state } = useRecent();
+  const api = useApi();
+  const collection = useCollection(['teams'], (params, signal) => api.teams.list(params, signal));
 
   return (
     <div className="space-y-6">
       <PageHeader title="Teams" description="Create teams and manage their members." />
 
-      <CreateTeamCard />
+      <CreateTeamCard
+        onCreated={() => {
+          collection.refetch();
+        }}
+      />
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent teams</CardTitle>
+          <CardTitle>All teams</CardTitle>
         </CardHeader>
-        <CardContent>
-          {state.teams.length === 0 ? (
-            <EmptyState
-              title="No teams yet"
-              description="Create a team to register it in a doubles category."
-            />
-          ) : (
-            <ul className="divide-border divide-y" data-testid="recent-teams">
-              {state.teams.map((item) => (
-                <li key={item.id} className="flex items-center justify-between gap-3 py-2">
-                  <Link
-                    className="text-primary text-sm font-medium underline-offset-4 hover:underline"
-                    to={`/teams/${item.id}`}
-                  >
-                    {item.label}
-                  </Link>
-                  <span className="text-muted-foreground truncate text-xs">{item.id}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardContent className="space-y-4">
+          <TeamList collection={collection} />
         </CardContent>
       </Card>
 
@@ -64,14 +62,92 @@ export function TeamsPage() {
   );
 }
 
-function CreateTeamCard() {
+function TeamList({ collection }: { readonly collection: CollectionResult<TeamListItemDto> }) {
+  const { state, hasMore, loadingMore, loadMore, loadMoreError, refetch } = collection;
+
+  if (state.status === 'loading') {
+    return <LoadingState label="Loading teams…" />;
+  }
+
+  if (state.status === 'error') {
+    return <ErrorState error={state.error} title="Could not load teams" onRetry={refetch} />;
+  }
+
+  if (state.items.length === 0) {
+    return (
+      <EmptyState
+        title="No teams yet"
+        description="Create a team to register it in a doubles category."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4" data-testid="team-list">
+      <TableWrapper>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Team</TableHead>
+              <TableHead>Members</TableHead>
+              <TableHead>Created</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {state.items.map((team) => (
+              <TableRow key={team.id}>
+                <TableCell className="font-medium">
+                  <Link
+                    className="text-primary underline-offset-4 hover:underline"
+                    to={`/teams/${team.id}`}
+                  >
+                    {team.name}
+                  </Link>
+                </TableCell>
+                <TableCell className="text-muted-foreground">{team.memberCount}</TableCell>
+                <TableCell className="text-muted-foreground whitespace-nowrap">
+                  {formatCalendarDate(team.createdAt)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/teams/${team.id}`}>View</Link>
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableWrapper>
+
+      {loadMoreError ? (
+        <ErrorState error={loadMoreError} title="Could not load more teams" onRetry={loadMore} />
+      ) : null}
+
+      {hasMore ? (
+        <div className="flex justify-center">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={loadingMore}
+            onClick={() => {
+              loadMore();
+            }}
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CreateTeamCard({ onCreated }: { readonly onCreated: () => void }) {
   const api = useApi();
-  const navigate = useNavigate();
   const [name, setName] = useState('');
   const [memberIds, setMemberIds] = useState<string[]>(['']);
   const [errors, setErrors] = useState<FieldErrors>({});
   const mutation = useMutation<unknown>();
-  const { remember } = useRecent();
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -84,12 +160,13 @@ function CreateTeamCard() {
     const cleanMembers = memberIds.map((id) => id.trim()).filter((id) => id.length > 0);
 
     void mutation.run(async () => {
-      const team = await api.teams.create({
+      await api.teams.create({
         name: name.trim(),
         ...(cleanMembers.length > 0 ? { memberPlayerIds: cleanMembers } : {}),
       });
-      remember('teams', { id: team.id, label: team.name });
-      void navigate(`/teams/${team.id}`);
+      setName('');
+      setMemberIds(['']);
+      onCreated();
     });
   };
 

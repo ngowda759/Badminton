@@ -62,6 +62,28 @@ export interface TeamDto {
   readonly updatedAt: string;
 }
 
+/** One team row in `GET /api/v1/teams`, with its derived member count. */
+export interface TeamListItemDto {
+  readonly id: string;
+  readonly name: string;
+  readonly memberCount: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** A cursor-paginated collection response from the list endpoints. */
+export interface ListResponseDto<T> {
+  readonly items: readonly T[];
+  /** Opaque cursor for the next page, or `null` on the last page. */
+  readonly nextCursor: string | null;
+}
+
+/** Query accepted by the collection endpoints. */
+export interface ListQueryParams {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
 export interface TeamMemberDto {
   readonly id: string;
   readonly teamId: string;

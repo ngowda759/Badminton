@@ -1,4 +1,5 @@
-import { parseRequest } from '@badminton/validation';
+import type { ListQuery } from '@badminton/application';
+import { DEFAULT_LIST_LIMIT, parseRequest } from '@badminton/validation';
 import type { z } from 'zod';
 
 import { RequestValidationError } from '../errors/api-error.ts';
@@ -49,4 +50,21 @@ export function validate<S extends z.ZodType>(schema: S, input: unknown): z.outp
     throw new RequestValidationError(result.failure.issues);
   }
   return result.data;
+}
+
+/**
+ * Normalizes a validated list query into the typed `ListQuery` the services use.
+ *
+ * Applies the default page size when `limit` is absent and drops an absent
+ * cursor so the optional property is truly absent (not `undefined`), which
+ * `exactOptionalPropertyTypes` requires.
+ */
+export function normalizeListQuery(query: {
+  readonly limit?: number | undefined;
+  readonly cursor?: string | undefined;
+}): ListQuery {
+  return {
+    limit: query.limit ?? DEFAULT_LIST_LIMIT,
+    ...(query.cursor ? { cursor: query.cursor } : {}),
+  };
 }

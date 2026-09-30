@@ -26,7 +26,9 @@ publishing (each live-tournament mutation records its outbox row in the same
 scoped `EventSource` lifecycle, connection state and event parsing, exposed via
 `useTournamentRealtime`) and the Phase 8.5 live UI synchronization (the
 tournament-scoped refresh bus that turns a realtime event or reconnect into an
-authoritative REST refetch) exist.
+authoritative REST refetch) exist, as does the server-backed collection layer
+(the cursor-paginated `GET /api/v1/tournaments|players|teams` list endpoints and
+the web list pages that read them).
 **Automatic draw/seeding, rankings, authentication, authorization,
 result-correction workflows and Phase 8.6 multi-device hardening are not
 implemented.**
@@ -215,3 +217,18 @@ database — integration tests use `app.inject()` with stub probes.
   `corsOrigins` (the app's `CORS_ORIGINS` allowlist) is applied to the hijacked SSE
   response in `apps/api/src/http/routes/realtime.routes.ts` as well as to ordinary routes,
   because `reply.hijack()` bypasses `@fastify/cors`.
+- The tournament/player/team collection reads are server-backed. `GET /api/v1/tournaments`,
+  `/players` and `/teams` return one cursor-paginated page
+  (`{ data: { items, nextCursor } }`), so the web list pages read from PostgreSQL instead
+  of browser session storage; `use-recent.tsx` was removed and the browser is no longer a
+  list source. Each service exposes `list(query)` → `ListPage<…>` over a repository
+  `listPage`/`listPageWithMemberCount` (`packages/infrastructure/src/repositories.ts`,
+  Prisma `cursor` + `skip: 1`, never `OFFSET`). Ordering is deterministic and **newest
+  first** for every collection (`createdAt` desc, `id` desc) so a newly created record
+  stays on the first page — the create → list acceptance flow must not depend on paging.
+  Query validation lives in `packages/validation/src/list.ts` (`limit` 1–100 default 20,
+  UUID `cursor`); the API maps pages through the list DTOs in `apps/api/src/http/dto.ts`
+  (never raw Prisma/domain models). Team `memberCount` comes from one grouped count over
+  the page's team ids — no per-team query. The web pages use `useCollection`
+  (`apps/web/src/hooks/use-collection.ts`), the project's own cursor-paged loader built on
+  `useApiQuery` conventions (no TanStack Query).

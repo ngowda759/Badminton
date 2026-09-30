@@ -16,6 +16,8 @@ import type {
   CreateTeamMemberData,
   CreateTournamentData,
   CourtRepository,
+  ListPage,
+  ListQuery,
   MatchGameRepository,
   MatchParticipantRepository,
   MatchRepository,
@@ -25,6 +27,7 @@ import type {
   RepositoryClient,
   TeamMemberRepository,
   TeamRepository,
+  TeamWithMemberCount,
   TournamentCategoryRepository,
   TournamentEntryRepository,
   TournamentRepository,
@@ -115,6 +118,25 @@ function nextId(prefix: string): string {
 
 function now(): Date {
   return new Date('2026-01-01T00:00:00.000Z');
+}
+
+/**
+ * Applies cursor pagination to an already-ordered list of fake rows.
+ *
+ * Mirrors the production contract exactly: the cursor is the last id of the
+ * returned page, the page is capped at `query.limit`, and `nextCursor` is the
+ * last returned id when more rows remain (or `null` on the last page). Ordering
+ * is the caller's responsibility - it must match the real repository's ordering.
+ */
+function paginate<T extends { readonly id: string }>(
+  rows: readonly T[],
+  query: ListQuery,
+): ListPage<T> {
+  const start = query.cursor ? rows.findIndex((row) => row.id === query.cursor) + 1 : 0;
+  const items = rows.slice(start, start + query.limit);
+  const last = items[items.length - 1];
+  const hasMore = rows.length > start + query.limit;
+  return { items, nextCursor: hasMore && last ? last.id : null };
 }
 
 /**
@@ -219,6 +241,14 @@ function buildClient(state: State): RepositoryClient {
     },
     async findById(id) {
       return state.tournaments.get(id);
+    },
+    async listPage(query) {
+      // Newest first: all fake rows share one timestamp, so the id tiebreaker
+      // (descending) provides the deterministic order.
+      const ordered = [...state.tournaments.values()].sort((left, right) =>
+        right.id.localeCompare(left.id),
+      );
+      return paginate(ordered, query);
     },
     async update(id: string, data: UpdateTournamentData): Promise<Tournament> {
       const current = state.tournaments.get(id);
@@ -329,6 +359,14 @@ function buildClient(state: State): RepositoryClient {
     async findByPhone(phone) {
       return [...state.players.values()].find((row) => row.phone === phone);
     },
+    async listPage(query) {
+      // Fake rows share one createdAt, so the id tiebreaker (descending) gives
+      // the deterministic order, matching the adapter's (createdAt, id) sort.
+      const ordered = [...state.players.values()].sort((left, right) =>
+        right.id.localeCompare(left.id),
+      );
+      return paginate(ordered, query);
+    },
     async listByIds(ids) {
       const wanted = new Set(ids);
       return [...state.players.values()].filter((row) => wanted.has(row.id));
@@ -352,6 +390,17 @@ function buildClient(state: State): RepositoryClient {
     },
     async findById(id) {
       return state.teams.get(id);
+    },
+    async listPageWithMemberCount(query) {
+      const ordered = [...state.teams.values()].sort((left, right) =>
+        right.id.localeCompare(left.id),
+      );
+      const page = paginate(ordered, query);
+      const items: TeamWithMemberCount[] = page.items.map((team) => ({
+        team,
+        memberCount: [...state.teamMembers.values()].filter((row) => row.teamId === team.id).length,
+      }));
+      return { items, nextCursor: page.nextCursor };
     },
     async listByIds(ids) {
       const wanted = new Set(ids);

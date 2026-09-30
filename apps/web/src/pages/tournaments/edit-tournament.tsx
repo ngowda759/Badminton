@@ -4,7 +4,6 @@ import { useApi } from '@/api/context.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
 import { useTournament } from '@/components/tournaments/context.tsx';
 import { TournamentForm, tournamentToForm } from '@/components/tournaments/tournament-form.tsx';
-import { useRecent } from '@/hooks/use-recent.tsx';
 
 /**
  * Edit-tournament page.
@@ -17,7 +16,6 @@ export function EditTournamentPage() {
   const api = useApi();
   const navigate = useNavigate();
   const { tournament, refetch } = useTournament();
-  const { remember } = useRecent();
 
   return (
     <div className="space-y-6">
@@ -28,14 +26,13 @@ export function EditTournamentPage() {
         timezoneEditable={false}
         onCancel={() => void navigate(`/tournaments/${tournament.id}`)}
         onSubmit={async (values) => {
-          const updated = await api.tournaments.update(tournament.id, {
+          await api.tournaments.update(tournament.id, {
             name: values.name.trim(),
             description: values.description.trim(),
             location: values.location.trim(),
             startDate: values.startDate,
             endDate: values.endDate,
           });
-          remember('tournaments', { id: updated.id, label: updated.name });
           refetch();
           void navigate(`/tournaments/${tournament.id}`);
         }}

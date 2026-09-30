@@ -12,6 +12,8 @@ import type {
   CreateTournamentInput,
   EntryDto,
   GenerateKnockoutBracketInput,
+  ListQueryParams,
+  ListResponseDto,
   MatchDto,
   MatchParticipantDto,
   MatchResultDto,
@@ -22,6 +24,7 @@ import type {
   StageDto,
   StandingRowDto,
   TeamDto,
+  TeamListItemDto,
   TeamMemberDto,
   TournamentDashboardDto,
   TournamentDto,
@@ -36,17 +39,18 @@ import type {
 } from './types.ts';
 
 /**
- * Typed facade over the Phase 3 `/api/v1` REST surface.
+ * Typed facade over the `/api/v1` REST surface.
  *
- * Each method maps onto one documented endpoint; no method invents a
- * collection query the API does not expose (notably listing tournaments and
- * players/search). Payloads follow the request schemas in
- * `@badminton/validation`; responses are the `{ data }` envelopes unwrapped by
- * the transport.
+ * Each method maps onto one documented endpoint. Payloads follow the request
+ * schemas in `@badminton/validation`; responses are the `{ data }` envelopes
+ * unwrapped by the transport. The `list` methods return the cursor-paginated
+ * collection shape the server sends for tournaments, players and teams.
  */
 export interface TournamentApi {
   create(input: CreateTournamentInput, signal?: AbortSignal): Promise<TournamentDto>;
   get(id: string, signal?: AbortSignal): Promise<TournamentDto>;
+  /** One page of tournaments, newest first. */
+  list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<TournamentDto>>;
   update(id: string, input: UpdateTournamentInput, signal?: AbortSignal): Promise<TournamentDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<TournamentDto>;
 }
@@ -66,12 +70,16 @@ export interface CategoryApi {
 export interface PlayerApi {
   create(input: CreatePlayerInput, signal?: AbortSignal): Promise<PlayerDto>;
   get(id: string, signal?: AbortSignal): Promise<PlayerDto>;
+  /** One page of players, newest first. */
+  list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<PlayerDto>>;
   update(id: string, input: UpdatePlayerInput, signal?: AbortSignal): Promise<PlayerDto>;
 }
 
 export interface TeamApi {
   create(input: CreateTeamInput, signal?: AbortSignal): Promise<TeamDto>;
   get(id: string, signal?: AbortSignal): Promise<TeamDto>;
+  /** One page of teams with member counts, newest first. */
+  list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<TeamListItemDto>>;
   update(id: string, input: UpdateTeamInput, signal?: AbortSignal): Promise<TeamDto>;
   listMembers(teamId: string, signal?: AbortSignal): Promise<readonly TeamMemberDto[]>;
   addMember(
@@ -166,6 +174,8 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
     tournaments: {
       create: (input, signal) => client.post('/api/v1/tournaments', input, signal),
       get: (id, signal) => client.get(`/api/v1/tournaments/${id}`, signal),
+      list: (params, signal) =>
+        client.get<ListResponseDto<TournamentDto>>(listPath('/api/v1/tournaments', params), signal),
       update: (id, input, signal) => client.patch(`/api/v1/tournaments/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/tournaments/${id}/transition`, { status }, signal),
@@ -183,11 +193,15 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
     players: {
       create: (input, signal) => client.post('/api/v1/players', input, signal),
       get: (id, signal) => client.get(`/api/v1/players/${id}`, signal),
+      list: (params, signal) =>
+        client.get<ListResponseDto<PlayerDto>>(listPath('/api/v1/players', params), signal),
       update: (id, input, signal) => client.patch(`/api/v1/players/${id}`, input, signal),
     },
     teams: {
       create: (input, signal) => client.post('/api/v1/teams', input, signal),
       get: (id, signal) => client.get(`/api/v1/teams/${id}`, signal),
+      list: (params, signal) =>
+        client.get<ListResponseDto<TeamListItemDto>>(listPath('/api/v1/teams', params), signal),
       update: (id, input, signal) => client.patch(`/api/v1/teams/${id}`, input, signal),
       listMembers: (teamId, signal) => client.get(`/api/v1/teams/${teamId}/members`, signal),
       addMember: (teamId, input, signal) =>
@@ -257,4 +271,20 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
         client.get(`/api/v1/tournaments/${tournamentId}/dashboard`, signal),
     },
   };
+}
+
+/** Appends the optional list query parameters to a collection path. */
+function listPath(path: string, params: ListQueryParams | undefined): string {
+  if (!params) {
+    return path;
+  }
+  const query = new URLSearchParams();
+  if (params.limit !== undefined) {
+    query.set('limit', String(params.limit));
+  }
+  if (params.cursor !== undefined) {
+    query.set('cursor', params.cursor);
+  }
+  const encoded = query.toString();
+  return encoded.length > 0 ? `${path}?${encoded}` : path;
 }

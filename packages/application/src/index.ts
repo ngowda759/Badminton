@@ -29,6 +29,8 @@ export type {
   CreateMatchGameData,
   CreateMatchParticipantData,
   CreateRealtimeEventData,
+  ListPage,
+  ListQuery,
   MatchGameWithMatch,
   MatchScheduleData,
   CreatePlayerData,
@@ -36,6 +38,7 @@ export type {
   CreateTeamData,
   CreateTeamMemberData,
   CreateTournamentData,
+  TeamWithMemberCount,
   UpdateCategoryData,
   UpdateCourtData,
   UpdateMatchData,
@@ -99,7 +102,7 @@ export {
   type TournamentCategoryService,
 } from './services/category.service.ts';
 export { createPlayerService, type PlayerService } from './services/player.service.ts';
-export { createTeamService, type TeamService } from './services/team.service.ts';
+export { createTeamService, type TeamService, type TeamSummary } from './services/team.service.ts';
 export {
   createTournamentEntryService,
   type TournamentEntryService,
