@@ -1591,3 +1591,188 @@ describe('/api/v1 knockout bracket', () => {
     expect(finalMatch?.participant1.entryId).toBe(winner);
   });
 });
+
+/**
+ * Group-stage fixture HTTP contract.
+ *
+ * These assert routing, Zod validation, status codes and the response envelope
+ * for fixture generation and its retrieval through the existing matches list;
+ * the round-robin rules themselves are covered by the domain and application
+ * suites.
+ */
+describe('/api/v1 group fixtures', () => {
+  it('generates fixtures and returns 201 with the data envelope', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+    const { id: entryC } = await registerPlayer(categoryId, 'Fixture C');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds: [entryA, entryB, entryC] },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{
+      data: { competitorCount: number; matchCount: number; matches: readonly unknown[] };
+    }>();
+    expect(body.data.competitorCount).toBe(3);
+    expect(body.data.matchCount).toBe(3);
+    expect(body.data.matches).toHaveLength(3);
+  });
+
+  it('returns the persisted fixtures from the stage matches endpoint', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/matches`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: readonly unknown[] }>().data).toHaveLength(1);
+  });
+
+  it('rejects fewer than two entries with 400', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds: [entryA] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<ErrorBody>().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a malformed body with 400', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds: ['not-a-uuid', 'also-not-a-uuid'] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<ErrorBody>().error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('returns 404 for a missing stage', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/stages/11111111-1111-4111-8111-111111111111/fixtures',
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('returns 400 for a non-uuid stage id', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/stages/not-a-uuid/fixtures',
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('maps a non-group stage to 422', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('maps a duplicate generation to 409', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Fixture A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Fixture B');
+
+    const payload = { entryIds: [entryA, entryB] };
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload,
+    });
+    expect(first.statusCode).toBe(201);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload,
+    });
+    expect(second.statusCode).toBe(409);
+
+    const matches = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/matches`,
+    });
+    expect(matches.json<{ data: readonly unknown[] }>().data).toHaveLength(1);
+  });
+});

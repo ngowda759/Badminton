@@ -41,11 +41,12 @@ import {
 import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
 
 /**
- * Stage metadata only.
+ * Stage metadata.
  *
- * This phase deliberately does not generate groups, brackets, draws or matches;
- * a stage is created with its name, type, sequence and optional draw size, and
- * matches are added manually on the stage page.
+ * A stage is created with its name, type, sequence and optional draw size.
+ * Group-stage fixtures are generated as a round-robin from the stage page, and
+ * knockout matches are created with the bracket; matches can also still be added
+ * manually on the stage page.
  */
 export function StagesPage() {
   const api = useApi();
@@ -61,7 +62,7 @@ export function StagesPage() {
     <div className="space-y-6">
       <PageHeader
         title="Stages"
-        description="Manage stage metadata; draw generation is a later phase."
+        description="Manage stage metadata; generate group fixtures or a knockout bracket from the stage page."
       />
 
       <CreateStageCard categoryId={category.id} onCreated={refetch} />

@@ -12,6 +12,8 @@ import type {
   CourtDto,
   DashboardMatchDto,
   EntryDto,
+  GroupFixtureMatchDto,
+  GroupFixturesDto,
   MatchDto,
   MatchGameDto,
   MatchParticipantDto,
@@ -310,6 +312,32 @@ export function makeBracket(overrides: Partial<BracketDto> = {}): BracketDto {
   };
 }
 
+export function makeGroupFixtureMatch(
+  overrides: Partial<GroupFixtureMatchDto> = {},
+): GroupFixtureMatchDto {
+  return {
+    matchId: '88888888-8888-4888-8888-888888888888',
+    sequence: 1,
+    roundNumber: 1,
+    status: 'SCHEDULED',
+    participant1: { slot: 1, entryId: '66666666-6666-4666-8666-666666666666' },
+    participant2: { slot: 2, entryId: '66666666-6666-4666-8666-666666666667' },
+    ...overrides,
+  };
+}
+
+export function makeGroupFixtures(overrides: Partial<GroupFixturesDto> = {}): GroupFixturesDto {
+  return {
+    stageId: '77777777-7777-4777-8777-777777777777',
+    stageName: 'Group A',
+    status: 'PENDING',
+    competitorCount: 2,
+    matchCount: 1,
+    matches: [makeGroupFixtureMatch()],
+    ...overrides,
+  };
+}
+
 /**
  * Builds a fully-typed stub API.
  *
@@ -383,6 +411,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
       standings: vi.fn(() => Promise.resolve([] as readonly StandingRowDto[])),
       getBracket: vi.fn(() => Promise.resolve(makeBracket())),
       generateBracket: vi.fn(() => Promise.resolve(makeBracket())),
+      generateFixtures: vi.fn(() => Promise.resolve(makeGroupFixtures())),
     },
     matches: {
       listByStage: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),

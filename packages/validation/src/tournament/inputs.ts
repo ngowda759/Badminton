@@ -188,6 +188,20 @@ export const generateKnockoutBracketInputSchema = z.object({
 });
 
 /**
+ * Group-fixture generation request.
+ *
+ * Only the request *shape* is validated here: a list of at least two entry
+ * UUIDs (a round-robin needs someone to play). Whether the entries belong to the
+ * stage's category, whether they are active and whether the stage already has
+ * fixtures are application/domain rules enforced by `GroupFixtureService`.
+ */
+export const generateGroupFixturesInputSchema = z.object({
+  entryIds: z
+    .array(z.uuid('Each entry id must be a UUID.'))
+    .min(2, 'A round-robin needs at least two entries.'),
+});
+
+/**
  * A single game in a match result.
  *
  * Only the request *shape* is validated here: the game number is 1-3 (best of
@@ -237,3 +251,4 @@ export type AddMatchParticipantInput = z.input<typeof addMatchParticipantInputSc
 export type RecordMatchGameInput = z.input<typeof recordMatchGameInputSchema>;
 export type RecordMatchResultInput = z.input<typeof recordMatchResultInputSchema>;
 export type GenerateKnockoutBracketInput = z.input<typeof generateKnockoutBracketInputSchema>;
+export type GenerateGroupFixturesInput = z.input<typeof generateGroupFixturesInputSchema>;

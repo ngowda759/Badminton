@@ -13,6 +13,7 @@ import {
   makeBracketMatch,
   makeCategory,
   makeEntry,
+  makeGroupFixtures,
   makeMatch,
   makeMatchResult,
   makeParticipant,
@@ -804,6 +805,166 @@ describe('knockout bracket flows', () => {
     await waitFor(() => {
       expect(api.stages.update).toHaveBeenCalledWith('s1', { name: 'Knockout', sequence: 1 });
     });
+  });
+});
+
+/**
+ * Group-stage fixture flows.
+ *
+ * A GROUP stage with no matches shows the fixture setup: the operator selects
+ * and orders active entries, confirms, and the generated round-robin appears as
+ * matches. The API boundary is stubbed; the components, hooks and validation run
+ * for real.
+ */
+describe('group fixture flows', () => {
+  it('generates a round-robin from selected entries after confirmation', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP', name: 'Group A' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e3', playerId: 'p3', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: { p1: 'Alice', p2: 'Bob', p3: 'Cara' }[id] ?? id })),
+    );
+    api.stages.generateFixtures.mockResolvedValue(makeGroupFixtures({ competitorCount: 3 }));
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    await screen.findByText('Alice');
+    await user.click(screen.getByRole('checkbox', { name: /Alice/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Bob/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Cara/ }));
+    expect(screen.getByTestId('group-fixture-shape')).toHaveTextContent('3 selected');
+    expect(screen.getByTestId('group-fixture-shape')).toHaveTextContent('3 matches');
+
+    await user.click(screen.getByRole('button', { name: 'Generate fixtures' }));
+    // Confirmation is required before the mutation runs.
+    expect(api.stages.generateFixtures).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Generate fixtures' }));
+
+    await waitFor(() => {
+      expect(api.stages.generateFixtures).toHaveBeenCalledWith('s1', {
+        entryIds: ['e1', 'e2', 'e3'],
+      });
+    });
+  });
+
+  it('keeps the caller ordering as entries are moved', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP', name: 'Group A' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+    api.stages.generateFixtures.mockResolvedValue(makeGroupFixtures());
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    await screen.findByText('Alice');
+    await user.click(screen.getByRole('checkbox', { name: /Alice/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Bob/ }));
+
+    // Move Bob (currently #2) above Alice (#1).
+    await user.click(screen.getAllByRole('button', { name: 'Up' })[1] as HTMLElement);
+
+    await user.click(screen.getByRole('button', { name: 'Generate fixtures' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Generate fixtures' }));
+
+    await waitFor(() => {
+      expect(api.stages.generateFixtures).toHaveBeenCalledWith('s1', {
+        entryIds: ['e2', 'e1'],
+      });
+    });
+  });
+
+  it('renders the persisted fixtures as matches on load and after refresh', async () => {
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP', name: 'Group A' }));
+    // The initial REST load already returns the generated fixtures, exactly as
+    // it would after a page refresh.
+    api.matches.listByStage.mockResolvedValue([
+      makeMatch({ id: 'm1', stageId: 's1', sequence: 1, roundNumber: 1, matchNumber: 1 }),
+      makeMatch({ id: 'm2', stageId: 's1', sequence: 2, roundNumber: 2, matchNumber: 2 }),
+    ]);
+    api.matches.listParticipants.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    const table = await screen.findByRole('table');
+    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    // Once fixtures exist the setup disappears; the match list is authoritative.
+    expect(screen.queryByRole('button', { name: 'Generate fixtures' })).not.toBeInTheDocument();
+    expect(api.matches.listByStage).toHaveBeenCalledWith('s1', expect.anything());
+  });
+
+  it('shows an error state when fixture generation fails', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
+    api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP', name: 'Group A' }));
+    api.matches.listByStage.mockResolvedValue([]);
+    api.stages.standings.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+      makeEntry({ id: 'e2', playerId: 'p2', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockImplementation((id: string) =>
+      Promise.resolve(makePlayer({ id, name: id === 'p1' ? 'Alice' : 'Bob' })),
+    );
+    api.stages.generateFixtures.mockRejectedValueOnce(
+      new ApiError(409, 'CONFLICT', 'This stage already has fixtures.'),
+    );
+
+    renderWithProviders(<AppRoutes />, {
+      api,
+      route: '/tournaments/t1/categories/c1/stages/s1',
+    });
+
+    await screen.findByText('Alice');
+    await user.click(screen.getByRole('checkbox', { name: /Alice/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Bob/ }));
+    await user.click(screen.getByRole('button', { name: 'Generate fixtures' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Generate fixtures' }));
+
+    expect(await screen.findByText('Could not generate fixtures')).toBeInTheDocument();
   });
 });
 

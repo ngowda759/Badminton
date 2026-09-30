@@ -83,7 +83,7 @@ export async function seedTeamWithMembers(
 export async function seedStage(
   client: RepositoryClient,
   categoryId: string,
-  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE' } = {},
+  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE' | 'COMPLETED' } = {},
 ): Promise<string> {
   const stage = await client.stages.create({
     categoryId,

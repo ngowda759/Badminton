@@ -226,6 +226,32 @@ export interface BracketDto {
   readonly complete: boolean;
 }
 
+/** One participant slot of a group fixture; both slots are always filled. */
+export interface GroupFixtureParticipantDto {
+  readonly slot: MatchSlot;
+  readonly entryId: string;
+}
+
+/** One group fixture (a single round-robin match). */
+export interface GroupFixtureMatchDto {
+  readonly matchId: string;
+  readonly sequence: number;
+  readonly roundNumber: number;
+  readonly status: MatchStatus;
+  readonly participant1: GroupFixtureParticipantDto;
+  readonly participant2: GroupFixtureParticipantDto;
+}
+
+/** The full fixture set returned by `POST /stages/:id/fixtures`. */
+export interface GroupFixturesDto {
+  readonly stageId: string;
+  readonly stageName: string;
+  readonly status: StageStatus;
+  readonly competitorCount: number;
+  readonly matchCount: number;
+  readonly matches: readonly GroupFixtureMatchDto[];
+}
+
 /** A tournament court as returned by the court endpoints. */
 export interface CourtDto {
   readonly id: string;
@@ -424,6 +450,11 @@ export interface RecordMatchResultInput {
 
 /** Generates a knockout bracket from a caller-supplied entry ordering. */
 export interface GenerateKnockoutBracketInput {
+  readonly entryIds: readonly string[];
+}
+
+/** Generates a GROUP stage round-robin from a caller-supplied entry ordering. */
+export interface GenerateGroupFixturesInput {
   readonly entryIds: readonly string[];
 }
 

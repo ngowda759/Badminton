@@ -76,6 +76,7 @@ export type {
   CreateStageCommand,
   CreateTeamCommand,
   CreateTournamentCommand,
+  GenerateGroupFixturesCommand,
   GenerateKnockoutBracketCommand,
   GetKnockoutBracketQuery,
   RecordMatchGameCommand,
@@ -131,6 +132,15 @@ export type {
   BracketParticipant,
   BracketRound,
 } from './services/knockout.ts';
+export {
+  createGroupFixtureService,
+  type GroupFixtureService,
+} from './services/group-fixture.service.ts';
+export type {
+  GroupFixtureMatch,
+  GroupFixtureParticipant,
+  GroupFixtures,
+} from './services/group-fixtures.ts';
 export { createCourtService, type CourtService } from './services/court.service.ts';
 export {
   createMatchSchedulingService,
