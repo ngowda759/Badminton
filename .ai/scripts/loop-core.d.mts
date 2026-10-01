@@ -118,6 +118,8 @@ export interface MergeGatePr {
   number?: number;
   state?: string;
   merged?: boolean;
+  mergedAt?: string | null;
+  mergeCommit?: { oid?: string } | null;
   baseRefName?: string;
   headRefName?: string;
   headRefOid?: string;
@@ -125,6 +127,7 @@ export interface MergeGatePr {
   mergeable?: string;
   labels?: string[];
   title?: string;
+  comments?: { body?: string }[];
 }
 
 export interface MergeGateInput {
@@ -138,6 +141,7 @@ export interface MergeGateInput {
   ci?: { status: string } | null | undefined;
   changedPaths: string[];
   config: LoopConfig;
+  queue?: TaskQueue | null;
 }
 
 export interface MergeGateDecision {
@@ -154,6 +158,13 @@ export const NORMAL_EVENTS: Record<string, string>;
 
 export function loadConfig(root?: string): LoopConfig;
 export function taskNumber(taskId: string): number | null;
+export function isAiManagedPullRequest(input: {
+  pr: MergeGatePr | null;
+  state?: LoopState | null;
+  queue?: TaskQueue | null;
+  config: LoopConfig;
+  mergeCommitSha?: string;
+}): boolean;
 export function sortTaskIds(ids: string[]): string[];
 export function labelsForStop(config: LoopConfig): { add: string[]; remove: string[] };
 export function loadState(root?: string): LoopState | null;

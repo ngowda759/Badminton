@@ -19,13 +19,27 @@
  *   GITHUB_OUTPUT   the file to append the `number=` output to
  */
 import { spawnSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-import { loadConfig, REPO_ROOT } from './loop-core.mjs';
+import { isAiManagedPullRequest, loadConfig, REPO_ROOT } from './loop-core.mjs';
 
 const config = loadConfig(REPO_ROOT);
 const repo = process.env.GITHUB_REPOSITORY ?? 'ngowda759/Badminton';
 const outputFile = process.env.GITHUB_OUTPUT;
+
+function readJsonIfPresent(relativePath) {
+  const path = resolve(REPO_ROOT, relativePath);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+const loopState = readJsonIfPresent(config.paths.state);
+const taskQueue = readJsonIfPresent(config.paths.queue);
 
 function emit(number) {
   if (outputFile !== undefined) appendFileSync(outputFile, `number=${number}\n`);
@@ -48,14 +62,7 @@ function ghJson(args) {
 }
 
 function isLoopPullRequest(pr) {
-  if (pr === null || typeof pr !== 'object') return false;
-  if (pr.isCrossRepository === true) return false;
-  if (pr.baseRefName !== config.baseBranch) return false;
-  const branch = typeof pr.headRefName === 'string' ? pr.headRefName : '';
-  const labelled = (pr.labels ?? []).some(
-    (label) => label?.name === config.automation.triggerLabel,
-  );
-  return branch.startsWith(config.branchPrefix) || labelled;
+  return isAiManagedPullRequest({ pr, state: loopState, queue: taskQueue, config });
 }
 
 const candidates = [];
@@ -66,8 +73,11 @@ if (typeof process.env.EVENT_PR === 'string' && process.env.EVENT_PR.length > 0)
   candidates.push(Number.parseInt(process.env.EVENT_PR, 10));
 }
 
+// Resolve by the head branch whether or not it uses the loop prefix: an AI task
+// may live on `feat/*` or `fix/*`. The PR is still required to be AI-managed, so
+// widening the lookup does not widen what gets reviewed.
 const branch = process.env.HEAD_BRANCH ?? '';
-if (branch.startsWith(config.branchPrefix)) {
+if (branch.length > 0) {
   const list = ghJson([
     'pr',
     'list',

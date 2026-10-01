@@ -68,9 +68,15 @@ acceptance criteria and an explicit out-of-scope list, written to
 
 ### 2. Implementation — OpenHands
 
-Implements exactly that brief on `automation/<task-id>-<slug>`, runs the
+Implements exactly that brief on a task branch (`automation/<task-id>-<slug>` by
+convention; an implementation may also use `feat/*` or `fix/*`), runs the
 repository's validation commands, and opens **one** pull request. It records
 `status: ci-running` and the PR in `.ai/state/loop-state.json`.
+
+The branch name is a convenience, not the loop's identity: a task is recognised
+by the loop's own records, so an implementation is free to use a descriptive
+branch without breaking progression (see "How an AI-managed pull request is
+identified").
 
 ### 3. CI — GitHub Actions
 
@@ -116,9 +122,8 @@ step sits between a fix and its re-review.
 at merge time rather than trusting the earlier review — a push or a label change
 between approval and merge would otherwise be merged on stale evidence:
 
-- the pull request is open, targets `main`, is not a fork, and is the loop's
-  recorded active pull request;
-- the branch uses the loop prefix (`automation/`);
+- the pull request is open, targets `main`, is not a fork, and is an AI-managed
+  task (see "How an AI-managed pull request is identified");
 - the latest review verdict is `approved` **and** it records the current head
   commit (`headMatchesApproval`);
 - every required check is green (`requiredChecks` in `.ai/loop.config.json`);
@@ -132,16 +137,21 @@ any other failure exits `1` and the loop stops.
 
 ### 7. Next task — automatic
 
-`ai-loop-next-task.yml` fires when the pull request closes. If the loop's own
-pull request merged it records the task `done`, carries the reviewer's final
-findings onto the task, moves the loop through `completed` to `next-task`, and
-dispatches the architect conversation. `ai-loop-implement.yml` then fires on the
-`task-queue.json` push and dispatches the implementation — no human step sits
-between a merge and the next task.
+`ai-loop-next-task.yml` fires when a pull request closes. The workflow itself
+only applies a coarse filter (targets `main`, same repository); the decision is
+made by `advance-after-merge.mjs`, which runs from the trusted base branch and
+writes a `managed=true|false` output. When the closed pull request is AI-managed
+and merged, the script records the task `done`, carries the reviewer's final
+findings onto the task, walks the loop `ready-to-merge → merging → completed →
+next-task`, and the workflow dispatches the architect conversation.
+`ai-loop-implement.yml` then fires on the `task-queue.json` push and dispatches
+the implementation — no human step sits between a merge and the next task.
 
-A pull request closed **without** merging is a hard stop (`merge-conflict`): the
-loop must not silently generate the next task when its own pull request was
-abandoned.
+An unrelated pull request closing is a no-op. A pull request that is AI-managed
+but closed **without** merging is a hard stop (`merge-conflict`): the loop must
+not silently generate the next task when its own pull request was abandoned.
+A duplicate `pull_request: closed` delivery is idempotent — the task is already
+`done`, so the script reports `managed=false` and generates nothing twice.
 
 ### 8. Next-task generation — ChatGPT
 
@@ -150,6 +160,37 @@ Proposes exactly one next task, appends it with `status: "approved"` and
 which dispatches the implementation. The loop is not reset to `idle`: it moves to
 `next-task` and then to `implementing`, so the round counter and the task
 association are never lost.
+
+## How an AI-managed pull request is identified
+
+A branch name is a convention, not an identity. The loop's tasks have
+legitimately lived on `automation/*` and on descriptive branches such as
+`feat/tournament-progression`, so **no** stage may treat "AI task" as
+"`automation/*`". The single authoritative test is
+`isAiManagedPullRequest` in `.ai/scripts/loop-core.mjs`, used by the merge gate,
+the review resolver and the next-task advance alike. A pull request is
+AI-managed when it targets the base branch and is not a fork, **and** any of:
+
+1. its head branch uses the loop's `branchPrefix` (`automation/`) — the original
+   convention;
+2. any task in `.ai/state/task-queue.json` records its number or branch as that
+   task's implementation — the queue keeps that record after the state moves on;
+3. it carries the loop's `automation.triggerLabel` (`ai-task`);
+4. its head commit (or merge commit) is covered by a trusted review marker
+   (`<!-- ai-loop-review round=<n> head=<sha> verdict=<v> -->`), which only the
+   loop's own reviewer writes;
+5. its title or head branch names a task id present in `.ai/state/task-queue.json`;
+6. it is the loop's recorded active pull request (`state.currentPr`) — this
+   matches on the PR number, so the classification still holds after the branch
+   is deleted.
+
+`advance-after-merge.mjs` runs this test from the trusted base branch and writes
+`managed=true|false` to `GITHUB_OUTPUT`; `ai-loop-next-task.yml` gates the
+enforce-single and architect-dispatch steps on that output. Keeping the rules in
+one reviewed script — rather than in a GitHub expression — means an AI task on
+`feat/*` advances the loop exactly like one on `automation/*`, while an unrelated
+pull request (no label, no marker, no queued task id, not the recorded active PR)
+is a no-op and cannot start the generator.
 
 ## The review round limit
 
@@ -165,8 +206,9 @@ stop.
 A review costs money and time, so a duplicate trigger must be a no-op:
 
 - the review resolves its pull request through `.ai/scripts/resolve-review-pr.mjs`
-  and acts only on an open, same-repository pull request whose branch uses the
-  loop prefix or that carries `ai-review` — unrelated pull requests are ignored;
+  and acts only on an open, same-repository pull request that is AI-managed (see
+  "How an AI-managed pull request is identified") — unrelated pull requests are
+  ignored;
 - the reviewer refuses to review a head SHA that any previous review comment
   already covers, which holds even when the state file is stale;
 - one run per pull request at a time (`concurrency`, `cancel-in-progress: false`),
@@ -223,7 +265,7 @@ like any legal one.
 | `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill) | Validate config, state, schemas and workflow structure |
 | `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                      | Wait for CI, run the ChatGPT review, route the verdict |
 | `ai-loop-merge-gate.yml` | `workflow_run` after the review, or manual                                | Re-check every gate, then merge (or stop for a human)  |
-| `ai-loop-next-task.yml`  | PR `closed` (merged loop PR), or manual recovery                          | Record the merge, dispatch the architect               |
+| `ai-loop-next-task.yml`  | PR `closed` (AI-managed PR), or manual recovery                           | Record the merge, dispatch the architect               |
 | `ai-loop-implement.yml`  | push to `main` touching `.ai/state/task-queue.json`, or manual recovery   | Dispatch the implementation conversation               |
 
 The two `workflow_run` workflows are the loop's most privileged and are
@@ -252,8 +294,9 @@ by hand for the first merge, that is the expected sequence, not a broken loop.
 
 Two follow-on checks after the first manual merge confirm the loop came up:
 
-1. `main` now holds the `ai-loop-*` workflows, so the next `automation/**` pull
-   request gets an automatic review and merge gate.
+1. `main` now holds the `ai-loop-*` workflows, so the next AI-managed pull
+   request (on `automation/*`, `feat/*`, `fix/*` or any task branch) gets an
+   automatic review and merge gate.
 2. The `pull_request: closed` trigger fires on that merge and
    `ai-loop-next-task.yml` dispatches the architect, so the queue change starts
    the next implementation.

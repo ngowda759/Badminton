@@ -151,10 +151,13 @@ describe('merge gate', () => {
     expect(decision.reasons.join(' ')).toContain('fork');
   });
 
-  it('refuses a branch outside the loop namespace', () => {
-    const decision = gate({ pr: { headRefName: 'feature/hand-written' } });
+  it('refuses a pull request that is not AI-managed', () => {
+    const decision = gate({
+      pr: { headRefName: 'feature/hand-written', labels: [], title: 'A hand-written change' },
+      state: null,
+    });
     expect(decision.allowed).toBe(false);
-    expect(decision.reasons.join(' ')).toContain('loop prefix');
+    expect(decision.reasons.join(' ')).toContain('not an AI-managed loop task');
   });
 
   it('refuses while the loop is blocked', () => {
@@ -181,6 +184,18 @@ describe('merge gate', () => {
     const decision = gate({ pr: { mergeable: 'CONFLICTING' } });
     expect(decision.allowed).toBe(false);
     expect(decision.reasons.join(' ')).toContain('conflicts');
+  });
+
+  it('allows an AI-managed feat/* pull request, not just automation/*', () => {
+    // TASK-4 / PR #22: the loop's own task lived on `feat/tournament-progression`.
+    const decision = gate({
+      pr: { headRefName: 'feat/tournament-progression' },
+      state: loopState({
+        currentPr: { number: 42, branch: 'feat/tournament-progression', headSha: HEAD },
+      }),
+    });
+    expect(decision.allowed).toBe(true);
+    expect(decision.checks.aiManaged).toBe(true);
   });
 
   it('falls back to the pull request evidence when the state file is missing', () => {

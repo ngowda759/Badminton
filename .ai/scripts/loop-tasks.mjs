@@ -29,6 +29,7 @@ import { resolve } from 'node:path';
 
 import {
   assertSingleActiveTask,
+  isAiManagedPullRequest,
   loadConfig,
   REPO_ROOT,
   resolveNextTaskId,
@@ -98,7 +99,7 @@ function requireString(args, key) {
   return value;
 }
 
-/** Open automation pull requests, read through `gh`. Empty when gh is absent. */
+/** Open pull requests, flagged with whether each is AI-managed. Empty when gh is absent. */
 function openAutomationPrs() {
   const repo = process.env.GITHUB_REPOSITORY ?? 'ngowda759/Badminton';
   const result = spawnSync(
@@ -111,7 +112,7 @@ function openAutomationPrs() {
       '--state',
       'open',
       '--json',
-      'number,headRefName,baseRefName,isCrossRepository,title',
+      'number,headRefName,baseRefName,isCrossRepository,title,labels',
       '--limit',
       '100',
     ],
@@ -124,15 +125,28 @@ function openAutomationPrs() {
   } catch {
     return null;
   }
+  const state = readJson(resolve(root, config.paths.state), config.paths.state);
+  const queue = readJson(queuePath, config.paths.queue);
   return prs.map((pr) => ({
     number: pr.number,
     branch: pr.headRefName,
     base: pr.baseRefName,
     title: pr.title,
-    isAutomation:
-      typeof pr.headRefName === 'string' &&
-      pr.headRefName.startsWith(config.branchPrefix) &&
-      pr.isCrossRepository !== true,
+    // Identity is the loop's own record, not the branch name alone: an AI task
+    // may live on `feat/*` or `fix/*`. A fork PR is never AI-managed.
+    isAutomation: isAiManagedPullRequest({
+      pr: {
+        number: pr.number,
+        headRefName: pr.headRefName,
+        baseRefName: pr.baseRefName,
+        isCrossRepository: pr.isCrossRepository,
+        labels: pr.labels,
+        title: pr.title,
+      },
+      state,
+      queue,
+      config,
+    }),
   }));
 }
 

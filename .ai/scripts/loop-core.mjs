@@ -14,10 +14,87 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { parseReviewMarkers } from './review-core.mjs';
+
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export function loadConfig(root = REPO_ROOT) {
   return JSON.parse(readFileSync(resolve(root, '.ai/loop.config.json'), 'utf8'));
+}
+
+// --- AI-managed pull request identity --------------------------------------
+
+/**
+ * Is this pull request one the AI loop owns?
+ *
+ * Branch naming is only *one* of the signals, and deliberately not the
+ * authoritative one: an AI-managed implementation task may legitimately live on
+ * `automation/*`, `feat/*`, `fix/*` or any other valid task branch, so a loop
+ * that equated "AI task" with `automation/*` silently skipped its own next-task
+ * transition. Identity is therefore derived from the loop's own records, all of
+ * which an unrelated pull request cannot forge:
+ *
+ *   1. the branch uses the loop prefix (`automation/`) — the loop's own branch;
+ *   2. the loop recorded this number as its active pull request;
+ *   3. any task in the queue records this pull request number or branch as its
+ *      implementation — the queue keeps that record even after the state moves on;
+ *   4. the pull request carries the loop's trigger label (`ai-task`);
+ *   5. a trusted ChatGPT review marker on the pull request covers its head or
+ *      merge commit — only the loop's review stage writes one;
+ *   6. the title or branch names a task id that exists in the loop's queue.
+ *
+ * A cross-repository (fork) pull request, or one targeting a different base
+ * branch, is never AI-managed regardless of the other signals.
+ *
+ * @param {{ pr: object | null, state?: object | null, queue?: object | null, config: object, mergeCommitSha?: string }} input
+ * @returns {boolean}
+ */
+export function isAiManagedPullRequest({ pr, state = null, queue = null, config, mergeCommitSha }) {
+  if (pr === null || typeof pr !== 'object') return false;
+  if (pr.isCrossRepository === true) return false;
+  if (typeof pr.baseRefName === 'string' && pr.baseRefName !== config.baseBranch) return false;
+
+  const branch = typeof pr.headRefName === 'string' ? pr.headRefName : '';
+  if (branch.startsWith(config.branchPrefix)) return true;
+
+  const recorded = state?.currentPr ?? null;
+  if (recorded !== null && typeof recorded.number === 'number' && recorded.number === pr.number) {
+    return true;
+  }
+
+  // The queue records the pull request a task was implemented in. Any task's
+  // recorded PR number (or branch) identifies the loop's own work — this holds
+  // even when the loop state has already moved on to a later task.
+  const tasks = queue?.tasks ?? [];
+  if (typeof pr.number === 'number' && tasks.some((task) => task?.pr === pr.number)) {
+    return true;
+  }
+  if (branch.length > 0 && tasks.some((task) => task?.branch === branch)) {
+    return true;
+  }
+
+  const labels = (pr.labels ?? []).map((label) =>
+    typeof label === 'string' ? label : label?.name,
+  );
+  if (labels.includes(config.automation.triggerLabel)) return true;
+
+  const heads = [pr.headRefOid, mergeCommitSha].filter(
+    (head) => typeof head === 'string' && head.length > 0,
+  );
+  for (const comment of pr.comments ?? []) {
+    for (const marker of parseReviewMarkers(comment?.body ?? '')) {
+      if (
+        heads.some((head) => head.startsWith(marker.headSha) || marker.headSha.startsWith(head))
+      ) {
+        return true;
+      }
+    }
+  }
+
+  const match = /AI-\d+(?:-T\d+)?/.exec(`${pr.title ?? ''} ${branch}`);
+  if (match !== null && (queue?.tasks ?? []).some((task) => task.id === match[0])) return true;
+
+  return false;
 }
 
 // --- task identity and sequencing -----------------------------------------
@@ -287,6 +364,7 @@ export function evaluateMergeGate({
   ci,
   changedPaths,
   config,
+  queue = null,
 }) {
   const reasons = [];
   const checks = {};
@@ -298,6 +376,7 @@ export function evaluateMergeGate({
   };
 
   const recordedPr = state?.currentPr ?? null;
+  const aiManaged = isAiManagedPullRequest({ pr, state, queue, config });
 
   record('prOpen', pr?.state === 'OPEN' && pr?.merged !== true, 'the pull request is not open');
   record(
@@ -306,10 +385,13 @@ export function evaluateMergeGate({
     `the pull request does not target ${config.baseBranch}`,
   );
   record('sameRepository', pr?.isCrossRepository !== true, 'the pull request comes from a fork');
+  // Identity is the loop's own record (state, label, review marker or a queued
+  // task id), not the branch name alone — an AI task may live on `feat/*` or
+  // `fix/*` just as legitimately as on `automation/*`.
   record(
-    'loopBranch',
-    typeof pr?.headRefName === 'string' && pr.headRefName.startsWith(config.branchPrefix),
-    `the branch does not use the loop prefix ${config.branchPrefix}`,
+    'aiManaged',
+    aiManaged,
+    'the pull request is not an AI-managed loop task (branch, state, label, review marker or task id)',
   );
 
   if (recordedPr !== null && typeof recordedPr.number === 'number') {
@@ -324,14 +406,9 @@ export function evaluateMergeGate({
       'the pull request branch does not match the recorded active branch',
     );
   } else {
-    // No usable state: fall back to the pull request's own evidence, which is
-    // weaker but still refuses an unrelated pull request.
-    record(
-      'activePr',
-      (pr?.labels ?? []).includes(config.automation.triggerLabel) ||
-        /AI-\d+/.test(`${pr?.title ?? ''} ${pr?.headRefName ?? ''}`),
-      'the pull request is not labelled as an AI-loop task and names no task id',
-    );
+    // No usable state: the pull request's own evidence must carry the decision,
+    // and it still refuses an unrelated pull request.
+    record('activePr', aiManaged, 'the pull request is not an AI-managed loop task');
   }
 
   record(
