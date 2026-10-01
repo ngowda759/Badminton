@@ -173,12 +173,14 @@ AI-managed when it targets the base branch and is not a fork, **and** any of:
 
 1. its head branch uses the loop's `branchPrefix` (`automation/`) — the original
    convention;
-2. it carries the loop's `automation.triggerLabel` (`ai-task`);
-3. its head commit (or merge commit) is covered by a trusted review marker
+2. any task in `.ai/state/task-queue.json` records its number or branch as that
+   task's implementation — the queue keeps that record after the state moves on;
+3. it carries the loop's `automation.triggerLabel` (`ai-task`);
+4. its head commit (or merge commit) is covered by a trusted review marker
    (`<!-- ai-loop-review round=<n> head=<sha> verdict=<v> -->`), which only the
    loop's own reviewer writes;
-4. its title or head branch names a task id present in `.ai/state/task-queue.json`;
-5. it is the loop's recorded active pull request (`state.currentPr`) — this
+5. its title or head branch names a task id present in `.ai/state/task-queue.json`;
+6. it is the loop's recorded active pull request (`state.currentPr`) — this
    matches on the PR number, so the classification still holds after the branch
    is deleted.
 

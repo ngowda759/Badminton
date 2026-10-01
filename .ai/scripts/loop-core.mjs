@@ -36,10 +36,12 @@ export function loadConfig(root = REPO_ROOT) {
  *
  *   1. the branch uses the loop prefix (`automation/`) — the loop's own branch;
  *   2. the loop recorded this number as its active pull request;
- *   3. the pull request carries the loop's trigger label (`ai-task`);
- *   4. a trusted ChatGPT review marker on the pull request covers its head or
+ *   3. any task in the queue records this pull request number or branch as its
+ *      implementation — the queue keeps that record even after the state moves on;
+ *   4. the pull request carries the loop's trigger label (`ai-task`);
+ *   5. a trusted ChatGPT review marker on the pull request covers its head or
  *      merge commit — only the loop's review stage writes one;
- *   5. the title or branch names a task id that exists in the loop's queue.
+ *   6. the title or branch names a task id that exists in the loop's queue.
  *
  * A cross-repository (fork) pull request, or one targeting a different base
  * branch, is never AI-managed regardless of the other signals.
@@ -57,6 +59,17 @@ export function isAiManagedPullRequest({ pr, state = null, queue = null, config,
 
   const recorded = state?.currentPr ?? null;
   if (recorded !== null && typeof recorded.number === 'number' && recorded.number === pr.number) {
+    return true;
+  }
+
+  // The queue records the pull request a task was implemented in. Any task's
+  // recorded PR number (or branch) identifies the loop's own work — this holds
+  // even when the loop state has already moved on to a later task.
+  const tasks = queue?.tasks ?? [];
+  if (typeof pr.number === 'number' && tasks.some((task) => task?.pr === pr.number)) {
+    return true;
+  }
+  if (branch.length > 0 && tasks.some((task) => task?.branch === branch)) {
     return true;
   }
 

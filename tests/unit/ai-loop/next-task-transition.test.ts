@@ -171,6 +171,31 @@ describe('AI-managed pull request identity', () => {
     ).toBe(true);
   });
 
+  it('accepts a PR a queue task records as its implementation, even after state moves on', () => {
+    // The loop state has already advanced to a later task, but the queue still
+    // records PR #42 as AI-002's implementation. The merge of #42 must still
+    // advance the loop.
+    expect(
+      isAiManagedPullRequest({
+        pr: pr({ number: 42, headRefName: 'feat/tournament-progression' }),
+        state: state({ currentTaskId: 'AI-003', currentPr: { number: 77, branch: 'feat/next' } }),
+        queue: queue(),
+        config,
+      }),
+    ).toBe(true);
+  });
+
+  it('accepts a PR whose branch a queue task records as its implementation', () => {
+    expect(
+      isAiManagedPullRequest({
+        pr: pr({ number: 4242, headRefName: 'feat/tournament-progression' }),
+        state: null,
+        queue: queue(),
+        config,
+      }),
+    ).toBe(true);
+  });
+
   it('refuses an unrelated pull request', () => {
     expect(
       isAiManagedPullRequest({
