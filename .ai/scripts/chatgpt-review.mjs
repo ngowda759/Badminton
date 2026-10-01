@@ -470,9 +470,16 @@ async function main() {
   const task = taskBrief(taskId);
   const reviewedAt = nowIso();
 
+  // GitHub supplies an empty string for an unset Actions variable, so a blank
+  // --model/OPENAI_REVIEW_MODEL must fall through to the configured default.
   const model =
-    (typeof args.model === 'string' ? args.model : undefined) ??
-    process.env.OPENAI_REVIEW_MODEL ??
+    (typeof args.model === 'string' && args.model.trim().length > 0
+      ? args.model.trim()
+      : undefined) ??
+    (typeof process.env.OPENAI_REVIEW_MODEL === 'string' &&
+    process.env.OPENAI_REVIEW_MODEL.trim().length > 0
+      ? process.env.OPENAI_REVIEW_MODEL.trim()
+      : undefined) ??
     config.review.model;
 
   const schema = JSON.parse(
