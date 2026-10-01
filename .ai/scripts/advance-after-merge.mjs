@@ -171,17 +171,40 @@ if (typeof pr.mergedAt !== 'string' || pr.mergedAt.length === 0) {
   stop('merge-conflict', `PR #${prNumber} was closed without merging`);
 }
 
-const taskId = state.currentTaskId;
-if (typeof taskId !== 'string' || taskId.length === 0) {
-  // A merged loop pull request with no active task means the state lost track.
-  // Do not invent a task; stop for a human.
-  stop('state-corruption', `PR #${prNumber} merged but the loop state has no active task`);
+// Resolve which task this pull request completes. The loop's recorded active
+// task is authoritative, but the state on `main` is only as current as the last
+// state commit — the implementation and review stages record `implementing`/
+// `ci-running`/`reviewing` locally and those commits are not guaranteed to reach
+// `main` before the merge (and the review stage is skipped entirely when no
+// reviewer credential is configured). The queue is the durable record: the
+// implementation records the task's `pr`/`branch` before opening it, so a merge
+// is attributed to the task that owns that PR (or branch). Only when neither the
+// state nor the queue can name the task is it genuine corruption — never invent
+// a task, stop for a human.
+const recordedTaskId = state.currentTaskId;
+let task =
+  typeof recordedTaskId === 'string' && recordedTaskId.length > 0
+    ? (queue.tasks.find((candidate) => candidate.id === recordedTaskId) ?? null)
+    : null;
+if (task === null) {
+  task =
+    queue.tasks.find(
+      (candidate) =>
+        candidate.pr === prNumber ||
+        (typeof candidate.branch === 'string' &&
+          candidate.branch.length > 0 &&
+          candidate.branch === pr.headRefName),
+    ) ?? null;
 }
-
-const task = queue.tasks.find((candidate) => candidate.id === taskId);
-if (task === undefined) {
-  stop('state-corruption', `active task ${taskId} is not present in the task queue`);
+if (task === null) {
+  // A merged loop pull request that neither the state nor the queue attributes
+  // to a task means the loop lost track. Do not invent a task; stop for a human.
+  stop(
+    'state-corruption',
+    `PR #${prNumber} merged but neither the loop state nor the task queue records it as a task`,
+  );
 }
+const taskId = task.id;
 
 // Idempotency: a duplicate `pull_request: closed` delivery (or an operator
 // re-run) must not generate the next task twice. The task's own `status` is the
