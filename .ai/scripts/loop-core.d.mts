@@ -187,3 +187,4 @@ export function assertSingleActiveTask(input: {
     { number: number; branch: string; base: string; title: string; isAutomation: boolean }[] | null;
   config: LoopConfig;
 }): { ok: boolean; errors: string[]; activePr: number | null };
+export function isRecoverableNextTaskState(state: LoopState | null | undefined): boolean;

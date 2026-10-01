@@ -198,7 +198,13 @@ export function assertSingleActiveTask({ state, queue, openPrs, config }) {
   }
 
   const stateStatus = state?.status ?? 'idle';
-  const stateActive = !['idle', 'complete'].includes(stateStatus);
+  // Only the implementation statuses own an active pull request. `next-task`
+  // (like `completed` and `idle`) sits *between* two tasks: the previous one
+  // merged and the next brief has not been generated yet, so demanding an open
+  // automation pull request there is exactly what silently stalled the loop.
+  // The status is `completed`, not `complete` — the previous check misspelled
+  // it, so a finished loop was itself treated as active.
+  const stateActive = ACTIVE_STATUSES.includes(stateStatus);
   if (stateActive && automationPrs.length === 0 && state?.currentPr === null) {
     errors.push(`loop state is "${stateStatus}" but no automation pull request is open`);
   }
@@ -208,6 +214,28 @@ export function assertSingleActiveTask({ state, queue, openPrs, config }) {
     errors,
     activePr: state?.currentPr?.number ?? automationPrs[0]?.number ?? null,
   };
+}
+
+/**
+ * Is the loop sitting in a legitimate `next-task` state with no active work?
+ *
+ * This is the recovery predicate. A merge advances the loop to `next-task` and
+ * the workflow is supposed to dispatch the architect immediately, but if that
+ * dispatch never ran (a lost event, a run before the workflow reached the
+ * default branch, an interrupted job) the state is left waiting forever. The
+ * loop must notice and restart itself, because a stalled loop looks exactly like
+ * a finished one.
+ *
+ * The condition is deliberately narrow: the status must be `next-task`, no task
+ * and no pull request may be recorded. Any recorded task or PR means real work
+ * is in flight and the normal path owns it. A `next-task` state that still names
+ * a task is a state/queue mismatch, not a recovery — that is a `state-corruption`
+ * hard stop for a human, not something the loop should paper over.
+ *
+ * @returns {boolean}
+ */
+export function isRecoverableNextTaskState(state) {
+  return state?.status === 'next-task' && state.currentTaskId === null && state.currentPr === null;
 }
 
 // --- protected paths -------------------------------------------------------

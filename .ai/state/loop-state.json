@@ -1,21 +1,17 @@
 {
   "version": 1,
   "loopId": "AI-001",
-  "status": "completed",
+  "status": "next-task",
   "round": 0,
   "maxReviewRounds": 3,
-  "currentTaskId": "AI-001",
-  "currentPr": {
-    "number": 19,
-    "branch": "automation/ai-development-loop",
-    "headSha": "0000000000000000000000000000000000000000"
-  },
+  "currentTaskId": null,
+  "currentPr": null,
   "lastVerdict": null,
   "lastCiStatus": null,
   "reviewedHeadSha": null,
   "blockedReason": null,
   "completedTasks": ["AI-001"],
-  "updatedAt": "2026-09-30T00:00:00Z",
+  "updatedAt": "2026-10-01T10:22:10Z",
   "history": [
     {
       "at": "2026-09-30T00:00:00Z",
@@ -26,6 +22,11 @@
       "at": "2026-09-30T00:00:00Z",
       "status": "completed",
       "note": "AI-001 delivered the autonomous loop infrastructure (PR #19). The loop merges it, then generates AI-002 automatically."
+    },
+    {
+      "at": "2026-10-01T10:22:10Z",
+      "status": "next-task",
+      "note": "AI-001/PR #19 had already merged and the loop reached 'completed', but the persistent state never advanced to 'next-task': the next-task workflow gated on an automation/* branch prefix and the advance script asked gh for a non-existent 'merged' field, so every merge was silently skipped. PR #24 repaired the identity logic and the mergedAt field; this entry repairs the stale bookkeeping so the architect can generate AI-002."
     }
   ]
 }

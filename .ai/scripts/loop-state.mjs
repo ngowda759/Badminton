@@ -20,6 +20,7 @@
  *   node .ai/scripts/loop-state.mjs stop --event max-rounds-exceeded
  *   node .ai/scripts/loop-state.mjs complete --task AI-002
  *   node .ai/scripts/loop-state.mjs reset --note "task merged"
+ *   node .ai/scripts/loop-state.mjs recover --note "stale state repaired"
  *
  * `stop` is the hard-stop entry point: it resolves the event through the
  * hard-stop table, moves the loop to `blocked` or `human-review-required`, and
@@ -242,6 +243,45 @@ function commandReset(args) {
   commandStatus();
 }
 
+/**
+ * Recover a stale state: a task and pull request that already completed, but a
+ * persistent state that never advanced to `next-task`.
+ *
+ * This is not a second state machine and it never invents a task. It repairs the
+ * *bookkeeping* only: the recorded active task and pull request are cleared and
+ * the loop is placed in `next-task`, so the next-task automation can generate the
+ * successor. The repair is allowed only from a finished state — `completed`,
+ * `next-task` or `idle` — where no implementation is in flight; from any active
+ * status (`implementing`, `reviewing`, `ready-to-merge`, …) it refuses, because
+ * clearing the active record there would drop live work on the floor.
+ */
+function commandRecover(args) {
+  const state = readState();
+  const previous = state.status;
+  const finished = ['idle', 'completed', 'next-task'].includes(previous);
+  if (!finished) {
+    console.error(
+      `refusing to recover from status "${previous}": the loop may still own active work. ` +
+        'Recovery is only valid from idle, completed or next-task.',
+    );
+    process.exit(1);
+  }
+
+  const note =
+    typeof args.note === 'string'
+      ? args.note
+      : 'stale-state recovery: the recorded task and pull request had already completed but the persistent state never advanced';
+  state.status = 'next-task';
+  state.currentTaskId = null;
+  state.currentPr = null;
+  state.lastVerdict = null;
+  state.lastCiStatus = null;
+  state.reviewedHeadSha = null;
+  state.blockedReason = null;
+  writeState(state, note);
+  commandStatus();
+}
+
 function commandLog(args) {
   const record = {
     taskId: requireString(args, 'task'),
@@ -300,9 +340,12 @@ switch (command) {
   case 'reset':
     commandReset(args);
     break;
+  case 'recover':
+    commandRecover(args);
+    break;
   default:
     console.error(
-      'usage: loop-state.mjs <status|set|next-round|stop|complete|log|reset> [--key value ...]',
+      'usage: loop-state.mjs <status|set|next-round|stop|complete|log|reset|recover> [--key value ...]',
     );
     process.exit(2);
 }
