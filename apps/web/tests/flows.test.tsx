@@ -15,6 +15,7 @@ import {
   makeEntry,
   makeGroupFixtures,
   makeMatch,
+  makeMatchGame,
   makeMatchResult,
   makeParticipant,
   makePlayer,
@@ -453,7 +454,7 @@ describe('tournament setup flows', () => {
     });
   });
 
-  it('records a 2-0 result from an in-progress match and completes it', async () => {
+  it('records a single-game group result from an in-progress match and completes it', async () => {
     const user = userEvent.setup();
     const api = createStubApi();
     const match = makeMatch({ id: 'm1', stageId: 's1', status: 'IN_PROGRESS' });
@@ -462,6 +463,7 @@ describe('tournament setup flows', () => {
     api.tournaments.get.mockResolvedValue(makeTournament({ id: 't1', status: 'IN_PROGRESS' }));
     api.categories.get.mockResolvedValue(makeCategory({ id: 'c1', status: 'OPEN' }));
     api.matches.get.mockResolvedValue(match);
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
     api.matches.listParticipants.mockResolvedValue([
       makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
       makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
@@ -478,10 +480,8 @@ describe('tournament setup flows', () => {
       route: '/tournaments/t1/categories/c1/matches/m1',
     });
 
-    await user.type(await screen.findByLabelText('Game 1 — Alice points'), '21');
-    await user.type(screen.getByLabelText('Game 1 — Bob points'), '15');
-    await user.type(screen.getByLabelText('Game 2 — Alice points'), '21');
-    await user.type(screen.getByLabelText('Game 2 — Bob points'), '18');
+    await user.type(await screen.findByLabelText('Game — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game — Bob points'), '15');
 
     expect(await screen.findByTestId('match-winner')).toHaveTextContent('Match winner: Alice');
 
@@ -489,10 +489,7 @@ describe('tournament setup flows', () => {
 
     await waitFor(() => {
       expect(api.matches.recordResult).toHaveBeenCalledWith('m1', {
-        games: [
-          { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-          { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
-        ],
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
       });
     });
   });
@@ -504,11 +501,18 @@ describe('tournament setup flows', () => {
     api.matches.get.mockResolvedValue(
       makeMatch({ id: 'm1', stageId: 's1', status: 'COMPLETED', winnerEntryId: 'e1' }),
     );
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
     api.matches.listParticipants.mockResolvedValue([
       makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
       makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
     ]);
-    api.matches.getResult.mockResolvedValue(makeMatchResult());
+    api.matches.getResult.mockResolvedValue(
+      makeMatchResult({
+        winnerGames: 1,
+        loserGames: 0,
+        games: [makeMatchGame({ gameNumber: 1, participant1Points: 21, participant2Points: 15 })],
+      }),
+    );
     api.entries.listByCategory.mockResolvedValue([
       makeEntry({ id: 'e1', playerId: 'p1' }),
       makeEntry({ id: 'e2', playerId: 'p2' }),
@@ -523,9 +527,10 @@ describe('tournament setup flows', () => {
     });
 
     // Entry names resolve asynchronously after the result renders, so wait for
-    // the resolved label rather than the first paint.
+    // the resolved label rather than the first paint. A group match is a single
+    // game, so the headline is that game's score, not the games won.
     await waitFor(() => {
-      expect(screen.getByTestId('match-result-winner')).toHaveTextContent('Winner: Alice (2–0)');
+      expect(screen.getByTestId('match-result-winner')).toHaveTextContent('Winner: Alice (21–15)');
     });
     expect(screen.getByTestId('result-game-1')).toHaveTextContent('Game 1: Alice 21 – 15 Bob');
     // A completed result is immutable: no scoring form or save button.
@@ -542,6 +547,7 @@ describe('tournament setup flows', () => {
     api.matches.get.mockResolvedValue(
       makeMatch({ id: 'm1', stageId: 's1', status: 'IN_PROGRESS' }),
     );
+    api.stages.get.mockResolvedValue(makeStage({ id: 's1', type: 'GROUP' }));
     api.matches.listParticipants.mockResolvedValue([
       makeParticipant({ matchId: 'm1', entryId: 'e1', slot: 1 }),
       makeParticipant({ id: 'p-e2', matchId: 'm1', entryId: 'e2', slot: 2 }),
@@ -563,10 +569,8 @@ describe('tournament setup flows', () => {
       route: '/tournaments/t1/categories/c1/matches/m1',
     });
 
-    await user.type(await screen.findByLabelText('Game 1 — Alice points'), '21');
-    await user.type(screen.getByLabelText('Game 1 — Bob points'), '15');
-    await user.type(screen.getByLabelText('Game 2 — Alice points'), '21');
-    await user.type(screen.getByLabelText('Game 2 — Bob points'), '18');
+    await user.type(await screen.findByLabelText('Game — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game — Bob points'), '15');
     await user.click(screen.getByRole('button', { name: 'Save & complete result' }));
 
     expect(await screen.findByText('Match is already completed.')).toBeInTheDocument();

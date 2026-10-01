@@ -238,11 +238,15 @@ export const generateGroupFixturesInputSchema = z.object({
 /**
  * A single game in a match result.
  *
- * Only the request *shape* is validated here: the game number is 1-3 (best of
- * three) and each point value is a whole number between 0 and 30 (the game
- * ceiling). Whether the combination is a legal badminton score - a 21-point
- * target, a two-point margin, best-of-three completeness - is a domain rule
- * enforced by `scoreMatchGames` in the application layer.
+ * Only the request *shape* is validated here: the game number is 1-3 and each
+ * point value is a whole number between 0 and 99. Whether the combination is a
+ * legal badminton score - a 21-point target, a two-point margin - is a domain
+ * rule, and whether the match is a single game (GROUP) or best of three
+ * (KNOCKOUT) is decided by the match's stage in the application layer.
+ *
+ * The point ceiling is 99 rather than the game's 30 so the two domain rules are
+ * distinguishable: a score above 30 is a 422 business-rule violation from
+ * `scoreGroupMatch`/`scoreMatchGames`, not a 400 shape error.
  */
 export const recordMatchGameInputSchema = z.object({
   gameNumber: positiveIntegerSchema.max(3, 'A match is best of three games (game number 1-3).'),
@@ -250,12 +254,12 @@ export const recordMatchGameInputSchema = z.object({
     .number()
     .int('Points must be a whole number.')
     .min(0, 'Points cannot be negative.')
-    .max(30, 'A game cannot exceed 30 points.'),
+    .max(99, 'A game score cannot exceed 99 points.'),
   participant2Points: z.coerce
     .number()
     .int('Points must be a whole number.')
     .min(0, 'Points cannot be negative.')
-    .max(30, 'A game cannot exceed 30 points.'),
+    .max(99, 'A game score cannot exceed 99 points.'),
 });
 
 export const recordMatchResultInputSchema = z.object({

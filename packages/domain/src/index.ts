@@ -93,17 +93,30 @@ export {
   determineGameWinner,
   validateGameScore,
   scoreMatchGames,
+  scoreGroupMatch,
   determineMatchOutcome,
 } from './scoring.ts';
 export type {
   GameNumber,
   MatchGameInput,
   MatchGame,
+  MatchKind,
   MatchOutcome,
   MatchResult,
 } from './scoring.ts';
-export { calculateStandings, STANDING_WIN_POINTS, STANDING_LOSS_POINTS } from './standings.ts';
-export type { StandingsMatch, StandingsParticipant, StandingRow } from './standings.ts';
+export {
+  calculateStandings,
+  STANDING_WIN_POINTS,
+  STANDING_LOSS_POINTS,
+  STANDING_GROUP_LOSS_POINTS,
+  STANDING_KNOCKOUT_LOSS_POINTS,
+} from './standings.ts';
+export type {
+  StandingsMatch,
+  StandingsParticipant,
+  StandingRow,
+  StandingsNameResolver,
+} from './standings.ts';
 export {
   MIN_ROUND_ROBIN_COMPETITORS,
   roundRobinMatchCount,

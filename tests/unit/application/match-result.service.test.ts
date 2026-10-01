@@ -8,7 +8,14 @@ import { BusinessRuleViolationError, ConflictError, NotFoundError } from '@badmi
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createFakeRepositories, type FakeRepositories } from './fake-repositories.ts';
-import { seedCategory, seedMatch, seedPlayer, seedStage, seedTournament } from './fixtures.ts';
+import {
+  seedCategory,
+  seedKnockoutStage,
+  seedMatch,
+  seedPlayer,
+  seedStage,
+  seedTournament,
+} from './fixtures.ts';
 
 /**
  * Match result and standings service unit tests.
@@ -55,7 +62,7 @@ async function startedMatch(
   return matchInStage(categoryId, stageId);
 }
 
-/** A started match with two participants inside an existing stage. */
+/** A started GROUP match with two participants inside an existing stage. */
 async function matchInStage(
   categoryId: string,
   stageId: string,
@@ -69,25 +76,108 @@ async function matchInStage(
   return { matchId, slot1, slot2 };
 }
 
-/** Completes a fresh 2-0 match in `stageId` and returns the two entry ids. */
+/** A started KNOCKOUT match with two participants inside an existing stage. */
+async function knockoutMatchInStage(
+  categoryId: string,
+  stageId: string,
+): Promise<{ matchId: string; slot1: string; slot2: string }> {
+  const matchId = await seedMatch(repos.client, stageId);
+  const slot1 = await entryIn(categoryId, 'Player A');
+  const slot2 = await entryIn(categoryId, 'Player B');
+  await matches.addParticipant(matchId, { entryId: slot1, slot: 1 });
+  await matches.addParticipant(matchId, { entryId: slot2, slot: 2 });
+  await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
+  return { matchId, slot1, slot2 };
+}
+
+/** Completes a fresh 2-0 group match in `stageId` and returns the two entry ids. */
 async function resultInStage(
   categoryId: string,
   stageId: string,
 ): Promise<{ slot1: string; slot2: string }> {
   const { matchId, slot1, slot2 } = await matchInStage(categoryId, stageId);
-  await results.recordResult(matchId, { games: twoZero });
+  await results.recordResult(matchId, { games: oneGame });
   return { slot1, slot2 };
 }
+
+/** A single game, as a GROUP match stores it. */
+const oneGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
 
 const twoZero = [
   { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
   { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
 ];
 
-describe('MatchResultService.recordResult', () => {
-  it('records a valid 2-0 result and completes the match', async () => {
+describe('MatchResultService.recordResult (group stage)', () => {
+  it('records a single-game group result and completes the match', async () => {
     const categoryId = await singlesCategory();
     const { matchId, slot1 } = await startedMatch(categoryId);
+
+    const result = await results.recordResult(matchId, { games: oneGame });
+
+    expect(result.winnerSlot).toBe(1);
+    expect(result.winnerEntryId).toBe(slot1);
+    expect(result.winnerGames).toBe(1);
+    expect(result.loserGames).toBe(0);
+    expect(result.games).toHaveLength(1);
+
+    const match = await repos.client.matches.findById(matchId);
+    expect(match?.status).toBe('COMPLETED');
+    expect(match?.winnerEntryId).toBe(slot1);
+    expect(await repos.client.matchGames.listByMatch(matchId)).toHaveLength(1);
+  });
+
+  it('rejects a best-of-three result for a group match', async () => {
+    const categoryId = await singlesCategory();
+    const { matchId } = await startedMatch(categoryId);
+
+    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
+    const match = await repos.client.matches.findById(matchId);
+    expect(match?.status).toBe('IN_PROGRESS');
+    expect(await repos.client.matchGames.listByMatch(matchId)).toHaveLength(0);
+  });
+
+  it('rejects a group game that is not won to 21 with a two-point lead', async () => {
+    const categoryId = await singlesCategory();
+    const { matchId } = await startedMatch(categoryId);
+
+    await expect(
+      results.recordResult(matchId, {
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 20 }],
+      }),
+    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
+  });
+
+  it('rejects a group game beyond the 30-point ceiling', async () => {
+    const categoryId = await singlesCategory();
+    const { matchId } = await startedMatch(categoryId);
+
+    await expect(
+      results.recordResult(matchId, {
+        games: [{ gameNumber: 1, participant1Points: 31, participant2Points: 29 }],
+      }),
+    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
+  });
+
+  it('accepts a group game at the ceiling', async () => {
+    const categoryId = await singlesCategory();
+    const { matchId } = await startedMatch(categoryId);
+
+    const result = await results.recordResult(matchId, {
+      games: [{ gameNumber: 1, participant1Points: 30, participant2Points: 29 }],
+    });
+    expect(result.winnerSlot).toBe(1);
+    expect(result.winnerGames).toBe(1);
+  });
+});
+
+describe('MatchResultService.recordResult (knockout stage)', () => {
+  it('records a valid 2-0 result and completes the match', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId, slot1 } = await knockoutMatchInStage(categoryId, stageId);
 
     const result = await results.recordResult(matchId, { games: twoZero });
 
@@ -105,7 +195,8 @@ describe('MatchResultService.recordResult', () => {
 
   it('records a valid 2-1 result', async () => {
     const categoryId = await singlesCategory();
-    const { matchId, slot2 } = await startedMatch(categoryId);
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId, slot2 } = await knockoutMatchInStage(categoryId, stageId);
 
     const result = await results.recordResult(matchId, {
       games: [
@@ -121,9 +212,48 @@ describe('MatchResultService.recordResult', () => {
     expect(result.loserGames).toBe(1);
   });
 
+  it('rejects a single-game result as incomplete', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId } = await knockoutMatchInStage(categoryId, stageId);
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toBeInstanceOf(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('rejects a third game after a 2-0 result', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId } = await knockoutMatchInStage(categoryId, stageId);
+    await expect(
+      results.recordResult(matchId, {
+        games: [...twoZero, { gameNumber: 3, participant1Points: 21, participant2Points: 15 }],
+      }),
+    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
+  });
+
+  it('accepts a 30-29 deciding game at the ceiling', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId } = await knockoutMatchInStage(categoryId, stageId);
+
+    const result = await results.recordResult(matchId, {
+      games: [
+        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+        { gameNumber: 2, participant1Points: 15, participant2Points: 21 },
+        { gameNumber: 3, participant1Points: 30, participant2Points: 29 },
+      ],
+    });
+    expect(result.winnerSlot).toBe(1);
+    expect(result.winnerGames).toBe(2);
+  });
+});
+
+describe('MatchResultService.recordResult (lifecycle)', () => {
   it('rejects an invalid game score without persisting anything', async () => {
     const categoryId = await singlesCategory();
-    const { matchId } = await startedMatch(categoryId);
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId } = await knockoutMatchInStage(categoryId, stageId);
 
     await expect(
       results.recordResult(matchId, {
@@ -141,7 +271,8 @@ describe('MatchResultService.recordResult', () => {
 
   it('rejects a 30-29 game beyond the ceiling semantics', async () => {
     const categoryId = await singlesCategory();
-    const { matchId } = await startedMatch(categoryId);
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId } = await knockoutMatchInStage(categoryId, stageId);
 
     await expect(
       results.recordResult(matchId, {
@@ -149,41 +280,6 @@ describe('MatchResultService.recordResult', () => {
           { gameNumber: 1, participant1Points: 31, participant2Points: 29 },
           { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
         ],
-      }),
-    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
-  });
-
-  it('accepts a 30-29 deciding game at the ceiling', async () => {
-    const categoryId = await singlesCategory();
-    const { matchId } = await startedMatch(categoryId);
-
-    const result = await results.recordResult(matchId, {
-      games: [
-        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-        { gameNumber: 2, participant1Points: 15, participant2Points: 21 },
-        { gameNumber: 3, participant1Points: 30, participant2Points: 29 },
-      ],
-    });
-    expect(result.winnerSlot).toBe(1);
-    expect(result.winnerGames).toBe(2);
-  });
-
-  it('rejects a match with only one game', async () => {
-    const categoryId = await singlesCategory();
-    const { matchId } = await startedMatch(categoryId);
-    await expect(
-      results.recordResult(matchId, {
-        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
-      }),
-    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
-  });
-
-  it('rejects a third game after a 2-0 result', async () => {
-    const categoryId = await singlesCategory();
-    const { matchId } = await startedMatch(categoryId);
-    await expect(
-      results.recordResult(matchId, {
-        games: [...twoZero, { gameNumber: 3, participant1Points: 21, participant2Points: 15 }],
       }),
     ).rejects.toBeInstanceOf(BusinessRuleViolationError);
   });
@@ -196,7 +292,7 @@ describe('MatchResultService.recordResult', () => {
     await matches.addParticipant(matchId, { entryId: only, slot: 1 });
     await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
 
-    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toBeInstanceOf(
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toBeInstanceOf(
       BusinessRuleViolationError,
     );
   });
@@ -208,7 +304,7 @@ describe('MatchResultService.recordResult', () => {
     await matches.addParticipant(matchId, { entryId: await entryIn(categoryId, 'A'), slot: 1 });
     await matches.addParticipant(matchId, { entryId: await entryIn(categoryId, 'B'), slot: 2 });
 
-    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toBeInstanceOf(
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toBeInstanceOf(
       BusinessRuleViolationError,
     );
   });
@@ -218,7 +314,7 @@ describe('MatchResultService.recordResult', () => {
     const { matchId } = await startedMatch(categoryId);
     await matches.transitionStatus(matchId, { status: 'CANCELLED' });
 
-    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toBeInstanceOf(
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toBeInstanceOf(
       BusinessRuleViolationError,
     );
   });
@@ -234,7 +330,7 @@ describe('MatchResultService.recordResult', () => {
       { matchId, gameNumber: 1, participant1Points: 21, participant2Points: 10, winnerSlot: 1 },
     ]);
 
-    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toThrow();
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toThrow();
 
     const match = await repos.client.matches.findById(matchId);
     expect(match?.status).toBe('IN_PROGRESS');
@@ -246,13 +342,13 @@ describe('MatchResultService.recordResult', () => {
   it('rejects a second result for a completed match as a conflict', async () => {
     const categoryId = await singlesCategory();
     const { matchId } = await startedMatch(categoryId);
-    await results.recordResult(matchId, { games: twoZero });
+    await results.recordResult(matchId, { games: oneGame });
 
-    await expect(results.recordResult(matchId, { games: twoZero })).rejects.toBeInstanceOf(
+    await expect(results.recordResult(matchId, { games: oneGame })).rejects.toBeInstanceOf(
       ConflictError,
     );
     // The original result is untouched.
-    expect(await repos.client.matchGames.listByMatch(matchId)).toHaveLength(2);
+    expect(await repos.client.matchGames.listByMatch(matchId)).toHaveLength(1);
   });
 });
 
@@ -263,13 +359,26 @@ describe('MatchResultService.getResult', () => {
     expect(await results.getResult(matchId)).toBeUndefined();
   });
 
-  it('returns the stored result of a completed match', async () => {
+  it('returns the stored single-game result of a completed group match', async () => {
     const categoryId = await singlesCategory();
     const { matchId, slot1 } = await startedMatch(categoryId);
+    await results.recordResult(matchId, { games: oneGame });
+
+    const result = await results.getResult(matchId);
+    expect(result?.winnerEntryId).toBe(slot1);
+    expect(result?.winnerGames).toBe(1);
+    expect(result?.games).toHaveLength(1);
+  });
+
+  it('returns the stored best-of-three result of a completed knockout match', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const { matchId, slot1 } = await knockoutMatchInStage(categoryId, stageId);
     await results.recordResult(matchId, { games: twoZero });
 
     const result = await results.getResult(matchId);
     expect(result?.winnerEntryId).toBe(slot1);
+    expect(result?.winnerGames).toBe(2);
     expect(result?.games).toHaveLength(2);
   });
 
@@ -296,12 +405,20 @@ describe('StandingsService.getStageStandings', () => {
     const categoryId = await singlesCategory();
     const { matchId, slot1 } = await startedMatch(categoryId);
     const [stage] = await repos.client.stages.listByCategory(categoryId);
-    await results.recordResult(matchId, { games: twoZero });
+    await results.recordResult(matchId, { games: oneGame });
 
     const rows = await standings.getStageStandings(stage?.id ?? '');
     const leader = rows.find((row) => row.entryId === slot1);
-    expect(leader).toMatchObject({ position: 1, played: 1, won: 1, lost: 0, points: 2 });
-    expect(leader?.gameDifference).toBe(2);
+    expect(leader).toMatchObject({
+      position: 1,
+      played: 1,
+      won: 1,
+      lost: 0,
+      points: 2,
+      pointsFor: 21,
+      pointsAgainst: 15,
+      pointDifference: 6,
+    });
   });
 
   it('ignores completed matches from other stages in the same category', async () => {
@@ -320,7 +437,8 @@ describe('StandingsService.getStageStandings', () => {
 
     const playedA = await resultInStage(categoryId, stageA);
     const playedB = await resultInStage(categoryId, stageB);
-    await resultInStage(categoryId, knockout.id);
+    const knockoutMatch = await knockoutMatchInStage(categoryId, knockout.id);
+    await results.recordResult(knockoutMatch.matchId, { games: twoZero });
 
     const rows = await standings.getStageStandings(stageA);
     const byEntry = new Map(rows.map((row) => [row.entryId, row]));
@@ -329,7 +447,7 @@ describe('StandingsService.getStageStandings', () => {
     expect(rows).toHaveLength(6);
     // ...but only Stage A's match counts: its two competitors each played once.
     expect(byEntry.get(playedA.slot1)).toMatchObject({ played: 1, won: 1, points: 2 });
-    expect(byEntry.get(playedA.slot2)).toMatchObject({ played: 1, lost: 1, points: 1 });
+    expect(byEntry.get(playedA.slot2)).toMatchObject({ played: 1, lost: 1, points: 0 });
 
     // Stage B's completed match and the knockout match contribute nothing.
     expect(byEntry.get(playedB.slot1)).toMatchObject({ played: 0, won: 0, points: 0 });
@@ -350,10 +468,10 @@ describe('StandingsService.getStageStandings', () => {
     const rowsB = await standings.getStageStandings(stageB);
 
     const a1 = rowsA.find((row) => row.entryId === playedA.slot1);
-    expect(a1).toMatchObject({ played: 1, won: 1, points: 2, gameDifference: 2 });
+    expect(a1).toMatchObject({ played: 1, won: 1, points: 2, pointDifference: 6 });
 
     const b1 = rowsB.find((row) => row.entryId === playedB.slot1);
-    expect(b1).toMatchObject({ played: 1, won: 1, points: 2, gameDifference: 2 });
+    expect(b1).toMatchObject({ played: 1, won: 1, points: 2, pointDifference: 6 });
 
     // Neither stage reflects the other's match: each only has one played game.
     expect(rowsA.reduce((sum, row) => sum + row.played, 0)).toBe(2);
@@ -384,7 +502,7 @@ describe('StandingsService.getStageStandings', () => {
     const categoryId = await singlesCategory();
     const { matchId, slot1, slot2 } = await startedMatch(categoryId);
     const [stage] = await repos.client.stages.listByCategory(categoryId);
-    await results.recordResult(matchId, { games: twoZero });
+    await results.recordResult(matchId, { games: oneGame });
     await repos.client.entries.updateStatus(slot2, 'WITHDRAWN');
 
     const rows = await standings.getStageStandings(stage?.id ?? '');

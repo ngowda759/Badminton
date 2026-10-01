@@ -23,14 +23,21 @@ Sources of truth inspected:
 
 ## 0. Summary
 
+> **Resolution status (TASK-6).** The high-severity scoring gaps **G1, G2 and G3**
+> are now closed: a GROUP match is a single game to 21 (win 2 / loss 0), a
+> KNOCKOUT match stays best of three (loss 1), and standings order is points →
+> point difference → points scored → competitor name → entry id. See
+> `docs/phase-5-group-scoring.md` and the `AGENTS.md` scoring gotcha. G4–G16
+> remain open (they are separate parity areas, not group-scoring).
+
 | Area                               | Status                                 |
 | ---------------------------------- | -------------------------------------- |
 | A. Tournament setup                | **PARTIAL**                            |
 | 4. Players & teams                 | **PARTIAL**                            |
 | 5. Group configuration             | **PARTIAL**                            |
 | 6. Group fixture generation        | **PASS** (verify only; do not rewrite) |
-| 7. Group scoring                   | **FAIL**                               |
-| 8. Standings                       | **FAIL**                               |
+| 7. Group scoring                   | **PASS** (fixed in TASK-6)             |
+| 8. Standings                       | **PASS** (fixed in TASK-6)             |
 | 9. Qualification                   | **PARTIAL**                            |
 | 10. Knockout configuration         | **FAIL**                               |
 | 11. Knockout progression           | **PASS**                               |
@@ -140,18 +147,19 @@ regenerates. V2 has no membership-edit/regenerate-confirm flow (see §6).
 
 ## 7 — Group scoring
 
-**Verdict: FAIL — V2 scoring rules do not match V1.**
+**Verdict: PASS (TASK-6) — V2 now matches V1.** Was **FAIL** at audit time; the
+divergence below is preserved as the record of what changed.
 
-| Concern                       | V1 (source of truth)                                                                            | V2                                                                                                                   | Status                                       |
-| ----------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Group match format            | **single game to 21** (`GROUP_TARGET = 21`, `GROUP_CAP = 30`)                                   | **best of 3** games (`MIN_GAMES_PER_MATCH = 2`, `MAX_GAMES_PER_MATCH = 3`)                                           | **FAIL**                                     |
-| Win / loss points             | win = **2**, loss = **0** (`GROUP_WIN_POINTS=2`, `GROUP_LOSS_POINTS=0`)                         | win = 2, loss = **1** (`STANDING_LOSS_POINTS = 1`)                                                                   | **FAIL**                                     |
-| Points scored / conceded      | `pf`/`pa` from the single game score                                                            | `pointsFor`/`pointsAgainst` summed over all games                                                                    | FAIL                                         |
-| Point difference              | `pf − pa`                                                                                       | `pointsFor − pointsAgainst` (over games)                                                                             | FAIL                                         |
-| Played / wins / losses        | per completed match                                                                             | per completed match                                                                                                  | PASS                                         |
-| Completed vs incomplete       | completed only counts                                                                           | completed only counts                                                                                                | PASS                                         |
-| Invalid score handling        | tie, sub-21, non-2-clear rejected                                                               | tie, sub-21, non-2-clear rejected                                                                                    | PASS (rules differ: single game vs per game) |
-| Correction of existing result | **`saveGroupScore` re-entry**; while a bracket exists, correction must go through ↺ Reset first | **no correction** — `COMPLETED` is immutable, `recordResult` rejects re-completion (`match-result.service.ts:69-71`) | **FAIL**                                     |
+| Concern                       | V1 (source of truth)                                                                            | V2 (after TASK-6)                                                                  | Status                       |
+| ----------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------- |
+| Group match format            | **single game to 21** (`GROUP_TARGET = 21`, `GROUP_CAP = 30`)                                   | **single game to 21** (`scoreGroupMatch`)                                          | **PASS**                     |
+| Win / loss points             | win = **2**, loss = **0** (`GROUP_WIN_POINTS=2`, `GROUP_LOSS_POINTS=0`)                         | win = 2, group loss = **0** (`STANDING_GROUP_LOSS_POINTS`)                         | **PASS**                     |
+| Points scored / conceded      | `pf`/`pa` from the single game score                                                            | `pointsFor`/`pointsAgainst` from the single game                                   | **PASS**                     |
+| Point difference              | `pf − pa`                                                                                       | `pointsFor − pointsAgainst`                                                        | **PASS**                     |
+| Played / wins / losses        | per completed match                                                                             | per completed match                                                                | PASS                         |
+| Completed vs incomplete       | completed only counts                                                                           | completed only counts                                                              | PASS                         |
+| Invalid score handling        | tie, sub-21, non-2-clear rejected                                                               | tie, sub-21, non-2-clear rejected                                                  | PASS                         |
+| Correction of existing result | **`saveGroupScore` re-entry**; while a bracket exists, correction must go through ↺ Reset first | **no correction** — `COMPLETED` is immutable, `recordResult` rejects re-completion | **FAIL (unchanged, gap G6)** |
 
 **Evidence.**
 
@@ -160,29 +168,32 @@ regenerates. V2 has no membership-edit/regenerate-confirm flow (see §6).
 cap)'` (index.html:3982); tests `tests/core.test.js:76-101` (`21-17 valid`,
   `21-21 tie rejected`, `21-20 rejected`, `30-29 valid`, `winner gets 2 points`,
   `loser gets 0 points`).
-- V2: `packages/domain/src/scoring.ts:27-42` (21/30/2, best of 3);
-  `standings.ts:63-64` (loss = 1); `docs/phase-5-group-scoring.md` §5,§8;
-  `e2e/group-scoring.spec.ts:124-128` (enters 21-18, 21-15 as two games).
+- V2 (after TASK-6): `packages/domain/src/scoring.ts` (`scoreGroupMatch`,
+  single game 21/30/2; `scoreMatchGames` best of three for KNOCKOUT);
+  `standings.ts` (`STANDING_GROUP_LOSS_POINTS = 0`); `match-result.service.ts`
+  reads the stage type inside the transaction to choose the format;
+  `e2e/group-scoring.spec.ts` (enters a single game 21-18).
 
-**Impact:** every V1 group result (a single 21-x score) is recorded in V2 as a
-2-game best-of-3; V2 standings award the loser a point and order by wins/games
-rather than points/diff/PF. This changes who qualifies.
+**Impact (pre-TASK-6):** every V1 group result (a single 21-x score) was recorded
+in V2 as a 2-game best-of-3; V2 standings awarded the loser a point and ordered
+by wins/games rather than points/diff/PF, which changed who qualified. TASK-6
+closed this.
 
 ---
 
 ## 8 — Standings
 
-**Verdict: FAIL.**
+**Verdict: PASS (TASK-6) — V2 now matches V1.** Was **FAIL** at audit time.
 
-| Concern                  | V1 (source of truth)                                                                            | V2                                                                                                                              | Status                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
-| Ordering                 | 1. points desc, 2. point difference desc, 3. points scored desc, 4. team name (`localeCompare`) | 1. **wins** desc, 2. **game difference** desc, 3. point difference desc, 4. entry id asc                                        | **FAIL**                                            |
-| Columns                  | `# · Team · P · W · L · Pts · PF · PA · Diff`                                                   | `position · played · won · lost · points · gamesWon · gamesLost · gameDifference · pointsFor · pointsAgainst · pointDifference` | PARTIAL (V2 adds games columns; primary sort wrong) |
-| Ties on points           | broken by point difference                                                                      | broken by wins, then game diff, then point diff                                                                                 | FAIL                                                |
-| Ties on point difference | broken by PF                                                                                    | broken by point diff then id                                                                                                    | FAIL                                                |
-| Multiple groups          | independent tables                                                                              | independent per stage                                                                                                           | PASS                                                |
-| Incomplete group         | every pair shows from zero                                                                      | every active entry shows from zero                                                                                              | PASS                                                |
-| Corrected result         | recomputed from results                                                                         | not possible (result immutable)                                                                                                 | FAIL (via §7)                                       |
+| Concern                  | V1 (source of truth)                                                                            | V2                                                                                                                     | Status                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Ordering                 | 1. points desc, 2. point difference desc, 3. points scored desc, 4. team name (`localeCompare`) | 1. points desc, 2. point difference desc, 3. points scored desc, 4. competitor name (`localeCompare`), 5. entry id asc | **PASS**                 |
+| Columns                  | `# · Team · P · W · L · Pts · PF · PA · Diff`                                                   | `Pos · Competitor · P · W · L · Pts · PF · PA · Diff`                                                                  | PASS                     |
+| Ties on points           | broken by point difference                                                                      | broken by point difference                                                                                             | PASS                     |
+| Ties on point difference | broken by PF                                                                                    | broken by PF                                                                                                           | PASS                     |
+| Multiple groups          | independent tables                                                                              | independent per stage                                                                                                  | PASS                     |
+| Incomplete group         | every pair shows from zero                                                                      | every active entry shows from zero                                                                                     | PASS                     |
+| Corrected result         | recomputed from results                                                                         | not possible (result immutable)                                                                                        | FAIL (unchanged, gap G6) |
 
 **Evidence.**
 
@@ -190,25 +201,27 @@ rather than points/diff/PF. This changes who qualifies.
   `(b.pts-a.pts) || (b.diff-a.diff) || (b.pf-a.pf) || a.team.name.localeCompare(b.team.name)`;
   README §Scoring "Tie-breaks"; `tests/core.test.js:4048-4082` (TEST 6: equal
   points → point difference → points scored; `more points scored ranks first`).
-- V2: `packages/domain/src/standings.ts:162-177`; `docs/phase-5-group-scoring.md`
-  §8 "Tie-breaking order".
+- V2: `packages/domain/src/standings.ts` (`calculateStandings`; comparator
+  points → point difference → pointsFor → name → entry id);
+  `standings-compute.ts` `buildNameResolver` (one batched players/teams read for
+  the name tie-break); `docs/phase-5-group-scoring.md` §8 "Tie-breaking order".
 
 ---
 
 ## 9 — Qualification
 
-| Concern                  | V1                                                          | V2                                                                   | Status             |
-| ------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------- | ------------------ |
-| Config location          | `settings.qualification.perGroup` (single value, default 4) | `tournament_stages.qualifiersPerGroup` on the feeder GROUP stage     | PASS (equivalent)  |
-| Top-N per group          | yes, clamped to group size (`Math.min(per, size)`)          | yes, clamped to group members (`Math.min(perGroup, members.length)`) | PASS               |
-| Multiple groups          | all groups contribute                                       | all feeder GROUP stages contribute                                   | PASS               |
-| Insufficient competitors | small group qualifies all                                   | small group qualifies all                                            | PASS               |
-| Incomplete group         | `generateKnockout` requires `groupStageComplete()`          | `pendingMatches > 0` → blocked                                       | PASS               |
-| Ties around boundary     | resolved by the standings order (§8)                        | resolved by the standings order (§8)                                 | FAIL (inherits §8) |
-| Qualification ordering   | standing order per group                                    | standing order per group                                             | PASS               |
-| Qualification locking    | refused once bracket exists (`setQualification`)            | derived, never stored; bracket generation reads it                   | PASS               |
-| Persistence              | stored in `settings.qualification`                          | stored on the stage row                                              | PASS               |
-| Hard-coded count         | no (configurable, default 4)                                | no (nullable, operator-set, no default)                              | PARTIAL — see gap  |
+| Concern                  | V1                                                          | V2                                                                   | Status               |
+| ------------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------- | -------------------- |
+| Config location          | `settings.qualification.perGroup` (single value, default 4) | `tournament_stages.qualifiersPerGroup` on the feeder GROUP stage     | PASS (equivalent)    |
+| Top-N per group          | yes, clamped to group size (`Math.min(per, size)`)          | yes, clamped to group members (`Math.min(perGroup, members.length)`) | PASS                 |
+| Multiple groups          | all groups contribute                                       | all feeder GROUP stages contribute                                   | PASS                 |
+| Insufficient competitors | small group qualifies all                                   | small group qualifies all                                            | PASS                 |
+| Incomplete group         | `generateKnockout` requires `groupStageComplete()`          | `pendingMatches > 0` → blocked                                       | PASS                 |
+| Ties around boundary     | resolved by the standings order (§8)                        | resolved by the standings order (§8)                                 | PASS (fixed with §8) |
+| Qualification ordering   | standing order per group                                    | standing order per group                                             | PASS                 |
+| Qualification locking    | refused once bracket exists (`setQualification`)            | derived, never stored; bracket generation reads it                   | PASS                 |
+| Persistence              | stored in `settings.qualification`                          | stored on the stage row                                              | PASS                 |
+| Hard-coded count         | no (configurable, default 4)                                | no (nullable, operator-set, no default)                              | PARTIAL — see gap    |
 
 **Evidence.** V1 `qualifiedPerGroup` (2353), `getQualifiedTeams` (2362),
 `setQualification` (3483); V2 `qualification.service.ts:80-168`,
@@ -218,8 +231,9 @@ rather than points/diff/PF. This changes who qualifies.
 `qualifiersPerGroup` **null** with no default (operator must set it, else
 qualification is blocked). Behaviourally equivalent once set, but V2 has no default.
 
-**Gap 9.2:** qualification inherits the §8 standings order, so "who is top N"
-differs from V1.
+**Gap 9.2 (closed by TASK-6):** qualification inherits the §8 standings order,
+which now matches V1 (points → point difference → points scored → name), so "who is
+top N" is the same.
 
 ---
 

@@ -96,11 +96,17 @@ async function get<T>(request: APIRequestContext, url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Starts and completes a match so that `winnerEntryId` wins 2-0. */
+/**
+ * Starts and completes a match so that `winnerEntryId` wins.
+ *
+ * A GROUP match is a single game and a KNOCKOUT match is best of three, so the
+ * payload follows the match kind (default: knockout) exactly as the UI does.
+ */
 async function playMatch(
   request: APIRequestContext,
   matchId: string,
   winnerEntryId: string,
+  kind: 'GROUP' | 'KNOCKOUT' = 'KNOCKOUT',
 ): Promise<string> {
   const participants = await get<{ data: readonly ParticipantRow[] }>(
     request,
@@ -109,17 +115,18 @@ async function playMatch(
   const slot = participants.data.find((row) => row.entryId === winnerEntryId)?.slot ?? 1;
   const winnerPoints = slot === 1 ? [21, 21] : [15, 15];
   const loserPoints = slot === 1 ? [15, 15] : [21, 21];
+  const gameCount = kind === 'GROUP' ? 1 : 2;
+  const games = Array.from({ length: gameCount }, (_, index) => ({
+    gameNumber: index + 1,
+    participant1Points: winnerPoints[index] ?? 21,
+    participant2Points: loserPoints[index] ?? 15,
+  }));
 
   await post(request, `/api/v1/matches/${matchId}/transition`, { status: 'IN_PROGRESS' });
   const result = await post<{ data: { winnerEntryId: string } }>(
     request,
     `/api/v1/matches/${matchId}/result`,
-    {
-      games: [
-        { gameNumber: 1, participant1Points: winnerPoints[0], participant2Points: loserPoints[0] },
-        { gameNumber: 2, participant1Points: winnerPoints[1], participant2Points: loserPoints[1] },
-      ],
-    },
+    { games },
   );
   return result.data.winnerEntryId;
 }
@@ -309,7 +316,7 @@ test.describe('tournament progression', () => {
           `/api/v1/matches/${match.id}/participants`,
         );
         const winner = participants.data.find((row) => row.slot === 1)?.entryId ?? '';
-        await playMatch(request, match.id, winner);
+        await playMatch(request, match.id, winner, 'GROUP');
       }
     };
     await completeGroup(groupA);

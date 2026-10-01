@@ -130,10 +130,7 @@ describe.skipIf(!database)('application event publishing against PostgreSQL', ()
 
   const start = new Date('2026-10-05T10:00:00.000Z');
   const end = new Date('2026-10-05T10:30:00.000Z');
-  const twoZero = [
-    { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-    { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
-  ];
+  const oneGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
 
   it('commits a match schedule and its MATCH_SCHEDULED event together', async () => {
     const tournamentId = await openTournament();
@@ -172,12 +169,12 @@ describe.skipIf(!database)('application event publishing against PostgreSQL', ()
     const { matchId } = await stageAndMatch(categoryId);
     const { slot1 } = await startedMatch(categoryId, matchId);
 
-    await results.recordResult(matchId, { games: twoZero });
+    await results.recordResult(matchId, { games: oneGame });
 
     const match = await prisma.match.findUnique({ where: { id: matchId } });
     expect(match?.status).toBe('COMPLETED');
     expect(match?.winnerEntryId).toBe(slot1);
-    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(2);
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(1);
 
     const resultEvents = await eventsFor(tournamentId, 'MATCH_RESULT_RECORDED');
     expect(resultEvents).toEqual([{ aggregateId: matchId, aggregateType: 'MATCH' }]);
@@ -224,7 +221,7 @@ describe.skipIf(!database)('application event publishing against PostgreSQL', ()
     };
     const failingResults = createMatchResultService(client, unitOfWork, events, failingProgression);
 
-    await expect(failingResults.recordResult(matchId, { games: twoZero })).rejects.toThrow(
+    await expect(failingResults.recordResult(matchId, { games: oneGame })).rejects.toThrow(
       'progression failed',
     );
 

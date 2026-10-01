@@ -3,9 +3,11 @@ import {
   ConflictError,
   determineMatchOutcome,
   NotFoundError,
+  scoreGroupMatch,
   scoreMatchGames,
   type Match,
   type MatchGame,
+  type MatchKind,
   type MatchResult,
 } from '@badminton/domain';
 
@@ -25,6 +27,12 @@ import { resolveMatchTournamentId } from './resolve-tournament.ts';
  * the games are scored by the domain rules, the result is persisted and the
  * match is moved to `COMPLETED` - all inside one unit of work, so a failure
  * leaves no partial result.
+ *
+ * The match's **stage type** decides the scoring format: a GROUP match is a
+ * single game and a KNOCKOUT match is best of three. The stage is read inside
+ * the transaction, so a GROUP result can never be recorded as a best-of-three
+ * set (and vice versa), and the stored result is exactly what the table it
+ * feeds expects.
  *
  * For a KNOCKOUT match the same unit of work also propagates the winner into the
  * next round (Phase 6), so the result, the recorded winner and the bracket
@@ -53,10 +61,6 @@ export function createMatchResultService(
 ): MatchResultService {
   return {
     async recordResult(matchId, command): Promise<MatchResult> {
-      // Shape and scoring validity are pure domain concerns, so validate before
-      // opening a transaction: an invalid score never reaches the database.
-      const games = scoreMatchGames(command.games);
-
       return unitOfWork.runInTransaction(async (tx) => {
         const match = await tx.matches.findById(matchId);
         if (!match) {
@@ -75,6 +79,17 @@ export function createMatchResultService(
           );
         }
 
+        // The stage type decides the format: a group match is a single game,
+        // a knockout match is best of three. Scoring validity is a pure domain
+        // concern, so it is checked here before anything is written.
+        const stage = await tx.stages.findById(match.stageId);
+        if (!stage) {
+          throw new NotFoundError('Stage', match.stageId);
+        }
+        const matchKind: MatchKind = stage.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
+        const games =
+          stage.type === 'GROUP' ? scoreGroupMatch(command.games) : scoreMatchGames(command.games);
+
         const participants = await tx.matchParticipants.listByMatch(matchId);
         const slot1 = participants.find((participant) => participant.slot === 1);
         const slot2 = participants.find((participant) => participant.slot === 2);
@@ -88,7 +103,7 @@ export function createMatchResultService(
           games.map((game) => ({ matchId, ...game })),
         );
 
-        const outcome = determineMatchOutcome(games);
+        const outcome = determineMatchOutcome(games, matchKind);
         const winnerEntryId = outcome.winnerSlot === 1 ? slot1.entryId : slot2.entryId;
         const loserEntryId = outcome.winnerSlot === 1 ? slot2.entryId : slot1.entryId;
 
@@ -128,7 +143,7 @@ export function createMatchResultService(
           }
         }
 
-        return toResult(completed, winnerEntryId, loserEntryId, savedGames);
+        return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind);
       });
     },
 
@@ -141,8 +156,11 @@ export function createMatchResultService(
         return undefined;
       }
 
-      const participants = await client.matchParticipants.listByMatch(matchId);
-      const games = await client.matchGames.listByMatch(matchId);
+      const [participants, games, stage] = await Promise.all([
+        client.matchParticipants.listByMatch(matchId),
+        client.matchGames.listByMatch(matchId),
+        client.stages.findById(match.stageId),
+      ]);
       const slot1 = participants.find((participant) => participant.slot === 1);
       const slot2 = participants.find((participant) => participant.slot === 2);
       if (!slot1 || !slot2 || !match.winnerEntryId) {
@@ -151,8 +169,9 @@ export function createMatchResultService(
         );
       }
 
+      const matchKind: MatchKind = stage?.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
       const loserEntryId = match.winnerEntryId === slot1.entryId ? slot2.entryId : slot1.entryId;
-      return toResult(match, match.winnerEntryId, loserEntryId, games);
+      return toResult(match, match.winnerEntryId, loserEntryId, games, matchKind);
     },
   };
 }
@@ -162,8 +181,9 @@ function toResult(
   winnerEntryId: string,
   loserEntryId: string,
   games: readonly MatchGame[],
+  kind: MatchKind,
 ): MatchResult {
-  const outcome = determineMatchOutcome(games);
+  const outcome = determineMatchOutcome(games, kind);
   return {
     matchId: match.id,
     winnerSlot: outcome.winnerSlot,

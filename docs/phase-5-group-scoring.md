@@ -74,7 +74,7 @@ historical migration was modified.
 
 ### New model — `match_games`
 
-One row per game in a best-of-three match. Points belong to the two
+One row per game in a match. Points belong to the two
 `MatchParticipant` slots (1 and 2), so the model is agnostic to singles and
 doubles; the winning slot is stored so a completed result can be read back
 without re-deriving it.
@@ -109,7 +109,8 @@ domain layer.
 - `match_games_winner_slot_valid`: `winnerSlot IN (1, 2)`
 - `match_games_winner_matches_points`: the winner slot has the higher score
 
-Cross-row and cross-table rules (best-of-three completeness, two participants,
+Cross-row and cross-table rules (single-game or best-of-three completeness, two
+participants,
 same-category participants) are **not** in the database; they belong to the
 domain/application services.
 
@@ -155,23 +156,30 @@ Implemented in `packages/domain/src/scoring.ts` (pure, no runtime dependency).
 
 ### A match
 
-Best of three: the winner is the first slot to win **two** games (2-0 or 2-1).
+The **stage type** decides how many games decide a match:
+
+- A **GROUP** match is a **single game**: the higher score wins, and a second
+  game is rejected rather than ignored (`scoreGroupMatch`).
+- A **KNOCKOUT** match is **best of three**: the winner is the first slot to win
+  **two** games (2-0 or 2-1) (`scoreMatchGames`).
 
 | Games               | Valid | Reason                                   |
 | ------------------- | ----- | ---------------------------------------- |
-| 21-15, 21-18        | yes   | 2-0                                      |
-| 21-18, 18-21, 21-19 | yes   | 2-1                                      |
+| 21-15 (GROUP)       | yes   | single game                              |
+| 21-15, 21-18 (KO)   | yes   | 2-0                                      |
+| 21-18, 18-21, 21-19 | yes   | 2-1 (KO)                                 |
 | 21-18, 21-19, 21-15 | no    | a third game after the match was decided |
 | 21-18, 18-21        | no    | 1-1 is undecided (incomplete)            |
-| 21-18               | no    | fewer than two games                     |
+| 21-18               | no    | fewer than two games in a knockout       |
 
 ### Domain functions
 
 - `isValidGameScore(points1, points2): boolean`
 - `determineGameWinner(points1, points2): MatchSlot`
 - `validateGameScore(points1, points2, gameNumber): void`
-- `scoreMatchGames(games): MatchGame[]` — validates and scores a full result
-- `determineMatchOutcome(games): MatchOutcome` — derives the winner from stored games
+- `scoreMatchGames(games): MatchGame[]` — validates and scores a best-of-three knockout result
+- `scoreGroupMatch(games): MatchGame[]` — validates and scores a single-game group result
+- `determineMatchOutcome(games, kind): MatchOutcome` — derives the winner from stored games
 
 Constants: `GAME_POINT_TARGET = 21`, `GAME_POINT_CEILING = 30`,
 `GAME_MIN_MARGIN = 2`, `MIN_GAMES_PER_MATCH = 2`, `MAX_GAMES_PER_MATCH = 3`,
@@ -203,11 +211,11 @@ The Phase 2 lifecycle is reused unchanged. Scoring respects it:
 
 `MatchResultService.recordResult` performs the completion atomically:
 
-1. Validate the supplied games with the domain scoring rules (before any
-   transaction — an invalid score never reaches the database).
-2. Open a unit of work.
-3. Load the match; reject if missing, already `COMPLETED` (conflict) or not
+1. Open a unit of work.
+2. Load the match; reject if missing, already `COMPLETED` (conflict) or not
    `IN_PROGRESS`.
+3. Load the match's stage to decide the format (GROUP = single game, KNOCKOUT =
+   best of three) and validate the supplied games with the matching domain rule.
 4. Load participants; require exactly slot 1 and slot 2.
 5. Persist all games in one `createManyAndReturn`.
 6. Derive the winner and write `winnerEntryId` + `COMPLETED` in one update.
@@ -242,19 +250,21 @@ The table is **scoped to the requested group stage**:
 Standings remain **derived and read-only**; they are recomputed from completed
 matches on every request and are not persisted.
 
-Per competitor: `played`, `won`, `lost`, `points` (2 for a win, 1 for a loss),
+Per competitor: `played`, `won`, `lost`, `points` (2 for a win; a **group** loss
+is 0, matching the original single-game rule, while a knockout loss is 1),
 `gamesWon`, `gamesLost`, `gameDifference`, `pointsFor`, `pointsAgainst`,
 `pointDifference`, `position`.
 
 ### Tie-breaking order
 
-Deterministic and documented — deliberately simple, **not** an official
-federation rule:
+Deterministic and documented — the order the original tournament application
+uses, **not** an official federation rule:
 
-1. matches won, descending
-2. game difference, descending
-3. point difference, descending
-4. entry id ascending (stable final tie-break)
+1. points, descending
+2. point difference, descending
+3. points scored (`pointsFor`), descending
+4. competitor name ascending (`localeCompare`, locale-stable)
+5. entry id ascending (a fully deterministic final tie-break)
 
 If tournament rules later need a different order, it can be made configurable in
 a later phase.
@@ -279,11 +289,13 @@ rejects `COMPLETED`.
 `recordMatchResultInputSchema`:
 
 - game number: positive integer, max 3
-- points: coerced integer, 0–30
+- points: coerced integer, 0–99
 - result: 1–3 games
 
 Zod validates the request **shape** only. Whether a score is a legal badminton
-result is a domain rule enforced by `scoreMatchGames` in the application layer.
+result is a domain rule enforced by `scoreGroupMatch`/`scoreMatchGames` in the
+application layer, and the match's stage decides whether the result is a single
+group game or a best-of-three knockout.
 
 ## 11. Transaction boundary
 
@@ -318,14 +330,16 @@ PostgreSQL.
 
 - **Domain unit tests** (`tests/unit/domain/scoring.test.ts`,
   `standings.test.ts`): game validity (21-0, 21-19, 22-20, 30-29, 30-28;
-  rejected 20-0, 21-20, 30-30, 31-29), winner determination, 2-0/2-1 validity,
-  rejected 1-1 and three-games-after-2-0, standings maths, tie-break order.
+  rejected 20-0, 21-20, 30-30, 31-29), winner determination, single-game group
+  results, 2-0/2-1 knockout validity, rejected 1-1 and three-games-after-2-0,
+  standings maths (group win 2 / group loss 0, knockout loss 1), tie-break order.
 - **Application unit tests** (`tests/unit/application/match-result.service.test.ts`):
-  result recording, lifecycle rules, eligibility, idempotent conflict,
-  transactional rollback, derived standings.
+  group single-game and knockout best-of-three recording, lifecycle rules,
+  eligibility, idempotent conflict, transactional rollback, derived standings.
 - **API integration tests** (`tests/integration/api/routes.test.ts`): HTTP
   contract for `/result` and `/standings` — valid/invalid scores, 30-point rule,
-  one-game and three-game-after-2-0, missing/duplicate participants, wrong
+  a best-of-three result rejected for a GROUP match, a single game rejected for a
+  KNOCKOUT match, missing/duplicate participants, wrong
   lifecycle, conflict, 400/404/409/422 mapping.
 - **PostgreSQL vertical slice** (`tests/integration/api/vertical-slice.test.ts`):
   full HTTP → service → Prisma → PostgreSQL path, including rollback on failure
@@ -340,7 +354,8 @@ PostgreSQL.
 - **E2E** (`e2e/group-scoring.spec.ts`): the real UI, API and PostgreSQL —
   create tournament → open registration → create category → create two players →
   register both → create GROUP stage → create match → assign both slots → start →
-  enter 21-18, 21-15 → complete → verify winner and standings. Nothing is mocked.
+  enter a single game 21-18 → complete → verify winner and standings. Nothing is
+  mocked.
 
 ## 14. Frontend
 
@@ -349,17 +364,20 @@ Extends the Phase 4 UI and reuses its primitives (`AppShell`, `PageHeader`,
 `FormField`, `Table`, `Card`) and the typed API client.
 
 - **Match detail** (`match-detail.tsx`): adds a scoring card for `IN_PROGRESS`
-  matches (per-game number inputs, `min=0`, `max=30`), derived game/match winner
-  indicators, and a read-only result summary for `COMPLETED` matches. There is no
-  edit affordance for a completed result.
+  matches (per-game number inputs, `min=0`, `max=99`), derived game/match winner
+  indicators, and a read-only result summary for `COMPLETED` matches. The card
+  follows the match's stage type: a GROUP match shows a single game, a KNOCKOUT
+  match shows best of three. There is no edit affordance for a completed result.
 - **Stage detail** (`stage-detail.tsx`): adds a Standings section for GROUP
   stages and a result/winner column in the match list.
 - **Components**: `match-scoring.tsx`, `match-result-summary.tsx`,
   `standings-table.tsx`.
 - **Client-side validation** (`lib/scoring.ts`) mirrors the domain rules for
-  immediate feedback; the API remains authoritative. The user cannot pick a
+  immediate feedback (single game for a GROUP match, best of three for a
+  KNOCKOUT match); the API remains authoritative. The user cannot pick a
   winner — it is always derived from the scores.
-- Score inputs carry accessible labels such as `Game 1 — <name> points`.
+- Score inputs carry accessible labels such as `Game 1 — <name> points`; a group
+  match labels its single game simply `Game`.
 
 No new state-management library was added; the existing lightweight hooks are
 used and affected queries are refetched after mutations.

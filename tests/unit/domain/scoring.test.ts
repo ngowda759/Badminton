@@ -2,6 +2,7 @@ import {
   determineGameWinner,
   determineMatchOutcome,
   isValidGameScore,
+  scoreGroupMatch,
   scoreMatchGames,
   BusinessRuleViolationError,
   type MatchGame,
@@ -13,9 +14,10 @@ import { describe, expect, it } from 'vitest';
  * Pure badminton scoring-rule tests.
  *
  * These exercise the single source of truth for game and match validity with no
- * database, API or UI involved. The rules are standard best-of-three: a game is
- * won at 21 with a two-point lead, extended to a hard 30 ceiling, and a match is
- * won by the first participant to take two games.
+ * database, API or UI involved. The game rules are standard (a game is won at 21
+ * with a two-point lead, extended to a hard 30 ceiling); the match kind decides
+ * how many games decide it: a GROUP match is a single game and a KNOCKOUT match
+ * is best of three.
  */
 
 function games(...scores: readonly [number, number][]): MatchGameInput[] {
@@ -87,6 +89,45 @@ describe('determineGameWinner', () => {
 
   it('throws on a tie', () => {
     expect(() => determineGameWinner(20, 20)).toThrow(BusinessRuleViolationError);
+  });
+});
+
+describe('scoreGroupMatch', () => {
+  it('accepts a single game and derives the winner from the higher score', () => {
+    expect(scoreGroupMatch(games([21, 17]))).toEqual([
+      { gameNumber: 1, participant1Points: 21, participant2Points: 17, winnerSlot: 1 },
+    ]);
+  });
+
+  it('accepts a single game won by slot 2', () => {
+    expect(scoreGroupMatch(games([17, 21]))[0]?.winnerSlot).toBe(2);
+  });
+
+  it('accepts an extended single game at the ceiling', () => {
+    expect(scoreGroupMatch(games([30, 29]))[0]?.winnerSlot).toBe(1);
+  });
+
+  it('rejects a second game', () => {
+    expect(() => scoreGroupMatch(games([21, 17], [21, 18]))).toThrow(BusinessRuleViolationError);
+  });
+
+  it('rejects a best-of-three result outright', () => {
+    expect(() => scoreGroupMatch(games([21, 18], [18, 21], [21, 19]))).toThrow(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('rejects a single game that is not won to 21 with a two-point lead', () => {
+    expect(() => scoreGroupMatch(games([19, 17]))).toThrow(BusinessRuleViolationError);
+    expect(() => scoreGroupMatch(games([21, 20]))).toThrow(BusinessRuleViolationError);
+  });
+
+  it('rejects a single-game tie', () => {
+    expect(() => scoreGroupMatch(games([21, 21]))).toThrow(BusinessRuleViolationError);
+  });
+
+  it('rejects an empty result', () => {
+    expect(() => scoreGroupMatch([])).toThrow(BusinessRuleViolationError);
   });
 });
 

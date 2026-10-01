@@ -117,6 +117,16 @@ never a read model.
 
 ## Gotchas
 
+- Match format follows the **stage type**, matching the original V1 tournament
+  (the functional source of truth): a **GROUP** match is a **single game** to 21
+  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is
+  **best of three** (`scoreMatchGames`, loss 1 pt). The service reads the stage
+  inside the transaction to pick the format, so a stale client can never record a
+  best-of-three result for a group match (422). Standings order is the V1 order:
+  **points → point difference → points scored → competitor name (`localeCompare`)**
+  → entry id. Do not "fix" this back to a wins/game-difference order or a fixed
+  best-of-three for group matches — that was the pre-TASK-6 divergence in
+  `docs/tasks/task-5-parity-audit.md` (gaps G1–G3).
 - **Known e2e flake.** `e2e/phase8-6-hardening.spec.ts` ("a reconnect after missed
   events recovers the authoritative state") fails intermittently on `main` and on
   unrelated branches, independently of your change. Phase 8.6 is not implemented.

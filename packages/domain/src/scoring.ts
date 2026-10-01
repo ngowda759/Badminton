@@ -10,14 +10,21 @@ import type { MatchSlot } from './tournament.ts';
  * it. The database stores only validated results, so the rules are enforced in
  * the domain layer rather than as SQL.
  *
- * The format implemented is the standard best-of-three, rally-point game:
+ * The game rules are shared by every match kind:
  *
  * - a game is won at 21 points with a two-point lead, extended up to a
  *   30-point ceiling (30-29 is legal, 31-29 is not);
- * - a match is won by the first participant to win two games (2-0 or 2-1);
- * - a result is complete only when it contains exactly the games that decided
- *   it, so a 2-0 recorded with a third game, or a 1-1 result with no decider,
- *   is rejected.
+ * - the winner is always derived from the points, never chosen.
+ *
+ * A match kind decides only **how many games** a completed result contains,
+ * mirroring the original tournament application:
+ *
+ * - a **GROUP** match is a **single game** (`scoreGroupMatch`) - the original
+ *   group-stage rule, a straight game to 21 with no second or third game;
+ * - a **KNOCKOUT** match is **best of three** (`scoreMatchGames`): won by the
+ *   first participant to win two games (2-0 or 2-1), and a result is complete
+ *   only when it contains exactly the games that decided it, so a 2-0 recorded
+ *   with a third game, or a 1-1 result with no decider, is rejected.
  *
  * The rules are deliberately not labelled an official federation rule set; they
  * follow the widely-used Laws of Badminton scoring and can be replaced later.
@@ -63,6 +70,12 @@ export interface MatchGame {
   readonly participant2Points: number;
   readonly winnerSlot: MatchSlot;
 }
+
+/**
+ * Which kind of match a result belongs to, since the format differs: a GROUP
+ * match is a single game and a KNOCKOUT match is best of three.
+ */
+export type MatchKind = 'GROUP' | 'KNOCKOUT';
 
 /** The outcome of a decided match, expressed in terms of the two slots. */
 export interface MatchOutcome {
@@ -181,7 +194,44 @@ function validateGameNumbers(games: readonly MatchGameInput[]): void {
 }
 
 /**
- * Validates and scores a complete match result.
+ * Validates a single game and returns it with its derived `winnerSlot`.
+ *
+ * Shared by both match kinds so the game rules can never drift: a group match
+ * and a knockout match accept exactly the same legal game scores.
+ */
+function scoreOneGame(game: MatchGameInput): MatchGame {
+  validateGameScore(game.participant1Points, game.participant2Points, game.gameNumber);
+  return {
+    gameNumber: game.gameNumber,
+    participant1Points: game.participant1Points,
+    participant2Points: game.participant2Points,
+    winnerSlot: determineGameWinner(game.participant1Points, game.participant2Points),
+  };
+}
+
+/**
+ * Validates and scores a **group-stage** result.
+ *
+ * A group match is a **single game** - the original tournament rule - so a
+ * completed result must contain exactly one game and the winner is the higher
+ * score. A second game is rejected rather than ignored, so a stale client can
+ * never smuggle a best-of-three result into the group table.
+ */
+export function scoreGroupMatch(games: readonly MatchGameInput[]): readonly MatchGame[] {
+  if (games.length !== 1) {
+    throw new BusinessRuleViolationError(
+      'A group match is a single game; submit exactly one game.',
+    );
+  }
+
+  validateGameNumbers(games);
+
+  const game = games[0] as MatchGameInput;
+  return [scoreOneGame(game)];
+}
+
+/**
+ * Validates and scores a **knockout** (best-of-three) result.
  *
  * Returns the games with their derived `winnerSlot`. Rejects an incomplete or
  * impossible result: fewer than two or more than three games, a game whose
@@ -213,21 +263,14 @@ export function scoreMatchGames(games: readonly MatchGameInput[]): readonly Matc
       );
     }
 
-    validateGameScore(game.participant1Points, game.participant2Points, game.gameNumber);
-
-    const winnerSlot = determineGameWinner(game.participant1Points, game.participant2Points);
-    if (winnerSlot === 1) {
+    const scoredGame = scoreOneGame(game);
+    if (scoredGame.winnerSlot === 1) {
       slot1Wins += 1;
     } else {
       slot2Wins += 1;
     }
 
-    scored.push({
-      gameNumber: game.gameNumber,
-      participant1Points: game.participant1Points,
-      participant2Points: game.participant2Points,
-      winnerSlot,
-    });
+    scored.push(scoredGame);
   }
 
   if (slot1Wins !== GAMES_TO_WIN_MATCH && slot2Wins !== GAMES_TO_WIN_MATCH) {
@@ -244,8 +287,16 @@ export function scoreMatchGames(games: readonly MatchGameInput[]): readonly Matc
  *
  * Used when reading a stored result back (the games are already validated on
  * write), so it derives the winner independently of persistence.
+ *
+ * `kind` decides the completion rule: a GROUP match is a single game (the
+ * higher score wins) and a KNOCKOUT match is best of three (a participant must
+ * win two games). The default is best of three, so an omitted kind keeps the
+ * knockout behaviour.
  */
-export function determineMatchOutcome(games: readonly MatchGame[]): MatchOutcome {
+export function determineMatchOutcome(
+  games: readonly MatchGame[],
+  kind: MatchKind = 'KNOCKOUT',
+): MatchOutcome {
   let slot1Wins = 0;
   let slot2Wins = 0;
 
@@ -255,6 +306,15 @@ export function determineMatchOutcome(games: readonly MatchGame[]): MatchOutcome
     } else {
       slot2Wins += 1;
     }
+  }
+
+  if (kind === 'GROUP') {
+    if (games.length !== 1) {
+      throw new BusinessRuleViolationError('A group match is a single game.');
+    }
+    return slot1Wins === 1
+      ? { winnerSlot: 1, winnerGames: 1, loserGames: 0 }
+      : { winnerSlot: 2, winnerGames: 1, loserGames: 0 };
   }
 
   if (slot1Wins !== GAMES_TO_WIN_MATCH && slot2Wins !== GAMES_TO_WIN_MATCH) {

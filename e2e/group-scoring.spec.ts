@@ -10,7 +10,7 @@ const API_BASE_URL = `http://127.0.0.1:${API_PORT}`;
  * Phase 5 group-stage scoring flow, against the real UI, API and PostgreSQL.
  *
  * Registers two players, creates a GROUP stage and a match, assigns both slots,
- * starts the match, records a 2-0 badminton result and confirms the match is
+ * starts the match, records a single-game group result and confirms the match is
  * COMPLETED with the derived winner reflected in the group standings. Nothing
  * is mocked: every step goes through the running Fastify API and the database.
  *
@@ -121,11 +121,9 @@ test.describe('group-stage scoring', () => {
     await page.getByRole('button', { name: 'In Progress' }).click();
     await expect(page.getByText('In progress').first()).toBeVisible();
 
-    // Enter a valid 2-0 result: 21-18, 21-15.
-    await page.getByLabel(`Game 1 — ${playerOne} points`).fill('21');
-    await page.getByLabel(`Game 1 — ${playerTwo} points`).fill('18');
-    await page.getByLabel(`Game 2 — ${playerOne} points`).fill('21');
-    await page.getByLabel(`Game 2 — ${playerTwo} points`).fill('15');
+    // Enter a valid single-game group result: 21-18.
+    await page.getByLabel(`Game — ${playerOne} points`).fill('21');
+    await page.getByLabel(`Game — ${playerTwo} points`).fill('18');
 
     await expect(page.getByTestId('match-winner')).toContainText(playerOne);
 
