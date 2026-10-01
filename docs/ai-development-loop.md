@@ -292,8 +292,9 @@ by hand for the first merge, that is the expected sequence, not a broken loop.
 
 Two follow-on checks after the first manual merge confirm the loop came up:
 
-1. `main` now holds the `ai-loop-*` workflows, so the next `automation/**` pull
-   request gets an automatic review and merge gate.
+1. `main` now holds the `ai-loop-*` workflows, so the next AI-managed pull
+   request (on `automation/*`, `feat/*`, `fix/*` or any task branch) gets an
+   automatic review and merge gate.
 2. The `pull_request: closed` trigger fires on that merge and
    `ai-loop-next-task.yml` dispatches the architect, so the queue change starts
    the next implementation.
