@@ -4,31 +4,76 @@
   "title": "Badminton AI development loop review report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["taskId", "pr", "round", "verdict", "findings", "reviewedAt"],
+  "required": [
+    "taskId",
+    "pr",
+    "round",
+    "headSha",
+    "verdict",
+    "ciStatus",
+    "summary",
+    "acceptanceCriteria",
+    "findings",
+    "reviewedAt"
+  ],
   "properties": {
-    "taskId": { "type": "string", "pattern": "^AI-[0-9]+(-T[0-9]+)?$" },
-    "pr": { "type": "integer", "minimum": 1 },
-    "round": { "type": "integer", "minimum": 1, "maximum": 10 },
-    "headSha": { "type": "string", "minLength": 7 },
+    "taskId": {
+      "type": "string",
+      "pattern": "^AI-[0-9]+(-T[0-9]+)?$"
+    },
+    "pr": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "headSha": {
+      "type": "string",
+      "minLength": 7
+    },
     "verdict": {
       "type": "string",
       "enum": ["approved", "changes-requested", "blocked"]
     },
     "ciStatus": {
       "type": "string",
-      "enum": ["pending", "success", "failure", "cancelled", "skipped", "unknown"]
+      "enum": [
+        "pending",
+        "success",
+        "failure",
+        "cancelled",
+        "skipped",
+        "unknown"
+      ]
     },
-    "summary": { "type": "string" },
+    "summary": {
+      "type": "string"
+    },
     "acceptanceCriteria": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["criterion", "status"],
+        "required": [
+          "criterion",
+          "status",
+          "evidence"
+        ],
         "properties": {
-          "criterion": { "type": "string", "minLength": 1 },
-          "status": { "type": "string", "enum": ["met", "unmet", "unverifiable"] },
-          "evidence": { "type": "string" }
+          "criterion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["met", "unmet", "unverifiable"]
+          },
+          "evidence": {
+            "type": "string"
+          }
         }
       }
     },
@@ -37,20 +82,44 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "severity", "file", "summary"],
+        "required": [
+          "id",
+          "severity",
+          "file",
+          "line",
+          "summary",
+          "suggestion"
+        ],
         "properties": {
-          "id": { "type": "string", "minLength": 1 },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
           "severity": {
             "type": "string",
             "enum": ["blocker", "major", "minor", "nit"]
           },
-          "file": { "type": "string", "minLength": 1 },
-          "line": { "type": "integer", "minimum": 1 },
-          "summary": { "type": "string", "minLength": 1 },
-          "suggestion": { "type": "string" }
+          "file": {
+            "type": "string",
+            "minLength": 1
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "suggestion": {
+            "type": "string"
+          }
         }
       }
     },
-    "reviewedAt": { "type": "string", "format": "date-time" }
+    "reviewedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }
