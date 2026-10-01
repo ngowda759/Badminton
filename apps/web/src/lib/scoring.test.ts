@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   analyseDraftGame,
   analyseDraftResult,
-  gameScoreMessage,
-  isValidGameScore,
+  groupGameScoreMessage,
+  isValidGroupGameScore,
+  isValidKnockoutGameScore,
+  knockoutRoundKey,
   MAX_GAMES_PER_MATCH,
+  resolveKnockoutRule,
 } from '@/lib/scoring.ts';
 
-describe('isValidGameScore', () => {
+describe('isValidGroupGameScore', () => {
   it.each([
     [21, 0],
     [21, 19],
@@ -17,7 +20,7 @@ describe('isValidGameScore', () => {
     [30, 28],
     [0, 21],
   ])('accepts %i-%i', (points1, points2) => {
-    expect(isValidGameScore(points1, points2)).toBe(true);
+    expect(isValidGroupGameScore(points1, points2)).toBe(true);
   });
 
   it.each([
@@ -27,11 +30,11 @@ describe('isValidGameScore', () => {
     [31, 29],
     [20, 20],
   ])('rejects %i-%i', (points1, points2) => {
-    expect(isValidGameScore(points1, points2)).toBe(false);
+    expect(isValidGroupGameScore(points1, points2)).toBe(false);
   });
 
   it('rejects a tie', () => {
-    expect(gameScoreMessage(18, 18, 2)).toMatch(/tie/i);
+    expect(groupGameScoreMessage(18, 18, 2)).toMatch(/tie/i);
   });
 });
 
@@ -92,5 +95,99 @@ describe('analyseDraftResult', () => {
 
   it('exposes the best-of-three ceiling', () => {
     expect(MAX_GAMES_PER_MATCH).toBe(3);
+  });
+});
+
+describe('isValidKnockoutGameScore', () => {
+  it('validates against the round target with no ceiling', () => {
+    expect(isValidKnockoutGameScore(15, 12, 15)).toBe(true);
+    expect(isValidKnockoutGameScore(14, 15, 15)).toBe(false);
+    expect(isValidKnockoutGameScore(15, 14, 15)).toBe(false);
+    expect(isValidKnockoutGameScore(31, 29, 21)).toBe(true);
+    expect(isValidKnockoutGameScore(30, 29, 21)).toBe(false);
+  });
+});
+
+describe('analyseDraftResult (knockout rule)', () => {
+  const game = (a: string, b: string) => ({ participant1Points: a, participant2Points: b });
+  const bestOfThree = { format: 'best_of_3' as const, pointsPerGame: 15 };
+
+  it('validates each game against the round target', () => {
+    const analysis = analyseDraftResult(
+      [game('15', '12'), game('15', '13')],
+      'KNOCKOUT',
+      bestOfThree,
+    );
+    expect(analysis.valid).toBe(true);
+    expect(analysis.winnerSlot).toBe(1);
+  });
+
+  it('flags a game below the round target', () => {
+    const analysis = analyseDraftResult(
+      [game('14', '12'), game('15', '13')],
+      'KNOCKOUT',
+      bestOfThree,
+    );
+    expect(analysis.valid).toBe(false);
+    expect(analysis.matchError).toBeTruthy();
+  });
+
+  it('accepts a straight-set single game', () => {
+    const analysis = analyseDraftResult([game('11', '5')], 'KNOCKOUT', {
+      format: 'single_game',
+      pointsPerGame: 11,
+    });
+    expect(analysis.valid).toBe(true);
+    expect(analysis.winnerSlot).toBe(1);
+  });
+
+  it('rejects a second game in a straight-set match', () => {
+    const analysis = analyseDraftResult([game('11', '5'), game('11', '6')], 'KNOCKOUT', {
+      format: 'single_game',
+      pointsPerGame: 11,
+    });
+    expect(analysis.valid).toBe(false);
+  });
+});
+
+describe('knockoutRoundKey', () => {
+  it('maps bracket positions to round tags', () => {
+    expect(knockoutRoundKey(8, 1)).toBe('qf');
+    expect(knockoutRoundKey(8, 3)).toBe('final');
+    expect(knockoutRoundKey(16, 1)).toBe('r16');
+  });
+});
+
+describe('resolveKnockoutRule', () => {
+  const stage = {
+    drawSize: 8,
+    knockoutRules: { qf: { format: 'single_game' as const, pointsPerGame: 11 } },
+  };
+
+  it('prefers the match snapshot', () => {
+    const rule = resolveKnockoutRule(
+      { knockoutFormat: 'best_of_3', knockoutPointsPerGame: 21 },
+      stage,
+      1,
+    );
+    expect(rule).toEqual({ format: 'best_of_3', pointsPerGame: 21 });
+  });
+
+  it('falls back to the stage rule for the bracket position', () => {
+    const rule = resolveKnockoutRule(
+      { knockoutFormat: null, knockoutPointsPerGame: null },
+      stage,
+      1,
+    );
+    expect(rule).toEqual({ format: 'single_game', pointsPerGame: 11 });
+  });
+
+  it('falls back to the default when no rule is configured', () => {
+    const rule = resolveKnockoutRule(
+      { knockoutFormat: null, knockoutPointsPerGame: null },
+      { drawSize: 8, knockoutRules: null },
+      3,
+    );
+    expect(rule).toEqual({ format: 'best_of_3', pointsPerGame: 21 });
   });
 });

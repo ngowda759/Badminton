@@ -17,7 +17,10 @@ import {
   RealtimeEventValidationError,
   isRealtimeAggregateType,
   isRealtimeEventType,
+  normalizeKnockoutRules,
+  type KnockoutMatchFormat,
   type MatchGame,
+  type MatchScoringRule,
 } from '@badminton/domain';
 import type {
   Court,
@@ -125,10 +128,30 @@ export function toTournamentStage(row: PrismaTournamentStage): TournamentStage {
     sequence: row.sequence,
     drawSize: row.drawSize,
     qualifiersPerGroup: row.qualifiersPerGroup,
+    knockoutRules: toKnockoutRules(row.knockoutRules),
     status: row.status,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/**
+ * Normalizes a stored per-round rule catalogue.
+ *
+ * A missing column stays `null` (the domain defaults apply); a present value is
+ * normalized through the domain so a hand-edited or partially-written JSON
+ * object can never surface a malformed rule to the scoring engine.
+ */
+function toKnockoutRules(value: unknown): Readonly<Record<string, MatchScoringRule>> | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return normalizeKnockoutRules(value);
+}
+
+/** Narrows the stored knockout format; a value outside the catalogue is dropped. */
+function toKnockoutFormat(value: string | null): KnockoutMatchFormat | null {
+  return value === 'best_of_3' || value === 'single_game' ? value : null;
 }
 
 export function toMatch(row: PrismaMatch): Match {
@@ -140,6 +163,8 @@ export function toMatch(row: PrismaMatch): Match {
     matchNumber: row.matchNumber,
     status: row.status,
     winnerEntryId: row.winnerEntryId,
+    knockoutFormat: toKnockoutFormat(row.knockoutFormat),
+    knockoutPointsPerGame: row.knockoutPointsPerGame,
     courtId: row.courtId,
     scheduledStartAt: row.scheduledStartAt,
     scheduledEndAt: row.scheduledEndAt,

@@ -3,6 +3,7 @@ import type {
   CategoryGender,
   CategoryStatus,
   CourtStatus,
+  MatchScoringRule,
   MatchSlot,
   MatchStatus,
   StageStatus,
@@ -92,6 +93,12 @@ export interface CreateStageCommand {
    * knockout. Only meaningful on a KNOCKOUT stage; `undefined` leaves it unset.
    */
   readonly qualifiersPerGroup?: number;
+  /**
+   * Per-round knockout scoring configuration, keyed by round tag. Only
+   * meaningful on a KNOCKOUT stage; `undefined` leaves it unset (the domain
+   * defaults then apply).
+   */
+  readonly knockoutRules?: Readonly<Record<string, MatchScoringRule>>;
 }
 
 export interface UpdateStageCommand {
@@ -99,6 +106,8 @@ export interface UpdateStageCommand {
   readonly sequence?: number;
   readonly drawSize?: number | null;
   readonly qualifiersPerGroup?: number | null;
+  /** Per-round knockout scoring configuration; refused once the bracket exists. */
+  readonly knockoutRules?: Readonly<Record<string, MatchScoringRule>> | null;
 }
 
 export interface CreateMatchCommand {

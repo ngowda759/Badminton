@@ -767,8 +767,8 @@ describe('knockout bracket flows', () => {
     });
 
     expect(await screen.findByText(/4-entry bracket/)).toBeInTheDocument();
-    expect(screen.getByText('Semifinals')).toBeInTheDocument();
-    expect(screen.getByText('Final')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Semifinals' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Final' })).toBeInTheDocument();
     // Alice reached the final, so her name appears in both rounds.
     expect(await screen.findAllByText('Alice')).not.toHaveLength(0);
     expect(screen.getByText('Cara')).toBeInTheDocument();

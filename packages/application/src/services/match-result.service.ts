@@ -1,14 +1,19 @@
 import {
   BusinessRuleViolationError,
   ConflictError,
+  DEFAULT_KNOCKOUT_ROUND_RULES,
+  determineKnockoutOutcome,
   determineMatchOutcome,
+  knockoutMatchRule,
   NotFoundError,
   scoreGroupMatch,
-  scoreMatchGames,
+  scoreKnockoutMatch,
   type Match,
   type MatchGame,
   type MatchKind,
   type MatchResult,
+  type MatchScoringRule,
+  type TournamentStage,
 } from '@badminton/domain';
 
 import { REALTIME_AGGREGATES, REALTIME_EVENTS } from '../realtime/event-types.ts';
@@ -80,15 +85,19 @@ export function createMatchResultService(
         }
 
         // The stage type decides the format: a group match is a single game,
-        // a knockout match is best of three. Scoring validity is a pure domain
-        // concern, so it is checked here before anything is written.
+        // a knockout match is played under its snapshotted per-round rule (or
+        // the stage's configured rule when it has none). Scoring validity is a
+        // pure domain concern, so it is checked here before anything is written.
         const stage = await tx.stages.findById(match.stageId);
         if (!stage) {
           throw new NotFoundError('Stage', match.stageId);
         }
         const matchKind: MatchKind = stage.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
+        const rule = resolveKnockoutRule(stage, match);
         const games =
-          stage.type === 'GROUP' ? scoreGroupMatch(command.games) : scoreMatchGames(command.games);
+          stage.type === 'GROUP'
+            ? scoreGroupMatch(command.games)
+            : scoreKnockoutMatch(command.games, rule);
 
         const participants = await tx.matchParticipants.listByMatch(matchId);
         const slot1 = participants.find((participant) => participant.slot === 1);
@@ -103,7 +112,10 @@ export function createMatchResultService(
           games.map((game) => ({ matchId, ...game })),
         );
 
-        const outcome = determineMatchOutcome(games, matchKind);
+        const outcome =
+          matchKind === 'GROUP'
+            ? determineMatchOutcome(games, 'GROUP')
+            : determineKnockoutOutcome(games, rule);
         const winnerEntryId = outcome.winnerSlot === 1 ? slot1.entryId : slot2.entryId;
         const loserEntryId = outcome.winnerSlot === 1 ? slot2.entryId : slot1.entryId;
 
@@ -143,7 +155,7 @@ export function createMatchResultService(
           }
         }
 
-        return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind);
+        return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind, rule);
       });
     },
 
@@ -171,9 +183,29 @@ export function createMatchResultService(
 
       const matchKind: MatchKind = stage?.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
       const loserEntryId = match.winnerEntryId === slot1.entryId ? slot2.entryId : slot1.entryId;
-      return toResult(match, match.winnerEntryId, loserEntryId, games, matchKind);
+      const rule = resolveKnockoutRule(stage, match);
+      return toResult(match, match.winnerEntryId, loserEntryId, games, matchKind, rule);
     },
   };
+}
+
+/**
+ * The scoring rule a knockout match is read/scored under.
+ *
+ * The match's own snapshot wins (it was frozen when the bracket was generated),
+ * so an existing match keeps the rules it was created under even if the stage is
+ * later edited. A match with no snapshot - a knockout match created outside a
+ * generated bracket, or a legacy row - falls back to the stage's configured rule
+ * for its bracket position, and finally to the domain defaults.
+ */
+function resolveKnockoutRule(stage: TournamentStage | undefined, match: Match): MatchScoringRule {
+  if (match.knockoutFormat && match.knockoutPointsPerGame !== null) {
+    return { format: match.knockoutFormat, pointsPerGame: match.knockoutPointsPerGame };
+  }
+  if (stage && stage.drawSize !== null && match.roundNumber !== null) {
+    return knockoutMatchRule(stage.knockoutRules, stage.drawSize, match.roundNumber);
+  }
+  return { format: 'best_of_3', pointsPerGame: DEFAULT_KNOCKOUT_ROUND_RULES.qf.pointsPerGame };
 }
 
 function toResult(
@@ -182,8 +214,12 @@ function toResult(
   loserEntryId: string,
   games: readonly MatchGame[],
   kind: MatchKind,
+  rule: MatchScoringRule,
 ): MatchResult {
-  const outcome = determineMatchOutcome(games, kind);
+  const outcome =
+    kind === 'GROUP'
+      ? determineMatchOutcome(games, 'GROUP')
+      : determineKnockoutOutcome(games, rule);
   return {
     matchId: match.id,
     winnerSlot: outcome.winnerSlot,

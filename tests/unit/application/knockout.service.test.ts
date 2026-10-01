@@ -161,6 +161,41 @@ describe('KnockoutBracketService.generateBracket', () => {
     expect(stage?.drawSize).toBe(4);
   });
 
+  it('snapshots the round scoring rule onto every generated match', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId, {
+      knockoutRules: {
+        qf: { format: 'single_game', pointsPerGame: 11 },
+        sf: { format: 'best_of_3', pointsPerGame: 15 },
+        final: { format: 'best_of_3', pointsPerGame: 21 },
+      },
+    });
+    const ids = await entries(categoryId, 8);
+
+    await knockout.generateBracket(stageId, { entryIds: ids });
+
+    const stageMatches = await repos.client.matches.listByStage(stageId);
+    const qf = stageMatches.find((match) => match.roundNumber === 1);
+    const final = stageMatches.find((match) => match.roundNumber === 3);
+    expect(qf?.knockoutFormat).toBe('single_game');
+    expect(qf?.knockoutPointsPerGame).toBe(11);
+    expect(final?.knockoutFormat).toBe('best_of_3');
+    expect(final?.knockoutPointsPerGame).toBe(21);
+  });
+
+  it('snapshots the default rule when the stage has no catalogue', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const ids = await entries(categoryId, 8);
+
+    await knockout.generateBracket(stageId, { entryIds: ids });
+
+    const stageMatches = await repos.client.matches.listByStage(stageId);
+    const final = stageMatches.find((match) => match.roundNumber === 3);
+    expect(final?.knockoutFormat).toBe('best_of_3');
+    expect(final?.knockoutPointsPerGame).toBe(21);
+  });
+
   it('rejects an unsupported bracket size', async () => {
     const categoryId = await singlesCategory();
     const stageId = await seedKnockoutStage(repos.client, categoryId);

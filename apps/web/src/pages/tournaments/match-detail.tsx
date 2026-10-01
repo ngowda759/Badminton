@@ -20,7 +20,7 @@ import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { orDash } from '@/lib/format.ts';
-import type { MatchKind } from '@/lib/scoring.ts';
+import { resolveKnockoutRule, type MatchKind } from '@/lib/scoring.ts';
 import { matchNextStatuses } from '@/lib/lifecycle.ts';
 import {
   compactErrors,
@@ -98,6 +98,13 @@ export function MatchDetailPage() {
   const slot2 = participants.find((participant) => participant.slot === 2);
   const slot1Label = slot1 ? nameFor(slot1.entryId) : 'Slot 1';
   const slot2Label = slot2 ? nameFor(slot2.entryId) : 'Slot 2';
+
+  // The knockout match's rule: its snapshot wins, otherwise the stage's
+  // configured per-round rule for its bracket position, otherwise the default.
+  const stageData = stageQuery.state.status === 'loaded' ? stageQuery.state.data : null;
+  const knockoutRule = isKnockout
+    ? resolveKnockoutRule(match, stageData, match.roundNumber)
+    : undefined;
 
   const stagesHref = `/tournaments/${tournament.id}/categories/${category.id}/stages/${match.stageId}`;
 
@@ -252,6 +259,7 @@ export function MatchDetailPage() {
                 slot1Label={slot1Label}
                 slot2Label={slot2Label}
                 matchKind={matchKind}
+                {...(knockoutRule ? { rule: knockoutRule } : {})}
                 onCompleted={refreshAll}
               />
             )}

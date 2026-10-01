@@ -695,6 +695,75 @@ describe('/api/v1 stages and matches', () => {
     expect(transition.statusCode).toBe(200);
   });
 
+  it('creates a knockout stage with a per-round scoring catalogue', async () => {
+    const categoryId = await setupOpenCategory();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: {
+        name: 'Knockout',
+        type: 'KNOCKOUT',
+        sequence: 1,
+        knockoutRules: { final: { format: 'single_game', pointsPerGame: 21 } },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json<{ data: { knockoutRules: Record<string, unknown> } }>().data;
+    expect(body.knockoutRules['final']).toEqual({ format: 'single_game', pointsPerGame: 21 });
+    // An omitted round is normalized from the defaults.
+    expect(body.knockoutRules['qf']).toEqual({ format: 'best_of_3', pointsPerGame: 11 });
+  });
+
+  it('rejects a malformed knockout rule with 400', async () => {
+    const categoryId = await setupOpenCategory();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: {
+        name: 'Knockout',
+        type: 'KNOCKOUT',
+        sequence: 1,
+        knockoutRules: { final: { format: 'best_of_5', pointsPerGame: 21 } },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('locks knockout rules once the bracket has been generated', async () => {
+    const categoryId = await setupOpenCategory();
+    const stage = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Knockout', type: 'KNOCKOUT', sequence: 1 },
+    });
+    const stageId = stage.json<{ data: { id: string } }>().data.id;
+
+    const entryIds: string[] = [];
+    for (const name of ['A', 'B']) {
+      const player = await api.services.players.create({ name });
+      const entry = await app.inject({
+        method: 'POST',
+        url: `/api/v1/categories/${categoryId}/entries`,
+        payload: { playerId: player.id },
+      });
+      entryIds.push(entry.json<{ data: { id: string } }>().data.id);
+    }
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stageId}/bracket`,
+      payload: { entryIds },
+    });
+
+    const update = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/stages/${stageId}`,
+      payload: { knockoutRules: { final: { format: 'single_game', pointsPerGame: 21 } } },
+    });
+    expect(update.statusCode).toBe(422);
+  });
+
   it('creates a match and maps a duplicate sequence to 409', async () => {
     const categoryId = await setupOpenCategory();
     const stage = await app.inject({
@@ -1050,7 +1119,7 @@ describe('/api/v1 match results', () => {
     expect(response.body).not.toContain('SQL');
   });
 
-  it('rejects a score above 30 with 422 at the domain boundary', async () => {
+  it('rejects a knockout game won by one point at the target with 422', async () => {
     const { matchId } = await startedMatch();
 
     const response = await app.inject({
@@ -1058,7 +1127,7 @@ describe('/api/v1 match results', () => {
       url: `/api/v1/matches/${matchId}/result`,
       payload: {
         games: [
-          { gameNumber: 1, participant1Points: 31, participant2Points: 29 },
+          { gameNumber: 1, participant1Points: 30, participant2Points: 29 },
           { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
         ],
       },

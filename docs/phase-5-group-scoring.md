@@ -105,7 +105,9 @@ true row-local invariants only; the full badminton scoring rules stay in the
 domain layer.
 
 - `match_games_number_valid`: `gameNumber IN (1, 2, 3)`
-- `match_games_points_in_range`: both point columns `BETWEEN 0 AND 30`
+- `match_games_points_in_range`: both point columns `BETWEEN 0 AND 198` (TASK-7
+  widened the original `0..30` cap so a knockout game can pass 30; a group
+  game's 30-point cap is a domain rule, not a database one)
 - `match_games_winner_slot_valid`: `winnerSlot IN (1, 2)`
 - `match_games_winner_matches_points`: the winner slot has the higher score
 
@@ -137,22 +139,39 @@ Implemented in `packages/domain/src/scoring.ts` (pure, no runtime dependency).
 
 ### A game
 
-- Won at **21** points with a **two-point** margin.
-- Extended while the margin stays at one (22-20, 25-23, …).
-- Hard **30-point ceiling**: at 30 a single-point lead wins (30-29 is legal).
+GROUP and KNOCKOUT use **separate** game validators; only the whole-number check,
+the winner derivation and the result structure are shared.
 
-| Score | Valid | Reason                     |
-| ----- | ----- | -------------------------- |
-| 21-0  | yes   | target reached, margin ≥ 2 |
-| 21-19 | yes   | margin 2                   |
-| 22-20 | yes   | extended, margin 2         |
-| 25-23 | yes   | extended, margin 2         |
-| 30-29 | yes   | ceiling, margin 1 allowed  |
-| 30-28 | yes   | ceiling, margin 2          |
-| 20-0  | no    | target not reached         |
-| 21-20 | no    | margin 1 below the ceiling |
-| 30-30 | no    | tied                       |
-| 31-29 | no    | above the ceiling          |
+- **GROUP** (`validateGroupGameScore`): won at **21** points with a **two-point**
+  margin, extended while the margin stays at one (22-20, 25-23, …), with a hard
+  **30-point ceiling** — at 30 a single-point lead wins (30-29 is legal).
+- **KNOCKOUT** (`validateKnockoutGameScore(points1, points2, target)`): won at the
+  **round's configured target** with the same two-point margin and **no ceiling**,
+  so a game is extended for as long as the margin stays at one (a 31-29 game is
+  legal at the 30-point target). The target comes from the persisted round rule,
+  never the client.
+
+| Score | Kind     | Valid | Reason                         |
+| ----- | -------- | ----- | ------------------------------ |
+| 21-0  | GROUP    | yes   | target reached, margin ≥ 2     |
+| 21-19 | GROUP    | yes   | margin 2                       |
+| 22-20 | GROUP    | yes   | extended, margin 2             |
+| 25-23 | GROUP    | yes   | extended, margin 2             |
+| 30-29 | GROUP    | yes   | ceiling, margin 1 allowed      |
+| 30-28 | GROUP    | yes   | ceiling, margin 2              |
+| 20-0  | GROUP    | no    | target not reached             |
+| 21-20 | GROUP    | no    | margin 1 below the ceiling     |
+| 30-30 | GROUP    | no    | tied                           |
+| 31-29 | GROUP    | no    | above the 30-point ceiling     |
+| 21-19 | KO (t21) | yes   | target reached, margin 2       |
+| 22-20 | KO (t21) | yes   | extended, margin 2             |
+| 30-28 | KO (t21) | yes   | extended, margin 2             |
+| 31-29 | KO (t21) | yes   | extended past 30 (no ceiling)  |
+| 30-29 | KO (t21) | no    | margin 1, no ceiling exception |
+| 21-20 | KO (t21) | no    | margin 1                       |
+| 11-9  | KO (t11) | yes   | target 11, margin 2            |
+| 12-10 | KO (t11) | yes   | extended, margin 2             |
+| 11-10 | KO (t11) | no    | margin 1                       |
 
 ### A match
 
@@ -160,30 +179,37 @@ The **stage type** decides how many games decide a match:
 
 - A **GROUP** match is a **single game**: the higher score wins, and a second
   game is rejected rather than ignored (`scoreGroupMatch`).
-- A **KNOCKOUT** match is **best of three**: the winner is the first slot to win
-  **two** games (2-0 or 2-1) (`scoreMatchGames`).
+- A **KNOCKOUT** match follows its **round's rule** (`scoreKnockoutMatch`):
+  **best of three** by default, or a single "straight set" game when the round is
+  configured that way. A best-of-three winner is the first slot to win **two**
+  games (2-0 or 2-1).
 
-| Games               | Valid | Reason                                   |
-| ------------------- | ----- | ---------------------------------------- |
-| 21-15 (GROUP)       | yes   | single game                              |
-| 21-15, 21-18 (KO)   | yes   | 2-0                                      |
-| 21-18, 18-21, 21-19 | yes   | 2-1 (KO)                                 |
-| 21-18, 21-19, 21-15 | no    | a third game after the match was decided |
-| 21-18, 18-21        | no    | 1-1 is undecided (incomplete)            |
-| 21-18               | no    | fewer than two games in a knockout       |
+| Games                      | Valid | Reason                                   |
+| -------------------------- | ----- | ---------------------------------------- |
+| 21-15 (GROUP)              | yes   | single game                              |
+| 21-15, 21-18 (KO)          | yes   | 2-0                                      |
+| 21-18, 18-21, 21-19        | yes   | 2-1 (KO)                                 |
+| 21-18, 21-19, 21-15        | no    | a third game after the match was decided |
+| 21-18, 18-21               | no    | 1-1 is undecided (incomplete)            |
+| 21-18                      | no    | fewer than two games in a best-of-three  |
+| 21-18 (KO straight)        | yes   | a straight-set match is one game         |
+| 21-18, 21-19 (KO straight) | no    | a straight-set match is one game         |
 
 ### Domain functions
 
-- `isValidGameScore(points1, points2): boolean`
+- `isValidGroupGameScore(points1, points2): boolean`
+- `validateGroupGameScore(points1, points2, gameNumber): void`
+- `isValidKnockoutGameScore(points1, points2, target): boolean`
+- `validateKnockoutGameScore(points1, points2, target, gameNumber?): void`
 - `determineGameWinner(points1, points2): MatchSlot`
-- `validateGameScore(points1, points2, gameNumber): void`
-- `scoreMatchGames(games): MatchGame[]` — validates and scores a best-of-three knockout result
 - `scoreGroupMatch(games): MatchGame[]` — validates and scores a single-game group result
+- `scoreKnockoutMatch(games, rule): MatchGame[]` — validates and scores a knockout result under its round's `{ format, pointsPerGame }` rule
 - `determineMatchOutcome(games, kind): MatchOutcome` — derives the winner from stored games
+- `determineKnockoutOutcome(games, rule): MatchOutcome` — the knockout counterpart, applying the round's format
 
 Constants: `GAME_POINT_TARGET = 21`, `GAME_POINT_CEILING = 30`,
 `GAME_MIN_MARGIN = 2`, `MIN_GAMES_PER_MATCH = 2`, `MAX_GAMES_PER_MATCH = 3`,
-`GAMES_TO_WIN_MATCH = 2`.
+`GAMES_TO_WIN_MATCH = 2`, `MAX_KNOCKOUT_EXTENSION = 20`.
 
 These rules are deliberately **not** labelled an official federation rule set;
 they follow the widely-used Laws of Badminton scoring and can be replaced later.
@@ -293,9 +319,9 @@ rejects `COMPLETED`.
 - result: 1–3 games
 
 Zod validates the request **shape** only. Whether a score is a legal badminton
-result is a domain rule enforced by `scoreGroupMatch`/`scoreMatchGames` in the
+result is a domain rule enforced by `scoreGroupMatch`/`scoreKnockoutMatch` in the
 application layer, and the match's stage decides whether the result is a single
-group game or a best-of-three knockout.
+group game or a knockout match played under its round's rule.
 
 ## 11. Transaction boundary
 

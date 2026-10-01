@@ -169,7 +169,8 @@ cap)'` (index.html:3982); tests `tests/core.test.js:76-101` (`21-17 valid`,
   `21-21 tie rejected`, `21-20 rejected`, `30-29 valid`, `winner gets 2 points`,
   `loser gets 0 points`).
 - V2 (after TASK-6): `packages/domain/src/scoring.ts` (`scoreGroupMatch`,
-  single game 21/30/2; `scoreMatchGames` best of three for KNOCKOUT);
+  single game 21/30/2; knockout games under their round's rule via
+  `scoreKnockoutMatch`, a separate validator from the group one);
   `standings.ts` (`STANDING_GROUP_LOSS_POINTS = 0`); `match-result.service.ts`
   reads the stage type inside the transaction to choose the format;
   `e2e/group-scoring.spec.ts` (enters a single game 21-18).

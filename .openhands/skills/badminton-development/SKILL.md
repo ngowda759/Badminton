@@ -119,14 +119,27 @@ never a read model.
 
 - Match format follows the **stage type**, matching the original V1 tournament
   (the functional source of truth): a **GROUP** match is a **single game** to 21
-  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is
-  **best of three** (`scoreMatchGames`, loss 1 pt). The service reads the stage
+  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is played
+  under its round's rule (`scoreKnockoutMatch`, loss 1 pt) — **best of three**
+  by default, or a **straight set** (one game) when the round is configured that
+  way. GROUP and KNOCKOUT use **separate game validators**
+  (`validateGroupGameScore` vs `validateKnockoutGameScore`) and share only the
+  whole-number check, winner derivation and result shape — a knockout game must
+  never be routed through the group validator. The service reads the stage
   inside the transaction to pick the format, so a stale client can never record a
   best-of-three result for a group match (422). Standings order is the V1 order:
   **points → point difference → points scored → competitor name (`localeCompare`)**
   → entry id. Do not "fix" this back to a wins/game-difference order or a fixed
   best-of-three for group matches — that was the pre-TASK-6 divergence in
   `docs/tasks/task-5-parity-audit.md` (gaps G1–G3).
+- TASK-7 knockout parity: each KNOCKOUT round has a `{ format, pointsPerGame }`
+  rule (V1 defaults **QF 11, SF 15, Final 21**), stored on the stage
+  (`tournament_stages.knockoutRules`) and snapshotted onto each match. A knockout
+  game is played to the round's target with a **two-point margin** and **no
+  30-point cap** (31-29 is legal); a group game keeps the 30-point cap. The rules
+  lock once the bracket exists. `match_games_points_in_range` was widened from
+  `0..30` to `0..198` (forward-only `relax_match_game_points_cap` migration); the
+  target and margin stay domain rules.
 - **Known e2e flake.** `e2e/phase8-6-hardening.spec.ts` ("a reconnect after missed
   events recovers the authoritative state") fails intermittently on `main` and on
   unrelated branches, independently of your change. Phase 8.6 is not implemented.

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { PrismaClient } from '@badminton/database';
+import { BusinessRuleViolationError, scoreGroupMatch, scoreKnockoutMatch } from '@badminton/domain';
 
 import {
   createCategory,
@@ -547,10 +548,25 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
         );
       });
 
-      it('rejects points outside 0-30', async () => {
+      it('persists a legal knockout 31-29 game while the domain still rejects a group 31-29', async () => {
         const matchId = await matchFixture();
+        const game = { gameNumber: 1, participant1Points: 31, participant2Points: 29 };
+
+        // The domain accepts a knockout game past 30 (no ceiling at the round's
+        // target) ...
+        expect(() =>
+          scoreKnockoutMatch([game], { format: 'single_game', pointsPerGame: 21 }),
+        ).not.toThrow();
+        // ... and it persists: the CHECK is a structural bound, not the game rule.
+        await expect(createMatchGame(prisma, { matchId, ...game })).resolves.toBeDefined();
+
+        // The same score is a group-rule violation (the 30-point cap), so a group
+        // match never stores it - the domain remains the rule engine.
+        expect(() => scoreGroupMatch([game])).toThrow(BusinessRuleViolationError);
+
+        // The structural bound still rejects a value the domain could never produce.
         await expectRejectionContaining(
-          createMatchGame(prisma, { matchId, participant1Points: 31 }),
+          createMatchGame(prisma, { matchId, participant1Points: 199 }),
           'match_games_points_in_range',
         );
         await expectRejectionContaining(

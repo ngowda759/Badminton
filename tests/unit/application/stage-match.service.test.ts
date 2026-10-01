@@ -228,6 +228,90 @@ describe('TournamentStageService.drawSize immutability', () => {
   });
 });
 
+describe('TournamentStageService knockout scoring configuration', () => {
+  it('stores no catalogue when a knockout is created without rules', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    // The catalogue is resolved from the defaults at scoring/read time, so an
+    // unconfigured knockout stores nothing.
+    expect(stage.knockoutRules).toBeNull();
+  });
+
+  it('normalizes a partial catalogue and keeps a valid override', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      knockoutRules: { final: { format: 'single_game', pointsPerGame: 30 } },
+    });
+    expect(stage.knockoutRules?.final).toEqual({ format: 'single_game', pointsPerGame: 30 });
+    expect(stage.knockoutRules?.qf).toEqual({ format: 'best_of_3', pointsPerGame: 11 });
+  });
+
+  it('rejects a malformed rule on create', async () => {
+    const categoryId = await singlesCategory();
+    await expect(
+      stages.create(categoryId, {
+        name: 'Knockout',
+        type: 'KNOCKOUT',
+        sequence: 1,
+        knockoutRules: { final: { format: 'best_of_3', pointsPerGame: 0 } },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('drops a stray catalogue on a GROUP stage', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+      knockoutRules: { final: { format: 'single_game', pointsPerGame: 30 } },
+    });
+    expect(stage.knockoutRules).toBeNull();
+  });
+
+  it('allows editing the rules before the bracket exists', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const updated = await stages.update(stage.id, {
+      knockoutRules: { final: { format: 'single_game', pointsPerGame: 21 } },
+    });
+    expect(updated.knockoutRules?.final).toEqual({ format: 'single_game', pointsPerGame: 21 });
+  });
+
+  it('locks the rules once a bracket match exists', async () => {
+    const categoryId = await singlesCategory();
+    const stage = await stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    await repos.client.matches.create({
+      stageId: stage.id,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+    });
+
+    await expect(
+      stages.update(stage.id, {
+        knockoutRules: { final: { format: 'single_game', pointsPerGame: 21 } },
+      }),
+    ).rejects.toBeInstanceOf(BusinessRuleViolationError);
+  });
+});
+
 describe('MatchService.create', () => {
   it('creates a scheduled match with unique sequence', async () => {
     const categoryId = await singlesCategory();

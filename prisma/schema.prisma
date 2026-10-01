@@ -209,6 +209,12 @@ model TournamentStage {
   // knockout. Nullable: a GROUP stage, or a knockout not yet configured, has no
   // configured qualifier count. A row-local CHECK keeps a present value positive.
   qualifiersPerGroup Int?       @db.SmallInt
+  // Per-round knockout scoring configuration, keyed by round tag
+  // (`{ qf: { format, pointsPerGame }, sf: {...}, final: {...} }`). Nullable: a
+  // GROUP stage, or a knockout not yet configured, has none. It is snapshotted
+  // onto each generated match and locked once the bracket exists. Nullable JSONB;
+  // the domain normalizes it on read, so a malformed value falls back to defaults.
+  knockoutRules Json?
   status     StageStatus        @default(PENDING)
   matches    Match[]
   createdAt  DateTime           @default(now()) @db.Timestamptz(3)
@@ -228,6 +234,13 @@ model Match {
   status           MatchStatus        @default(SCHEDULED)
   winnerEntryId    String?            @db.Uuid
   winnerEntry      TournamentEntry?   @relation("MatchWinner", fields: [winnerEntryId], references: [id], onDelete: Restrict)
+  // The per-round scoring rule snapshotted from the stage's knockoutRules when a
+  // bracket is generated: the match format (`best_of_3` | `single_game`) and the
+  // game points target. Nullable on a group match or a knockout match created
+  // outside a generated bracket, where the domain defaults apply. A live match
+  // keeps its snapshot even if the stage is later edited.
+  knockoutFormat       String?
+  knockoutPointsPerGame Int?          @db.SmallInt
   courtId          String?            @db.Uuid
   court            Court?             @relation(fields: [courtId], references: [id], onDelete: Restrict)
   scheduledStartAt DateTime?          @db.Timestamptz(3)

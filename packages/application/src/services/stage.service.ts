@@ -5,12 +5,16 @@ import {
   isAllowedTransition,
   isBracketFinalMatch,
   isSupportedBracketSize,
+  normalizeKnockoutRules,
   NotFoundError,
   normalizeWhitespace,
   STAGE_TRANSITIONS,
   ValidationError,
+  validateKnockoutRule,
   type Match,
+  type MatchScoringRule,
   type StageStatus,
+  type StageType,
   type TournamentStage,
 } from '@badminton/domain';
 
@@ -60,6 +64,7 @@ export function createTournamentStageService(
       if (command.qualifiersPerGroup !== undefined) {
         assertPositive(command.qualifiersPerGroup, 'qualifiersPerGroup');
       }
+      const knockoutRules = resolveCreateKnockoutRules(command.type, command.knockoutRules);
 
       const category = await client.categories.findById(categoryId);
       if (!category) {
@@ -78,6 +83,7 @@ export function createTournamentStageService(
         sequence: command.sequence,
         drawSize: command.drawSize ?? null,
         qualifiersPerGroup: command.qualifiersPerGroup ?? null,
+        knockoutRules,
         status: 'PENDING',
       });
     },
@@ -94,6 +100,7 @@ export function createTournamentStageService(
         sequence?: number;
         drawSize?: number | null;
         qualifiersPerGroup?: number | null;
+        knockoutRules?: Readonly<Record<string, MatchScoringRule>> | null;
       } = {};
 
       if (command.sequence !== undefined) {
@@ -118,6 +125,11 @@ export function createTournamentStageService(
 
       if (command.drawSize !== undefined) {
         await assertDrawSizeMutable(client, current, command.drawSize);
+      }
+
+      if (command.knockoutRules !== undefined) {
+        await assertKnockoutRulesMutable(client, current);
+        data.knockoutRules = resolveUpdateKnockoutRules(current.type, command.knockoutRules);
       }
 
       if (command.name !== undefined) {
@@ -252,6 +264,77 @@ async function assertDrawSizeMutable(
   if (matches.length > 0) {
     throw new BusinessRuleViolationError(
       'The bracket size cannot change once a knockout bracket has been generated.',
+    );
+  }
+}
+
+/**
+ * Validates and normalizes a knockout rule set supplied on create.
+ *
+ * A rule set is only meaningful on a KNOCKOUT stage: a GROUP stage stores none,
+ * so a stray value is dropped rather than persisted. Every round's rule is
+ * validated (unknown format / out-of-range target rejected) and normalized
+ * against the defaults, so the stored catalogue is always complete.
+ */
+function resolveCreateKnockoutRules(
+  type: StageType,
+  rules: Readonly<Record<string, MatchScoringRule>> | undefined,
+): Readonly<Record<string, MatchScoringRule>> | null {
+  if (rules === undefined || type !== 'KNOCKOUT') {
+    return null;
+  }
+  return requireValidKnockoutRules(rules);
+}
+
+/** As `resolveCreateKnockoutRules`, but `null` clears the catalogue on update. */
+function resolveUpdateKnockoutRules(
+  type: StageType,
+  rules: Readonly<Record<string, MatchScoringRule>> | null,
+): Readonly<Record<string, MatchScoringRule>> | null {
+  if (rules === null || type !== 'KNOCKOUT') {
+    return null;
+  }
+  return requireValidKnockoutRules(rules);
+}
+
+/**
+ * Rejects a malformed rule before it is stored, then normalizes the catalogue.
+ *
+ * Only the keys the caller actually supplied are validated: an omitted round is
+ * filled from the defaults, which is exactly V1's `normalizeKnockoutRules`.
+ */
+function requireValidKnockoutRules(
+  rules: Readonly<Record<string, MatchScoringRule>>,
+): Readonly<Record<string, MatchScoringRule>> {
+  for (const [roundKey, rule] of Object.entries(rules)) {
+    const error = validateKnockoutRule(rule);
+    if (error) {
+      throw new ValidationError(`${roundKey}: ${error}`, 'knockoutRules');
+    }
+  }
+  return normalizeKnockoutRules(rules);
+}
+
+/**
+ * Keeps the per-round knockout configuration immutable once the knockout has
+ * started.
+ *
+ * Mirrors V1's `knockoutRulesLocked`: the rules may be edited freely during the
+ * group stage and before the bracket is generated, but the moment any knockout
+ * match exists the configuration is locked, so a live or completed match can
+ * never be re-interpreted.
+ */
+async function assertKnockoutRulesMutable(
+  client: RepositoryClient,
+  stage: TournamentStage,
+): Promise<void> {
+  if (stage.type !== 'KNOCKOUT') {
+    return;
+  }
+  const matches = await client.matches.listByStage(stage.id);
+  if (matches.length > 0) {
+    throw new BusinessRuleViolationError(
+      'Knockout scoring is locked because the knockout stage has started.',
     );
   }
 }

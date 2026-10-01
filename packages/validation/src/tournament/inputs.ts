@@ -141,6 +141,25 @@ export const updateTournamentEntryInputSchema = z.object({
   seed: positiveIntegerSchema.nullable().optional(),
 });
 
+/** One round's knockout scoring rule: match format and game points target. */
+export const knockoutRoundRuleSchema = z.object({
+  format: z.enum(['best_of_3', 'single_game']),
+  pointsPerGame: z.number().int().min(1).max(99),
+});
+
+/**
+ * Per-round knockout scoring configuration, keyed by round tag (`qf`, `sf`,
+ * `final`, …). Keys are the V1 round catalogue; the application normalizes the
+ * catalogue against the defaults, so an omitted round is simply filled in.
+ *
+ * A partial record is deliberate (Zod 4's `z.record` with an enum key would
+ * require every key): the caller supplies only the rounds it overrides.
+ */
+export const knockoutRulesSchema = z.partialRecord(
+  z.enum(['r128', 'r64', 'r32', 'r16', 'qf', 'sf', 'final']),
+  knockoutRoundRuleSchema,
+);
+
 export const createStageInputSchema = z.object({
   name: nameSchema,
   type: z.enum(['GROUP', 'KNOCKOUT']),
@@ -149,6 +168,9 @@ export const createStageInputSchema = z.object({
   // How many competitors advance from each group into this stage's feeder
   // knockout. Only meaningful on a KNOCKOUT stage; validated as positive.
   qualifiersPerGroup: positiveIntegerSchema.optional(),
+  // Per-round knockout scoring configuration, keyed by round tag. Only
+  // meaningful on a KNOCKOUT stage; the application validates each round's rule.
+  knockoutRules: knockoutRulesSchema.optional(),
 });
 
 export const updateStageInputSchema = z
@@ -157,6 +179,7 @@ export const updateStageInputSchema = z
     sequence: positiveIntegerSchema,
     drawSize: positiveIntegerSchema.nullable(),
     qualifiersPerGroup: positiveIntegerSchema.nullable(),
+    knockoutRules: knockoutRulesSchema.nullable(),
   })
   .partial();
 
@@ -244,9 +267,10 @@ export const generateGroupFixturesInputSchema = z.object({
  * rule, and whether the match is a single game (GROUP) or best of three
  * (KNOCKOUT) is decided by the match's stage in the application layer.
  *
- * The point ceiling is 99 rather than the game's 30 so the two domain rules are
- * distinguishable: a score above 30 is a 422 business-rule violation from
- * `scoreGroupMatch`/`scoreMatchGames`, not a 400 shape error.
+ * The point ceiling is 99 rather than a game's ceiling so the two domain rules
+ * are distinguishable: a score above a group game's 30 (or short of a knockout
+ * round's target/margin) is a 422 business-rule violation from
+ * `scoreGroupMatch`/`scoreKnockoutMatch`, not a 400 shape error.
  */
 export const recordMatchGameInputSchema = z.object({
   gameNumber: positiveIntegerSchema.max(3, 'A match is best of three games (game number 1-3).'),

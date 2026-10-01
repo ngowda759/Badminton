@@ -122,15 +122,33 @@ database — integration tests use `app.inject()` with stub probes.
 
 - Match format follows the **stage type**, matching the original V1 tournament
   (the functional source of truth): a **GROUP** match is a **single game** to 21
-  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is
-  **best of three** (`scoreMatchGames`, loss 1 pt). The domain functions
-  `scoreGroupMatch`/`scoreMatchGames` share one game rule set; the service reads
+  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is played
+  under its round's rule (`scoreKnockoutMatch`, loss 1 pt) — **best of three**
+  by default, or a **straight set** (one game) when the round is configured that
+  way. GROUP and KNOCKOUT use **separate game validators**
+  (`validateGroupGameScore` vs `validateKnockoutGameScore`) and share only the
+  whole-number check, winner derivation and result shape — a knockout game must
+  never be routed through the group validator. The service reads
   the stage inside the transaction to pick the format, so a stale client can
   never record a best-of-three result for a group match (422). Standings order is
   the V1 order: **points → point difference → points scored → competitor name
   (`localeCompare`)** → entry id. Do not "fix" this back to a wins/game-difference
   order or a fixed best-of-three for group matches — that was the pre-TASK-6
   divergence documented in `docs/tasks/task-5-parity-audit.md` (gaps G1–G3).
+- TASK-7 knockout parity: each KNOCKOUT round has a `{ format, pointsPerGame }`
+  rule. The V1 defaults are **QF 11, SF 15, Final 21** (R32/R16 also 11) and the
+  catalogue is stored on the stage (`tournament_stages.knockoutRules`, nullable
+  JSONB) and snapshotted onto each match (`matches.knockoutFormat`,
+  `matches.knockoutPointsPerGame`). A knockout game is played to the round's
+  target, needs a **two-point margin** and has **no 30-point cap** (31-29 is
+  legal at the 30 target); a **group** game keeps the 30-point cap. The rules are
+  **locked once the bracket exists** (any match on the KNOCKOUT stage) — the same
+  signal as V1's `knockoutRulesLocked`. The round key is derived from the bracket
+  size and round number (`knockoutRoundKey`), so a 4-entry bracket's first round
+  is `SF`. Because a knockout game can pass 30, `match_games_points_in_range`
+  was widened from `0..30` to `0..198` in the forward-only
+  `relax_match_game_points_cap` migration; the exact target and margin stay
+  domain rules, never database ones.
 - `localhost` and `127.0.0.1` are distinct browser origins. Both are in the default
   `CORS_ORIGINS`; if you change one, change the other or E2E will report `Unreachable`.
 - Phase 2 constraints Prisma cannot express (row-local `CHECK`s and partial unique

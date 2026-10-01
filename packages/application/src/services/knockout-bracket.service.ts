@@ -8,6 +8,7 @@ import {
   ConflictError,
   isBracketFinalCompleted,
   isSupportedBracketSize,
+  knockoutMatchRule,
   NotFoundError,
   ValidationError,
   type Match,
@@ -252,6 +253,9 @@ async function writeBracket(
     const sequences = Array.from({ length: matchesInRound }, (_unused, index) =>
       calculateSequence(size, roundNumber, index + 1),
     );
+    // Snapshot the round's scoring rule onto every match it creates, so a later
+    // stage edit can never rewrite a live or completed match (V1's `match.scoring`).
+    const rule = knockoutMatchRule(stage.knockoutRules, size, roundNumber);
     const created = await tx.matches.createMany(
       sequences.map((sequence, index) => ({
         stageId: stage.id,
@@ -259,6 +263,8 @@ async function writeBracket(
         roundNumber,
         matchNumber: index + 1,
         status: 'SCHEDULED' as const,
+        knockoutFormat: rule.format,
+        knockoutPointsPerGame: rule.pointsPerGame,
       })),
     );
 
