@@ -55,14 +55,22 @@ async function completedGroupMatch(
   categoryId: string,
 ): Promise<{ matchId: string; stageId: string; slot1: string; slot2: string }> {
   const stageId = await seedStage(repos.client, categoryId);
-  const matchId = await seedMatch(repos.client, stageId);
+  // A real group fixture carries a round-robin `roundNumber`/`matchNumber`, so
+  // the predicate must read the stage type, never those fields.
+  const match = await repos.client.matches.create({
+    stageId,
+    sequence: 1,
+    roundNumber: 1,
+    matchNumber: 1,
+    status: 'SCHEDULED',
+  });
   const slot1 = await entryIn(categoryId, 'Player A');
   const slot2 = await entryIn(categoryId, 'Player B');
-  await matches.addParticipant(matchId, { entryId: slot1, slot: 1 });
-  await matches.addParticipant(matchId, { entryId: slot2, slot: 2 });
-  await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
-  await results.recordResult(matchId, { games: oneGame });
-  return { matchId, stageId, slot1, slot2 };
+  await matches.addParticipant(match.id, { entryId: slot1, slot: 1 });
+  await matches.addParticipant(match.id, { entryId: slot2, slot: 2 });
+  await matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+  await results.recordResult(match.id, { games: oneGame });
+  return { matchId: match.id, stageId, slot1, slot2 };
 }
 
 /** A completed KNOCKOUT match with an explicit bracket position. */

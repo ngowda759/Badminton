@@ -180,23 +180,28 @@ export function createMatchResultService(
           throw new NotFoundError('Match', matchId);
         }
 
+        // The stage type decides both the format and whether a correction is
+        // allowed, read inside the transaction so the correction and
+        // `recordResult` can never disagree.
+        const stage = await tx.stages.findById(match.stageId);
+        if (!stage) {
+          throw new NotFoundError('Stage', match.stageId);
+        }
+
         // Only a completed **group** match may be corrected. A knockout match
-        // carries a bracket position and would require re-deriving the bracket
-        // (clearing the next-round slot and un-completing downstream matches),
-        // which is a separate workflow; a non-completed match has no result.
-        if (!isMatchCorrectable(match)) {
+        // feeds a bracket and would require re-deriving it (clearing the
+        // next-round slot and un-completing downstream matches), which is a
+        // separate workflow; a non-completed match has no result. The stage
+        // type is the discriminator - a group fixture carries a round-robin
+        // `roundNumber`, so the bracket-position fields cannot be used.
+        if (!isMatchCorrectable(match, stage)) {
           throw new BusinessRuleViolationError(
             'Only a completed group match result can be corrected.',
           );
         }
 
-        // The stage type decides the format, read inside the transaction so the
-        // correction and `recordResult` can never disagree: a group match is a
-        // single game, scored by the group validator (21 target, 30 ceiling).
-        const stage = await tx.stages.findById(match.stageId);
-        if (!stage) {
-          throw new NotFoundError('Stage', match.stageId);
-        }
+        // A group match is a single game, scored by the group validator
+        // (21 target, 30 ceiling).
         const matchKind: MatchKind = stage.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
         const rule = resolveKnockoutRule(stage, match);
         const games =

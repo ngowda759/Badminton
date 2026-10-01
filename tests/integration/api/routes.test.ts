@@ -1935,7 +1935,14 @@ describe('/api/v1 match result correction', () => {
       type: 'GROUP',
       sequence: 1,
     });
-    const match = await api.services.matches.create(stage.id, { sequence: 1 });
+    const match = await api.services.matches.create(stage.id, {
+      sequence: 1,
+      // A real group fixture carries a round-robin round; the correction path
+      // must allow it regardless of those fields (they are not a bracket
+      // position).
+      roundNumber: 1,
+      matchNumber: 1,
+    });
     const p1 = await api.services.players.create({ name: 'P1' });
     const p2 = await api.services.players.create({ name: 'P2' });
     const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
