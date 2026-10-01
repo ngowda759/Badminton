@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-30T00:00:00Z",
+  "updatedAt": "2026-10-01T10:57:48Z",
   "tasks": [
     {
       "id": "AI-001",
@@ -26,10 +26,58 @@
       ],
       "humanApproval": false,
       "dependsOn": [],
-      "references": ["AGENTS.md", ".github/workflows/ci.yml", "docs/ai-development-loop.md"],
+      "references": [
+        "AGENTS.md",
+        ".github/workflows/ci.yml",
+        "docs/ai-development-loop.md"
+      ],
       "pr": 19,
       "branch": "automation/ai-development-loop",
       "createdAt": "2026-09-30T00:00:00Z"
+    },
+    {
+      "id": "AI-002",
+      "title": "Match result correction with downstream propagation (TASK-8, parity gap G6)",
+      "phase": "parity (G6 from the TASK-5 audit)",
+      "status": "approved",
+      "summary": "A recorded result is currently immutable: MatchResultService.recordResult rejects a second completion and there is no reset. V1 lets an operator re-enter a score (saveGroupScore) and reset a match (resetMatch); the TASK-5 audit records the missing correction workflow as gap G6 and as the top remaining parity item. Add a guarded GROUP-match result-correction workflow: a completed group match can be re-scored in one atomic operation, so a mistyped score is fixed without touching the database. Standings and qualification are derived from the stored games, so they correct automatically. Correcting a knockout result (which requires bracket re-derivation) is out of scope and stays immutable.",
+      "acceptanceCriteria": [
+        "tests/unit/domain/correction.test.ts passes: isMatchCorrectable is true for a COMPLETED group match (roundNumber/matchNumber null) and false for a completed knockout match (non-null bracket position) and for any non-COMPLETED match.",
+        "tests/unit/application/match-correction.service.test.ts passes: correcting a completed group match replaces the stored games, recomputes the winner and returns the new MatchResult; the corrected score is reflected by StandingsService.getStageStandings (points and point difference match the new result); a knockout match, a non-completed match and an illegal group score (31-29) are rejected with BusinessRuleViolationError; an unknown match id raises NotFoundError; a failure mid-correction leaves the original result, games and winner unchanged.",
+        "tests/unit/application/transaction-boundaries.test.ts records exactly one runInTransaction for correctResult and asserts recordResult is unchanged.",
+        "tests/integration/api/routes.test.ts (or a sibling API spec) asserts POST /api/v1/matches/:id/result/correction returns 201 with the new result for a completed group match, 422 for a knockout match, 404 for an unknown id and 400 for an empty games array.",
+        "apps/web/src/pages/tournaments/match-detail.test.tsx passes: the Correct result control is rendered for a completed group match and is absent for a completed knockout match; submitting the correction calls the correction endpoint.",
+        "e2e/result-correction.spec.ts passes against the real UI/API/PostgreSQL: score a group match 21-10, correct it to 21-19, assert the match stays COMPLETED and the group standings show the corrected points; assert a completed knockout match exposes no correction control.",
+        "No database migration, seed change or workflow change is introduced: the diff adds nothing under prisma/migrations/** and does not touch prisma/seed.ts or .github/workflows/ci.yml.",
+        "The realtime catalogue is unchanged: tests/unit/domain/realtime.test.ts (its exact-list assertion) passes without edits.",
+        "npm run lint, npm run typecheck, npm test, npm run build and npm run test:e2e pass."
+      ],
+      "outOfScope": [
+        "Correcting a knockout result and re-deriving the bracket (clearing the winner from the next round and un-completing downstream matches).",
+        "An audit trail / correction history.",
+        "Export/import/reset of a whole tournament, court/stage deletion, scheduler parity, team levels and the other TASK-5 gaps (G7-G16).",
+        "Any new realtime event type, any second data-fetching framework, or any change to recordResult, MATCH_TRANSITIONS or MatchService.transitionStatus.",
+        "Production data, credentials, or a hand merge."
+      ],
+      "humanApproval": false,
+      "dependsOn": [
+        "AI-001"
+      ],
+      "references": [
+        "AGENTS.md",
+        "docs/tasks/task-5-parity-audit.md",
+        "docs/phase-5-group-scoring.md",
+        "docs/phase-6-knockout.md",
+        "packages/domain/src/scoring.ts",
+        "packages/domain/src/lifecycle-tables.ts",
+        "packages/application/src/services/match-result.service.ts",
+        "packages/application/src/repositories/index.ts",
+        "packages/infrastructure/src/repositories.ts",
+        "apps/api/src/http/routes/stage-match.routes.ts",
+        "apps/web/src/pages/tournaments/match-detail.tsx",
+        "apps/web/src/components/tournaments/match-scoring.tsx"
+      ],
+      "createdAt": "2026-10-01T10:38:58Z"
     }
   ]
 }
