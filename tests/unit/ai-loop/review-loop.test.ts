@@ -585,11 +585,15 @@ describe('ChatGPT review CLI', () => {
     },
   ) {
     const bin = stubGh(pr);
+    // Start from a clean slate: an ambient OPENAI_REVIEW_MODEL would otherwise
+    // leak into the child and mask the fallback behaviour under test.
+    const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete baseEnv.OPENAI_REVIEW_MODEL;
     return spawnSync('node', [resolve(root, '.ai/scripts/chatgpt-review.mjs'), ...args], {
       cwd: root,
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...baseEnv,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         AI_LOOP_ROOT: scratch,
         AI_LOOP_STUB_PR: join(scratch, 'pr.json'),
@@ -705,6 +709,68 @@ describe('ChatGPT review CLI', () => {
     );
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain('no review needed');
+  });
+
+  // GitHub Actions supplies an empty string for an unset variable, so a blank
+  // OPENAI_REVIEW_MODEL must not override the configured default. The dry-run
+  // body is printed with the resolved model, which is what these assert on.
+  describe('review model resolution', () => {
+    const CONFIGURED_MODEL = 'gpt-5.6-sol';
+
+    function resolvedModel(result: { stdout: string; stderr: string }): string {
+      const match = /"model": "([^"]*)"/.exec(`${result.stdout}${result.stderr}`);
+      return match?.[1] ?? '';
+    }
+
+    it('falls back to the configured default when OPENAI_REVIEW_MODEL is unset', () => {
+      const result = runReview(['--pr', '19', '--dry-run'], { OPENAI_API_KEY: 'test-key' });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
+    });
+
+    it('falls back to the configured default for an empty OPENAI_REVIEW_MODEL', () => {
+      const result = runReview(['--pr', '19', '--dry-run'], {
+        OPENAI_API_KEY: 'test-key',
+        OPENAI_REVIEW_MODEL: '',
+      });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
+    });
+
+    it('falls back to the configured default for a whitespace-only OPENAI_REVIEW_MODEL', () => {
+      const result = runReview(['--pr', '19', '--dry-run'], {
+        OPENAI_API_KEY: 'test-key',
+        OPENAI_REVIEW_MODEL: ' ',
+      });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
+    });
+
+    it('uses an explicitly configured OPENAI_REVIEW_MODEL', () => {
+      const result = runReview(['--pr', '19', '--dry-run'], {
+        OPENAI_API_KEY: 'test-key',
+        OPENAI_REVIEW_MODEL: 'some-model',
+      });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe('some-model');
+    });
+
+    it('lets --model take precedence over the configured default', () => {
+      const result = runReview(['--pr', '19', '--model', 'cli-model', '--dry-run'], {
+        OPENAI_API_KEY: 'test-key',
+      });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe('cli-model');
+    });
+
+    it('lets --model take precedence over OPENAI_REVIEW_MODEL', () => {
+      const result = runReview(['--pr', '19', '--model', 'cli-model', '--dry-run'], {
+        OPENAI_API_KEY: 'test-key',
+        OPENAI_REVIEW_MODEL: 'env-model',
+      });
+      expect(result.status).toBe(0);
+      expect(resolvedModel(result)).toBe('cli-model');
+    });
   });
 });
 

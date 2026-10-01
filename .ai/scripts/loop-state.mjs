@@ -289,10 +289,14 @@ function commandLog(args) {
     round: toInteger(requireString(args, 'round'), 'round'),
     verdict: requireString(args, 'verdict'),
     ciStatus: typeof args.ci === 'string' ? args.ci : 'unknown',
+    // The review report schema requires these three; the state machine records
+    // the head SHA, so fall back to it when no explicit --head is given.
+    headSha: typeof args.head === 'string' ? args.head : (readState().reviewedHeadSha ?? 'unknown'),
+    summary: typeof args.summary === 'string' ? args.summary : '(no summary recorded)',
+    acceptanceCriteria: [],
     findings: [],
     reviewedAt: nowIso(),
   };
-  if (typeof args.head === 'string') record.headSha = args.head;
   if (typeof args.findings === 'string') {
     if (!existsSync(args.findings)) {
       console.error(`--findings file not found: ${args.findings}`);
