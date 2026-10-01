@@ -9,13 +9,14 @@ import { createStubApi, renderWithProviders } from '../../../tests/helpers.tsx';
 
 const MATCH_ID = '88888888-8888-4888-8888-888888888888';
 
-function renderScoring(api = createStubApi()) {
+function renderScoring(api = createStubApi(), matchKind: 'GROUP' | 'KNOCKOUT' = 'KNOCKOUT') {
   const onCompleted = vi.fn();
   renderWithProviders(
     <MatchScoring
       matchId={MATCH_ID}
       slot1Label="Alice"
       slot2Label="Bob"
+      matchKind={matchKind}
       onCompleted={onCompleted}
     />,
     { api },
@@ -99,6 +100,29 @@ describe('MatchScoring', () => {
         ],
       });
     });
+  });
+
+  it('submits a single game for a group match and derives the match winner', async () => {
+    const user = userEvent.setup();
+    const { api, onCompleted } = renderScoring(createStubApi(), 'GROUP');
+
+    // A group match is a single game: one game fieldset, no add/remove.
+    expect(screen.queryByLabelText('Game 2 — Alice points')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add game' })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Game — Alice points'), '21');
+    await user.type(screen.getByLabelText('Game — Bob points'), '15');
+
+    expect(await screen.findByTestId('match-winner')).toHaveTextContent('Match winner: Alice');
+
+    await user.click(screen.getByRole('button', { name: 'Save & complete result' }));
+
+    await waitFor(() => {
+      expect(api.matches.recordResult).toHaveBeenCalledWith(MATCH_ID, {
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
+      });
+    });
+    expect(onCompleted).toHaveBeenCalled();
   });
 
   it('disables submit and shows no winner for an incomplete result', async () => {

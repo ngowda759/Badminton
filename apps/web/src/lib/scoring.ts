@@ -12,6 +12,13 @@ export const GAME_POINT_CEILING = 30;
 export const GAME_MIN_MARGIN = 2;
 export const MAX_GAMES_PER_MATCH = 3;
 
+/**
+ * The two match kinds. A GROUP match is a single game and a KNOCKOUT match is
+ * best of three, mirroring the original tournament application and the domain
+ * scoring rules.
+ */
+export type MatchKind = 'GROUP' | 'KNOCKOUT';
+
 /** True when a game score is a legal badminton result. */
 export function isValidGameScore(points1: number, points2: number): boolean {
   if (
@@ -103,9 +110,11 @@ export function analyseDraftGame(game: DraftGame, index: number): DraftGameAnaly
 /**
  * Validates a whole draft result.
  *
- * Returns the errors for each game plus a match-level error. A valid result
- * needs exactly the games that decide it: no more than three, no third game
- * after a 2-0, and a participant who has won two games.
+ * The rules depend on the match kind:
+ *
+ * - **GROUP** - exactly one game, decided by the higher score.
+ * - **KNOCKOUT** - best of three: no more than three games, no third game
+ *   after a 2-0, and a side that has won two games.
  */
 export interface DraftResultAnalysis {
   readonly games: readonly DraftGameAnalysis[];
@@ -114,7 +123,44 @@ export interface DraftResultAnalysis {
   readonly valid: boolean;
 }
 
-export function analyseDraftResult(draft: readonly DraftGame[]): DraftResultAnalysis {
+export function analyseDraftResult(
+  draft: readonly DraftGame[],
+  kind: MatchKind = 'KNOCKOUT',
+): DraftResultAnalysis {
+  if (kind === 'GROUP') {
+    return analyseGroupDraft(draft);
+  }
+  return analyseKnockoutDraft(draft);
+}
+
+/** A group match is a single game; a second game is rejected, not ignored. */
+function analyseGroupDraft(draft: readonly DraftGame[]): DraftResultAnalysis {
+  const games = draft.map((game, index) => analyseDraftGame(game, index));
+  const firstGame = games[0];
+
+  if (firstGame?.error) {
+    return { games, matchError: firstGame.error, winnerSlot: undefined, valid: false };
+  }
+  if (draft.length !== 1) {
+    return {
+      games,
+      matchError: 'A group match is a single game; submit exactly one game.',
+      winnerSlot: undefined,
+      valid: false,
+    };
+  }
+  if (!firstGame?.complete) {
+    return {
+      games,
+      matchError: 'Enter the game score.',
+      winnerSlot: undefined,
+      valid: false,
+    };
+  }
+  return { games, matchError: undefined, winnerSlot: firstGame.winnerSlot, valid: true };
+}
+
+function analyseKnockoutDraft(draft: readonly DraftGame[]): DraftResultAnalysis {
   const games = draft.map((game, index) => analyseDraftGame(game, index));
 
   const firstError =

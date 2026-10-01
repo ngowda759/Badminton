@@ -237,6 +237,8 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     return { matchId: match.id, stageId: stage.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
   }
 
+  const oneGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
+
   const twoZero = [
     { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
     { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
@@ -248,13 +250,13 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     const recorded = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${matchId}/result`,
-      payload: { games: twoZero },
+      payload: { games: oneGame },
     });
     expect(recorded.statusCode).toBe(201);
     expect(recorded.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId).toBe(entryOne);
 
     // The result really landed in PostgreSQL.
-    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(2);
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(1);
     const stored = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
     expect(stored.status).toBe('COMPLETED');
     expect(stored.winnerEntryId).toBe(entryOne);
@@ -279,10 +281,7 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
       method: 'POST',
       url: `/api/v1/matches/${matchId}/result`,
       payload: {
-        games: [
-          { gameNumber: 1, participant1Points: 21, participant2Points: 20 },
-          { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
-        ],
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 20 }],
       },
     });
     expect(invalid.statusCode).toBe(422);
@@ -312,7 +311,7 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${matchId}/result`,
-      payload: { games: twoZero },
+      payload: { games: oneGame },
     });
     expect(response.statusCode).toBe(409);
 
@@ -332,18 +331,18 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
       app.inject({
         method: 'POST',
         url: `/api/v1/matches/${matchId}/result`,
-        payload: { games: twoZero },
+        payload: { games: oneGame },
       }),
       app.inject({
         method: 'POST',
         url: `/api/v1/matches/${matchId}/result`,
-        payload: { games: twoZero },
+        payload: { games: oneGame },
       }),
     ]);
 
     const statuses = [first.statusCode, second.statusCode].sort();
     expect(statuses).toEqual([201, 409]);
-    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(2);
+    expect(await prisma.matchGame.count({ where: { matchId } })).toBe(1);
 
     const stored = await prisma.match.findUniqueOrThrow({ where: { id: matchId } });
     expect(stored.status).toBe('COMPLETED');
@@ -916,7 +915,14 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     });
     expect(blockedGenerate.statusCode).toBe(422);
 
-    const playMatch = async (matchId: string): Promise<string> => {
+    const playMatch = async (
+      matchId: string,
+      games: readonly {
+        gameNumber: number;
+        participant1Points: number;
+        participant2Points: number;
+      }[] = oneGame,
+    ): Promise<string> => {
       await app.inject({
         method: 'POST',
         url: `/api/v1/matches/${matchId}/transition`,
@@ -925,13 +931,13 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
       const result = await app.inject({
         method: 'POST',
         url: `/api/v1/matches/${matchId}/result`,
-        payload: { games: twoZero },
+        payload: { games },
       });
       expect(result.statusCode).toBe(201);
       return result.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId;
     };
 
-    // Complete every group match with a 2-0 win for slot 1.
+    // Complete every group match with a single-game win for slot 1.
     for (const stageId of [groupA, groupB]) {
       const matches = await app.inject({
         method: 'GET',
@@ -1007,15 +1013,15 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     expect(duplicate.statusCode).toBe(409);
 
     const [semi1, semi2] = first.rounds[0]?.matches ?? [];
-    const semi1Winner = await playMatch(semi1?.matchId ?? '');
-    const semi2Winner = await playMatch(semi2?.matchId ?? '');
+    const semi1Winner = await playMatch(semi1?.matchId ?? '', twoZero);
+    const semi2Winner = await playMatch(semi2?.matchId ?? '', twoZero);
 
     const beforeFinal = await read();
     const final = beforeFinal.rounds[1]?.matches[0];
     expect(final?.participant1.entryId).toBe(semi1Winner);
     expect(final?.participant2.entryId).toBe(semi2Winner);
 
-    const champion = await playMatch(final?.matchId ?? '');
+    const champion = await playMatch(final?.matchId ?? '', twoZero);
     expect([semi1Winner, semi2Winner]).toContain(champion);
 
     const completed = await read();
@@ -1038,7 +1044,7 @@ describe.skipIf(!database)('API against PostgreSQL', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${matchId}/result`,
-      payload: { games: twoZero },
+      payload: { games: oneGame },
     });
     expect(response.statusCode).toBe(201);
 

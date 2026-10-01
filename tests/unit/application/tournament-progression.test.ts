@@ -47,6 +47,9 @@ const twoZero = [
   { gameNumber: 2, participant1Points: 21, participant2Points: 12 },
 ];
 
+/** A single game, as a GROUP match stores it. */
+const groupGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 10 }];
+
 beforeEach(() => {
   repos = createFakeRepositories();
   const events = createRealtimeEventService();
@@ -121,12 +124,12 @@ async function createKnockoutStage(categoryId: string, sequence: number): Promis
   return stage.id;
 }
 
-/** Completes every match of a stage with a 2-0 win for slot 1. */
+/** Completes every match of a group stage with a single-game win for slot 1. */
 async function completeAllMatches(stageId: string): Promise<void> {
   const stageMatches = await repos.client.matches.listByStage(stageId);
   for (const match of stageMatches) {
     await matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
-    await results.recordResult(match.id, { games: twoZero });
+    await results.recordResult(match.id, { games: groupGame });
   }
 }
 
@@ -292,7 +295,7 @@ describe('tournament progression end-to-end', () => {
     const bMatches = await repos.client.matches.listByStage(groupB);
     for (const match of bMatches.slice(0, -1)) {
       await matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
-      await results.recordResult(match.id, { games: twoZero });
+      await results.recordResult(match.id, { games: groupGame });
     }
 
     const view = await qualification.getView(knockoutStage);

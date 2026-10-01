@@ -150,15 +150,13 @@ test.describe('court scheduling and dashboard', () => {
     await page.goto(`${tournamentUrl}/dashboard`);
     await expect(page.getByText('Scheduled').first()).toBeVisible({ timeout: 15_000 });
 
-    // Play the match: start it and record a 2-0 result.
+    // Play the match: start it and record a single-game group result.
     await page.goto(matchUrl);
     await page.getByRole('button', { name: 'In Progress' }).click();
     await expect(page.getByText('In progress').first()).toBeVisible();
 
-    await page.getByLabel(`Game 1 — ${playerOne} points`).fill('21');
-    await page.getByLabel(`Game 1 — ${playerTwo} points`).fill('18');
-    await page.getByLabel(`Game 2 — ${playerOne} points`).fill('21');
-    await page.getByLabel(`Game 2 — ${playerTwo} points`).fill('15');
+    await page.getByLabel(`Game — ${playerOne} points`).fill('21');
+    await page.getByLabel(`Game — ${playerTwo} points`).fill('18');
     await page.getByRole('button', { name: 'Save & complete result' }).click();
     await expect(page.getByTestId('match-result-winner')).toContainText(playerOne, {
       timeout: 15_000,

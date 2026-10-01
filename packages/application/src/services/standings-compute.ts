@@ -7,6 +7,7 @@ import {
   type StandingRow,
   type StandingsMatch,
   type StandingsParticipant,
+  type TournamentEntry,
   type TournamentStage,
 } from '@badminton/domain';
 
@@ -75,7 +76,7 @@ export async function computeStageStandings(
   );
   const participantEntryIds = [...new Set(allParticipants.map((row) => row.entryId))];
 
-  const rows = await buildStandingsRows(client, activeEntryIds, completed);
+  const rows = await buildStandingsRows(client, activeEntryIds, completed, entries);
 
   return {
     stage,
@@ -88,14 +89,23 @@ export async function computeStageStandings(
   };
 }
 
-/** Derives the ordered table from a set of completed matches (batched reads). */
+/**
+ * Derives the ordered table from a set of completed matches (batched reads).
+ *
+ * The name resolver is built from the already-loaded entries plus one batched
+ * read each of the referenced players and teams, so the documented name
+ * tie-break costs no per-row query.
+ */
 async function buildStandingsRows(
   client: RepositoryClient,
   activeEntryIds: readonly string[],
   completed: readonly { readonly id: string }[],
+  entries: readonly TournamentEntry[],
 ): Promise<readonly StandingRow[]> {
+  const nameOf = await buildNameResolver(client, entries);
+
   if (completed.length === 0) {
-    return calculateStandings(activeEntryIds, []);
+    return calculateStandings(activeEntryIds, [], nameOf);
   }
 
   const matchIds = completed.map((match) => match.id);
@@ -110,15 +120,64 @@ async function buildStandingsRows(
   const matches: StandingsMatch[] = completed.map((match) => ({
     participants: toStandingsParticipants(participantsByMatch.get(match.id) ?? []),
     games: gamesByMatch.get(match.id) ?? [],
+    kind: 'GROUP',
   }));
 
   // The pure function defensively includes any entry it finds in a match, so
   // drop rows for entries that are no longer active - a completed result must
   // not resurrect a withdrawn competitor in the table.
   const active = new Set(activeEntryIds);
-  return calculateStandings(activeEntryIds, matches)
+  return calculateStandings(activeEntryIds, matches, nameOf)
     .filter((row) => active.has(row.entryId))
     .map((row, index) => ({ ...row, position: index + 1 }));
+}
+
+/**
+ * Resolves an entry id to its competitor name for the standings tie-break.
+ *
+ * A competitor is either a player (singles) or a team (doubles); the entries
+ * already say which, so the players and teams are fetched by id in one query
+ * each and the map is built without a per-row lookup. Players and teams are
+ * disjoint, so the same names can never resolve for both.
+ */
+async function buildNameResolver(
+  client: RepositoryClient,
+  entries: readonly TournamentEntry[],
+): Promise<(entryId: string) => string> {
+  const playerIds = new Set<string>();
+  const teamIds = new Set<string>();
+  for (const entry of entries) {
+    if (entry.playerId) {
+      playerIds.add(entry.playerId);
+    }
+    if (entry.teamId) {
+      teamIds.add(entry.teamId);
+    }
+  }
+
+  const [players, teams] = await Promise.all([
+    client.players.listByIds([...playerIds]),
+    client.teams.listByIds([...teamIds]),
+  ]);
+  const playerName = new Map(players.map((player) => [player.id, player.name]));
+  const teamName = new Map(teams.map((team) => [team.id, team.name]));
+
+  const byEntry = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.playerId) {
+      const name = playerName.get(entry.playerId);
+      if (name !== undefined) {
+        byEntry.set(entry.id, name);
+      }
+    } else if (entry.teamId) {
+      const name = teamName.get(entry.teamId);
+      if (name !== undefined) {
+        byEntry.set(entry.id, name);
+      }
+    }
+  }
+
+  return (entryId: string): string => byEntry.get(entryId) ?? entryId;
 }
 
 function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {

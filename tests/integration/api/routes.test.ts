@@ -85,9 +85,38 @@ async function registerPlayer(categoryId: string, name: string): Promise<{ id: s
 
 /**
  * Registers two fresh competitors, plays them in a new match inside `stageId`
- * and completes a 2-0 result. Returns the winning and losing entry ids.
+ * and completes a single-game group result. Returns the winning and losing
+ * entry ids.
  */
 async function completeGroupMatch(
+  categoryId: string,
+  stageId: string,
+  label: string,
+): Promise<{ winner: string; loser: string }> {
+  const match = await api.services.matches.create(stageId, {
+    sequence: await nextMatchSequence(stageId),
+  });
+  const winner = await registerPlayer(categoryId, `Winner ${label}`);
+  const loser = await registerPlayer(categoryId, `Loser ${label}`);
+  await api.services.matches.addParticipant(match.id, { entryId: winner.id, slot: 1 });
+  await api.services.matches.addParticipant(match.id, { entryId: loser.id, slot: 2 });
+  await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+  await api.services.matchResults.recordResult(match.id, {
+    games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
+  });
+  return { winner: winner.id, loser: loser.id };
+}
+
+async function nextMatchSequence(stageId: string): Promise<number> {
+  const existing = await api.services.matches.listByStage(stageId);
+  return existing.length + 1;
+}
+
+/**
+ * Registers two fresh competitors and completes a best-of-three knockout match
+ * in `stageId`. Returns the winning and losing entry ids.
+ */
+async function completeKnockoutMatch(
   categoryId: string,
   stageId: string,
   label: string,
@@ -107,11 +136,6 @@ async function completeGroupMatch(
     ],
   });
   return { winner: winner.id, loser: loser.id };
-}
-
-async function nextMatchSequence(stageId: string): Promise<number> {
-  const existing = await api.services.matches.listByStage(stageId);
-  return existing.length + 1;
 }
 
 describe('/api/v1 tournaments', () => {
@@ -880,8 +904,31 @@ describe('/api/v1 match results', () => {
     readonly entryTwo: string;
   }
 
-  /** An IN_PROGRESS match with slots 1 and 2 occupied by two category entries. */
+  /** An IN_PROGRESS KNOCKOUT match with slots 1 and 2 occupied by two entries. */
   async function startedMatch(): Promise<MatchSetup> {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const match = await api.services.matches.create(stage.id, { sequence: 1 });
+
+    const p1 = await api.services.players.create({ name: 'P1' });
+    const p2 = await api.services.players.create({ name: 'P2' });
+    const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
+    const entryTwo = await api.services.entries.register({ categoryId, playerId: p2.id });
+
+    await api.services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
+    await api.services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
+    await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+
+    return { matchId: match.id, stageId: stage.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
+  }
+
+  /** An IN_PROGRESS GROUP match, which is scored with a single game. */
+  async function startedGroupMatch(): Promise<MatchSetup> {
     const tournamentId = await registrationOpenTournament();
     const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
     const stage = await api.services.stages.create(categoryId, {
@@ -903,12 +950,41 @@ describe('/api/v1 match results', () => {
     return { matchId: match.id, stageId: stage.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
   }
 
+  const oneGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
+
   const twoZero = [
     { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
     { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
   ];
 
-  it('records a valid 2-0 result and returns 201', async () => {
+  it('records a single-game group result and returns 201', async () => {
+    const { matchId, entryOne } = await startedGroupMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: { games: oneGame },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{ data: { winnerEntryId: string; winnerGames: number } }>();
+    expect(body.data.winnerEntryId).toBe(entryOne);
+    expect(body.data.winnerGames).toBe(1);
+  });
+
+  it('rejects a best-of-three result for a group match with 422', async () => {
+    const { matchId } = await startedGroupMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result`,
+      payload: { games: twoZero },
+    });
+
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('records a valid 2-0 knockout result and returns 201', async () => {
     const { matchId, entryOne } = await startedMatch();
 
     const response = await app.inject({
@@ -923,7 +999,7 @@ describe('/api/v1 match results', () => {
     expect(body.data.winnerGames).toBe(2);
   });
 
-  it('records a valid 2-1 result', async () => {
+  it('records a valid 2-1 knockout result', async () => {
     const { matchId } = await startedMatch();
 
     const response = await app.inject({
@@ -974,7 +1050,7 @@ describe('/api/v1 match results', () => {
     expect(response.body).not.toContain('SQL');
   });
 
-  it('rejects a score above 30 with 400 at the validation boundary', async () => {
+  it('rejects a score above 30 with 422 at the domain boundary', async () => {
     const { matchId } = await startedMatch();
 
     const response = await app.inject({
@@ -988,16 +1064,16 @@ describe('/api/v1 match results', () => {
       },
     });
 
-    expect(response.statusCode).toBe(400);
+    expect(response.statusCode).toBe(422);
   });
 
-  it('rejects a single-game result with 422', async () => {
+  it('rejects a knockout single-game result with 422', async () => {
     const { matchId } = await startedMatch();
 
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${matchId}/result`,
-      payload: { games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }] },
+      payload: { games: oneGame },
     });
 
     expect(response.statusCode).toBe(422);
@@ -1034,7 +1110,7 @@ describe('/api/v1 match results', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${match.id}/result`,
-      payload: { games: twoZero },
+      payload: { games: oneGame },
     });
 
     expect(response.statusCode).toBe(422);
@@ -1077,7 +1153,7 @@ describe('/api/v1 match results', () => {
     const response = await app.inject({
       method: 'POST',
       url: `/api/v1/matches/${match.id}/result`,
-      payload: { games: twoZero },
+      payload: { games: oneGame },
     });
 
     expect(response.statusCode).toBe(422);
@@ -1172,10 +1248,7 @@ describe('/api/v1 stage standings', () => {
     await api.services.matches.addParticipant(match.id, { entryId: e2.id, slot: 2 });
     await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
     await api.services.matchResults.recordResult(match.id, {
-      games: [
-        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-        { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
-      ],
+      games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
     });
 
     const response = await app.inject({
@@ -1214,7 +1287,7 @@ describe('/api/v1 stage standings', () => {
 
     const playedA = await completeGroupMatch(categoryId, stageA.id, 'A');
     const playedB = await completeGroupMatch(categoryId, stageB.id, 'B');
-    await completeGroupMatch(categoryId, knockout.id, 'C');
+    await completeKnockoutMatch(categoryId, knockout.id, 'C');
 
     const response = await app.inject({
       method: 'GET',
@@ -1227,7 +1300,7 @@ describe('/api/v1 stage standings', () => {
     // Only Stage A's completed match contributes; Stage B and the knockout
     // match are invisible here.
     expect(byEntry.get(playedA.winner)).toMatchObject({ played: 1, won: 1, points: 2 });
-    expect(byEntry.get(playedA.loser)).toMatchObject({ played: 1, lost: 1, points: 1 });
+    expect(byEntry.get(playedA.loser)).toMatchObject({ played: 1, lost: 1, points: 0 });
     expect(byEntry.get(playedB.winner)).toMatchObject({ played: 0, won: 0, points: 0 });
     expect(byEntry.get(playedB.loser)).toMatchObject({ played: 0, lost: 0, points: 0 });
     expect(rows.reduce((sum, row) => sum + row.played, 0)).toBe(2);

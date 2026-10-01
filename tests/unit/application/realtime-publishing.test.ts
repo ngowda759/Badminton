@@ -359,10 +359,7 @@ describe('MatchService publishes match lifecycle events', () => {
 });
 
 describe('MatchResultService publishes result and completion events', () => {
-  const twoZero = [
-    { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-    { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
-  ];
+  const oneGame = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
 
   async function startedMatch(): Promise<{ tournamentId: string; matchId: string }> {
     const tournamentId = await seedTournament(repos.client);
@@ -394,7 +391,7 @@ describe('MatchResultService publishes result and completion events', () => {
   it('records MATCH_RESULT_RECORDED and MATCH_COMPLETED together', async () => {
     const { tournamentId, matchId } = await startedMatch();
 
-    await results().recordResult(matchId, { games: twoZero });
+    await results().recordResult(matchId, { games: oneGame });
 
     // Discard the MATCH_STARTED event from the setup so the assertion is exact.
     const all = await pending();
@@ -429,7 +426,7 @@ describe('MatchResultService publishes result and completion events', () => {
       createKnockoutProgressionService(),
     );
 
-    await expect(failing.recordResult(matchId, { games: twoZero })).rejects.toThrow(
+    await expect(failing.recordResult(matchId, { games: oneGame })).rejects.toThrow(
       'outbox unavailable',
     );
 

@@ -88,10 +88,7 @@ async function readyKnockout(
     for (const match of await api.services.matches.listByStage(group.id)) {
       await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
       await api.services.matchResults.recordResult(match.id, {
-        games: [
-          { gameNumber: 1, participant1Points: 21, participant2Points: 11 },
-          { gameNumber: 2, participant1Points: 21, participant2Points: 13 },
-        ],
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 11 }],
       });
     }
   }

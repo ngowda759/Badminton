@@ -20,6 +20,7 @@ import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { orDash } from '@/lib/format.ts';
+import type { MatchKind } from '@/lib/scoring.ts';
 import { matchNextStatuses } from '@/lib/lifecycle.ts';
 import {
   compactErrors,
@@ -74,6 +75,8 @@ export function MatchDetailPage() {
   );
   const isKnockout =
     stageQuery.state.status === 'loaded' && stageQuery.state.data?.type === 'KNOCKOUT';
+  const matchKind: MatchKind = isKnockout ? 'KNOCKOUT' : 'GROUP';
+  const stageLoaded = stageQuery.state.status === 'loaded';
 
   if (matchQuery.state.status === 'loading') {
     return <LoadingState label="Loading match…" rows={3} />;
@@ -241,11 +244,14 @@ export function MatchDetailPage() {
               <p className="text-muted-foreground text-sm">
                 Assign both slots before recording a result.
               </p>
+            ) : !stageLoaded ? (
+              <LoadingState label="Loading scoring format…" />
             ) : (
               <MatchScoring
                 matchId={match.id}
                 slot1Label={slot1Label}
                 slot2Label={slot2Label}
+                matchKind={matchKind}
                 onCompleted={refreshAll}
               />
             )}

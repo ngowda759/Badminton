@@ -120,6 +120,17 @@ database — integration tests use `app.inject()` with stub probes.
 
 ## Gotchas
 
+- Match format follows the **stage type**, matching the original V1 tournament
+  (the functional source of truth): a **GROUP** match is a **single game** to 21
+  (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is
+  **best of three** (`scoreMatchGames`, loss 1 pt). The domain functions
+  `scoreGroupMatch`/`scoreMatchGames` share one game rule set; the service reads
+  the stage inside the transaction to pick the format, so a stale client can
+  never record a best-of-three result for a group match (422). Standings order is
+  the V1 order: **points → point difference → points scored → competitor name
+  (`localeCompare`)** → entry id. Do not "fix" this back to a wins/game-difference
+  order or a fixed best-of-three for group matches — that was the pre-TASK-6
+  divergence documented in `docs/tasks/task-5-parity-audit.md` (gaps G1–G3).
 - `localhost` and `127.0.0.1` are distinct browser origins. Both are in the default
   `CORS_ORIGINS`; if you change one, change the other or E2E will report `Unreachable`.
 - Phase 2 constraints Prisma cannot express (row-local `CHECK`s and partial unique

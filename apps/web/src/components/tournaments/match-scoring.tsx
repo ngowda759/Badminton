@@ -7,7 +7,12 @@ import { FormField } from '@/components/form-field.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useMutation } from '@/hooks/use-mutation.ts';
-import { analyseDraftResult, MAX_GAMES_PER_MATCH, type DraftGame } from '@/lib/scoring.ts';
+import {
+  analyseDraftResult,
+  MAX_GAMES_PER_MATCH,
+  type DraftGame,
+  type MatchKind,
+} from '@/lib/scoring.ts';
 
 const EMPTY_GAME: DraftGame = { participant1Points: '', participant2Points: '' };
 
@@ -15,6 +20,8 @@ export interface MatchScoringProps {
   readonly matchId: string;
   readonly slot1Label: string;
   readonly slot2Label: string;
+  /** A GROUP match is a single game; a KNOCKOUT match is best of three. */
+  readonly matchKind: MatchKind;
   readonly onCompleted: () => void;
 }
 
@@ -22,16 +29,27 @@ export interface MatchScoringProps {
  * Score entry for an in-progress match.
  *
  * Points are entered per participant slot; the winner is always derived from
- * the scores, never chosen. Illegal or incomplete results are flagged
- * immediately, but the API re-validates through the real domain rules and stays
- * authoritative - this form never decides a result.
+ * the scores, never chosen. A group match shows a single game and a knockout
+ * match shows best of three, matching the domain rules. Illegal or incomplete
+ * results are flagged immediately, but the API re-validates through the real
+ * domain rules and stays authoritative - this form never decides a result.
  */
-export function MatchScoring({ matchId, slot1Label, slot2Label, onCompleted }: MatchScoringProps) {
+export function MatchScoring({
+  matchId,
+  slot1Label,
+  slot2Label,
+  matchKind,
+  onCompleted,
+}: MatchScoringProps) {
   const api = useApi();
-  const [games, setGames] = useState<readonly DraftGame[]>([{ ...EMPTY_GAME }, { ...EMPTY_GAME }]);
+  const isGroup = matchKind === 'GROUP';
+  const initialGames = isGroup ? 1 : 2;
+  const [games, setGames] = useState<readonly DraftGame[]>(
+    Array.from({ length: initialGames }, () => ({ ...EMPTY_GAME })),
+  );
   const mutation = useMutation<MatchResultDto>();
 
-  const analysis = analyseDraftResult(games);
+  const analysis = analyseDraftResult(games, matchKind);
 
   const setPoints = (index: number, field: keyof DraftGame, value: string): void => {
     setGames((current) =>
@@ -46,7 +64,8 @@ export function MatchScoring({ matchId, slot1Label, slot2Label, onCompleted }: M
   };
 
   const removeGame = (index: number): void => {
-    if (games.length > 2) {
+    const minimum = isGroup ? 1 : 2;
+    if (games.length > minimum) {
       setGames((current) => current.filter((_, position) => position !== index));
     }
   };
@@ -79,12 +98,13 @@ export function MatchScoring({ matchId, slot1Label, slot2Label, onCompleted }: M
             : gameAnalysis?.winnerSlot === 2
               ? slot2Label
               : undefined;
+        const gameLabel = isGroup ? 'Game' : `Game ${index + 1}`;
         return (
           <fieldset key={index} className="rounded-md border p-3">
-            <legend className="px-1 text-sm font-medium">Game {index + 1}</legend>
+            <legend className="px-1 text-sm font-medium">{gameLabel}</legend>
             <div className="grid gap-3 sm:grid-cols-2">
               <FormField
-                label={`Game ${index + 1} — ${slot1Label} points`}
+                label={`${gameLabel} — ${slot1Label} points`}
                 htmlFor={`game-${index + 1}-slot-1`}
                 error={gameAnalysis?.error}
               >
@@ -105,7 +125,7 @@ export function MatchScoring({ matchId, slot1Label, slot2Label, onCompleted }: M
                 )}
               </FormField>
               <FormField
-                label={`Game ${index + 1} — ${slot2Label} points`}
+                label={`${gameLabel} — ${slot2Label} points`}
                 htmlFor={`game-${index + 1}-slot-2`}
               >
                 {({ id }) => (
@@ -127,32 +147,36 @@ export function MatchScoring({ matchId, slot1Label, slot2Label, onCompleted }: M
               <p className="text-muted-foreground text-xs" data-testid={`game-${index + 1}-winner`}>
                 {winnerLabel ? `Game winner: ${winnerLabel}` : 'Game winner: —'}
               </p>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={games.length <= 2}
-                onClick={() => {
-                  removeGame(index);
-                }}
-              >
-                Remove game {index + 1}
-              </Button>
+              {isGroup ? null : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={games.length <= 2}
+                  onClick={() => {
+                    removeGame(index);
+                  }}
+                >
+                  Remove game {index + 1}
+                </Button>
+              )}
             </div>
           </fieldset>
         );
       })}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={games.length >= MAX_GAMES_PER_MATCH}
-          onClick={addGame}
-        >
-          Add game
-        </Button>
+        {isGroup ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={games.length >= MAX_GAMES_PER_MATCH}
+            onClick={addGame}
+          >
+            Add game
+          </Button>
+        )}
         <Button type="submit" disabled={!analysis.valid || mutation.pending}>
           {mutation.pending ? 'Saving…' : 'Save & complete result'}
         </Button>
