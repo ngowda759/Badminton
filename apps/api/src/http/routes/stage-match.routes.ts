@@ -135,6 +135,17 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
     return data((await matchResults.getResult(id)) ?? null);
   });
 
+  // Correcting a completed group match replaces its stored games and winner in
+  // one transaction, so a mistyped score is fixed without touching the
+  // database. A knockout match is rejected (its bracket would need
+  // re-deriving), so this reuses the existing result input schema.
+  app.post('/matches/:id/result/correction', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    const body = validate(recordMatchResultInputSchema, request.body);
+    const result = await matchResults.correctResult(id, body);
+    return reply.status(201).send(data(result));
+  });
+
   app.get('/stages/:id/standings', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     return data(await standings.getStageStandings(id));

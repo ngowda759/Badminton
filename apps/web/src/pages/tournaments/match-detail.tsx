@@ -12,10 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.t
 import { FormField } from '@/components/form-field.tsx';
 import { Input } from '@/components/ui/input.tsx';
 import { useCategory } from '@/components/tournaments/context.tsx';
+import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
 import { MatchResultSummary } from '@/components/tournaments/match-result-summary.tsx';
 import { MatchSchedulePanel } from '@/components/tournaments/match-schedule-panel.tsx';
-import { MatchScoring } from '@/components/tournaments/match-scoring.tsx';
+import { MatchScoring, type InitialGameScore } from '@/components/tournaments/match-scoring.tsx';
 import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
@@ -237,6 +238,18 @@ export function MatchDetailPage() {
                 The winner has advanced to the next knockout round.
               </p>
             ) : null}
+            {!isKnockout ? (
+              <ResultCorrection
+                matchId={match.id}
+                matchKind={matchKind}
+                slot1Label={slot1Label}
+                slot2Label={slot2Label}
+                {...(resultQuery.state.status === 'loaded' && resultQuery.state.data
+                  ? { initialGames: resultQuery.state.data.games }
+                  : {})}
+                onCorrected={refreshAll}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -266,6 +279,78 @@ export function MatchDetailPage() {
           </CardContent>
         </Card>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Correction control for a completed group match.
+ *
+ * A recorded group result can be corrected when it was mistyped. The action is
+ * destructive (it replaces the stored result), so it goes through the existing
+ * `ConfirmDialog` before the scoring form is revealed, pre-filled from the
+ * stored games. Submitting goes through `MatchScoring` in correction mode, so
+ * the score-entry UI and its validation are never duplicated. A knockout result
+ * is immutable and never renders this control.
+ */
+function ResultCorrection({
+  matchId,
+  matchKind,
+  slot1Label,
+  slot2Label,
+  initialGames,
+  onCorrected,
+}: {
+  readonly matchId: string;
+  readonly matchKind: MatchKind;
+  readonly slot1Label: string;
+  readonly slot2Label: string;
+  readonly initialGames?: readonly InitialGameScore[];
+  readonly onCorrected: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  if (!editing) {
+    return (
+      <div className="space-y-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            setConfirming(true);
+          }}
+        >
+          Correct result
+        </Button>
+        <ConfirmDialog
+          open={confirming}
+          onOpenChange={setConfirming}
+          title="Correct this result?"
+          description="The recorded score and winner will be replaced. Group standings and qualification are recalculated from the corrected result."
+          confirmLabel="Correct result"
+          destructive
+          onConfirm={() => {
+            setConfirming(false);
+            setEditing(true);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 border-t pt-3">
+      <p className="text-sm font-medium">Correct result</p>
+      <MatchScoring
+        matchId={matchId}
+        slot1Label={slot1Label}
+        slot2Label={slot2Label}
+        matchKind={matchKind}
+        correct
+        {...(initialGames ? { initialGames } : {})}
+        onCompleted={onCorrected}
+      />
     </div>
   );
 }

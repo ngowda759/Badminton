@@ -557,6 +557,19 @@ function createMatchRepository(db: Db): MatchRepository {
         ),
       );
     },
+    clearResult(id: string) {
+      // The reverse of `complete`: the derived winner is cleared and the match
+      // returns to IN_PROGRESS so the corrected games can be recorded. The
+      // caller removes the stale games in the same transaction.
+      return translatePersistenceErrors(async () =>
+        toMatch(
+          await db.match.update({
+            where: { id },
+            data: { status: 'IN_PROGRESS', winnerEntryId: null },
+          }),
+        ),
+      );
+    },
     schedule(id: string, data: MatchScheduleData) {
       // Writes court and both times in one update; the CHECK constraints and the
       // GiST exclusion constraint reject a partial or overlapping schedule.
@@ -660,6 +673,14 @@ function createMatchGameRepository(db: Db): MatchGameRepository {
         // inside the active transaction, so a failure rolls back every game.
         const rows = await db.matchGame.createManyAndReturn({ data: [...data] });
         return rows.map(toMatchGame);
+      });
+    },
+    async deleteByMatch(matchId: string) {
+      return translatePersistenceErrors(async () => {
+        // Removes the whole stored result of one match; the caller replaces it
+        // in the same transaction, so a correction never leaves a mix of old
+        // and new games.
+        await db.matchGame.deleteMany({ where: { matchId } });
       });
     },
     async listByMatch(matchId: string) {

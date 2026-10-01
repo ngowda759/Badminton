@@ -17,6 +17,12 @@ import {
 
 const EMPTY_GAME: DraftGame = { participant1Points: '', participant2Points: '' };
 
+/** The stored score of one game, used to pre-fill a correction. */
+export interface InitialGameScore {
+  readonly participant1Points: number;
+  readonly participant2Points: number;
+}
+
 export interface MatchScoringProps {
   readonly matchId: string;
   readonly slot1Label: string;
@@ -28,11 +34,18 @@ export interface MatchScoringProps {
    * group match, which always uses the single-game 21/30 rule.
    */
   readonly rule?: KnockoutRule;
+  /**
+   * The stored games to pre-fill, so the same form can correct a completed
+   * result. When omitted the form starts empty (recording a new result).
+   */
+  readonly initialGames?: readonly InitialGameScore[];
+  /** Correct a completed result instead of recording a new one. */
+  readonly correct?: boolean;
   readonly onCompleted: () => void;
 }
 
 /**
- * Score entry for an in-progress match.
+ * Score entry for an in-progress or completed match.
  *
  * Points are entered per participant slot; the winner is always derived from
  * the scores, never chosen. A group match shows a single game; a knockout match
@@ -41,6 +54,10 @@ export interface MatchScoringProps {
  * incomplete results are flagged immediately, but the API re-validates through
  * the real domain rules and stays authoritative - this form never decides a
  * result.
+ *
+ * The same form records a new result and corrects a completed group result
+ * (`correct`), pre-filled from `initialGames`, so the scoring UI is never
+ * duplicated.
  */
 export function MatchScoring({
   matchId,
@@ -48,15 +65,17 @@ export function MatchScoring({
   slot2Label,
   matchKind,
   rule,
+  initialGames,
+  correct = false,
   onCompleted,
 }: MatchScoringProps) {
   const api = useApi();
   const isGroup = matchKind === 'GROUP';
   const straight = !isGroup && rule?.format === 'single_game';
   const singleGame = isGroup || straight;
-  const initialGames = singleGame ? 1 : 2;
-  const [games, setGames] = useState<readonly DraftGame[]>(
-    Array.from({ length: initialGames }, () => ({ ...EMPTY_GAME })),
+  const defaultGameCount = singleGame ? 1 : 2;
+  const [games, setGames] = useState<readonly DraftGame[]>(() =>
+    buildInitialGames(initialGames, defaultGameCount),
   );
   const mutation = useMutation<MatchResultDto>();
 
@@ -88,13 +107,16 @@ export function MatchScoring({
       return;
     }
     void mutation.run(async () => {
-      const result = await api.matches.recordResult(matchId, {
+      const input = {
         games: games.map((game, index) => ({
           gameNumber: index + 1,
           participant1Points: Number(game.participant1Points),
           participant2Points: Number(game.participant2Points),
         })),
-      });
+      };
+      const result = correct
+        ? await api.matches.correctResult(matchId, input)
+        : await api.matches.recordResult(matchId, input);
       onCompleted();
       return result;
     });
@@ -190,7 +212,7 @@ export function MatchScoring({
           </Button>
         )}
         <Button type="submit" disabled={!analysis.valid || mutation.pending}>
-          {mutation.pending ? 'Saving…' : 'Save & complete result'}
+          {mutation.pending ? 'Saving…' : correct ? 'Save correction' : 'Save & complete result'}
         </Button>
       </div>
 
@@ -213,4 +235,28 @@ export function MatchScoring({
       {mutation.error ? <ErrorState error={mutation.error} title="Could not save result" /> : null}
     </form>
   );
+}
+
+/**
+ * Seeds the draft games from a stored result, falling back to empty games.
+ *
+ * A correction is pre-filled from the stored games so the operator edits the
+ * existing score rather than retyping it; recording a new result passes no
+ * `initialGames` and starts empty. The number of fields always matches the
+ * match's format, so a straight-set result never shows an empty second game.
+ */
+function buildInitialGames(
+  initial: readonly InitialGameScore[] | undefined,
+  count: number,
+): readonly DraftGame[] {
+  const seeded = initial ?? [];
+  return Array.from({ length: count }, (_, index) => {
+    const game = seeded[index];
+    return game
+      ? {
+          participant1Points: String(game.participant1Points),
+          participant2Points: String(game.participant2Points),
+        }
+      : { ...EMPTY_GAME };
+  });
 }
