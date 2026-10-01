@@ -203,6 +203,12 @@ export interface MatchRepository {
   /** Writes the derived winner and the terminal status in one update. */
   complete(id: string, winnerEntryId: string): Promise<Match>;
   /**
+   * Clears the derived winner and returns the match to `IN_PROGRESS` in one
+   * update, so a correction can re-score it. The stored games are removed
+   * separately by `MatchGameRepository.deleteByMatch`, in the same transaction.
+   */
+  clearResult(id: string): Promise<Match>;
+  /**
    * Atomically writes the whole scheduling slice of a match (court and both
    * times). Persisting all three together keeps the match from ever holding a
    * partial schedule; the database exclusion constraint is the final guard.
@@ -256,6 +262,8 @@ export interface MatchParticipantRepository {
 
 export interface MatchGameRepository {
   createMany(data: readonly CreateMatchGameData[]): Promise<readonly MatchGame[]>;
+  /** Removes every stored game of one match, so a correction can replace them. */
+  deleteByMatch(matchId: string): Promise<void>;
   listByMatch(matchId: string): Promise<readonly MatchGame[]>;
   /** Games across several matches (with their owner), so standings avoids N+1. */
   listByMatchIds(matchIds: readonly string[]): Promise<readonly MatchGameWithMatch[]>;

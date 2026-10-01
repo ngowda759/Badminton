@@ -149,6 +149,12 @@ export interface MatchApi {
     input: RecordMatchResultInput,
     signal?: AbortSignal,
   ): Promise<MatchResultDto>;
+  /** Re-scores a completed group match, replacing its stored result. */
+  correctResult(
+    matchId: string,
+    input: RecordMatchResultInput,
+    signal?: AbortSignal,
+  ): Promise<MatchResultDto>;
   /** Reads the stored result, or `null` while the match is not completed. */
   getResult(matchId: string, signal?: AbortSignal): Promise<MatchResultDto | null>;
   /** Assigns a court and a start/end window to a match. */
@@ -268,6 +274,8 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
         client.post(`/api/v1/matches/${matchId}/participants`, input, signal),
       recordResult: (matchId, input, signal) =>
         client.post(`/api/v1/matches/${matchId}/result`, input, signal),
+      correctResult: (matchId, input, signal) =>
+        client.post(`/api/v1/matches/${matchId}/result/correction`, input, signal),
       getResult: (matchId, signal) =>
         client.get<MatchResultDto | null>(`/api/v1/matches/${matchId}/result`, signal),
       schedule: (matchId, input, signal) =>

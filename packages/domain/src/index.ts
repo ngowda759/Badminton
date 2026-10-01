@@ -160,6 +160,7 @@ export {
   isBracketFinalCompleted,
 } from './bracket.ts';
 export type { BracketSize, NextBracketPosition } from './bracket.ts';
+export { isMatchCorrectable } from './correction.ts';
 export { buildBracketSeed, seedBracket } from './bracket-seeding.ts';
 export type { BracketSeedResult, SeededGroup, SeededPairing } from './bracket-seeding.ts';
 export {

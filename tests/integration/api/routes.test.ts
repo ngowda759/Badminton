@@ -1918,3 +1918,129 @@ describe('/api/v1 group fixtures', () => {
     expect(matches.json<{ data: readonly unknown[] }>().data).toHaveLength(1);
   });
 });
+
+describe('/api/v1 match result correction', () => {
+  interface MatchSetup {
+    readonly matchId: string;
+    readonly entryOne: string;
+    readonly entryTwo: string;
+  }
+
+  /** A completed GROUP match with a recorded single-game result. */
+  async function completedGroupMatch(): Promise<MatchSetup> {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const match = await api.services.matches.create(stage.id, {
+      sequence: 1,
+      // A real group fixture carries a round-robin round; the correction path
+      // must allow it regardless of those fields (they are not a bracket
+      // position).
+      roundNumber: 1,
+      matchNumber: 1,
+    });
+    const p1 = await api.services.players.create({ name: 'P1' });
+    const p2 = await api.services.players.create({ name: 'P2' });
+    const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
+    const entryTwo = await api.services.entries.register({ categoryId, playerId: p2.id });
+    await api.services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
+    await api.services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
+    await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+    await api.services.matchResults.recordResult(match.id, {
+      games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }],
+    });
+    return { matchId: match.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
+  }
+
+  /** A completed KNOCKOUT match with a bracket position. */
+  async function completedKnockoutMatch(): Promise<string> {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+    });
+    const match = await api.services.matches.create(stage.id, {
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+    });
+    const p1 = await api.services.players.create({ name: 'K1' });
+    const p2 = await api.services.players.create({ name: 'K2' });
+    const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
+    const entryTwo = await api.services.entries.register({ categoryId, playerId: p2.id });
+    await api.services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
+    await api.services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
+    await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+    await api.services.matchResults.recordResult(match.id, {
+      games: [
+        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+        { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+      ],
+    });
+    return match.id;
+  }
+
+  it('corrects a completed group result and returns 201 with the new winner', async () => {
+    const { matchId, entryTwo } = await completedGroupMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result/correction`,
+      payload: { games: [{ gameNumber: 1, participant1Points: 18, participant2Points: 21 }] },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{ data: { winnerEntryId: string; games: unknown[] } }>();
+    expect(body.data.winnerEntryId).toBe(entryTwo);
+    expect(body.data.games).toHaveLength(1);
+
+    // The match stays COMPLETED and the stored result is the corrected one.
+    const match = await app.inject({ method: 'GET', url: `/api/v1/matches/${matchId}` });
+    expect(match.json<{ data: { status: string } }>().data.status).toBe('COMPLETED');
+    const result = await app.inject({ method: 'GET', url: `/api/v1/matches/${matchId}/result` });
+    expect(result.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId).toBe(entryTwo);
+  });
+
+  it('rejects correcting a knockout match with 422', async () => {
+    const matchId = await completedKnockoutMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result/correction`,
+      payload: { games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }] },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json<ErrorBody>().error.code).toBe('BUSINESS_RULE_VIOLATION');
+  });
+
+  it('returns 404 for an unknown match id', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/matches/11111111-1111-4111-8111-111111111111/result/correction',
+      payload: { games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }] },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json<ErrorBody>().error.code).toBe('NOT_FOUND');
+  });
+
+  it('rejects an empty games array with 400', async () => {
+    const { matchId } = await completedGroupMatch();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${matchId}/result/correction`,
+      payload: { games: [] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json<ErrorBody>().error.code).toBe('VALIDATION_ERROR');
+  });
+});

@@ -4,6 +4,7 @@ import {
   DEFAULT_KNOCKOUT_ROUND_RULES,
   determineKnockoutOutcome,
   determineMatchOutcome,
+  isMatchCorrectable,
   knockoutMatchRule,
   NotFoundError,
   scoreGroupMatch,
@@ -54,6 +55,14 @@ import { resolveMatchTournamentId } from './resolve-tournament.ts';
  */
 export interface MatchResultService {
   recordResult(matchId: string, command: RecordMatchResultCommand): Promise<MatchResult>;
+  /**
+   * Re-scores a completed **group** match, replacing its stored games and
+   * winner in one transaction so a mistyped score can be corrected. Standings
+   * and qualification are derived from the stored games, so they correct
+   * automatically. A knockout match - which would require re-deriving the
+   * bracket - is rejected; see `isMatchCorrectable`.
+   */
+  correctResult(matchId: string, command: RecordMatchResultCommand): Promise<MatchResult>;
   /** The stored result of a completed match, or `undefined` if it is not complete. */
   getResult(matchId: string): Promise<MatchResult | undefined>;
 }
@@ -154,6 +163,95 @@ export function createMatchResultService(
             });
           }
         }
+
+        return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind, rule);
+      });
+    },
+
+    async correctResult(matchId, command): Promise<MatchResult> {
+      // A correction replaces the stored games and the derived winner of a
+      // completed group match in one unit of work, so a mistyped score is fixed
+      // atomically: a failure leaves the original result, games and winner
+      // untouched. Standings and qualification are derived from the stored
+      // games, so they correct automatically once this commits.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const match = await tx.matches.findById(matchId);
+        if (!match) {
+          throw new NotFoundError('Match', matchId);
+        }
+
+        // The stage type decides both the format and whether a correction is
+        // allowed, read inside the transaction so the correction and
+        // `recordResult` can never disagree.
+        const stage = await tx.stages.findById(match.stageId);
+        if (!stage) {
+          throw new NotFoundError('Stage', match.stageId);
+        }
+
+        // Only a completed **group** match may be corrected. A knockout match
+        // feeds a bracket and would require re-deriving it (clearing the
+        // next-round slot and un-completing downstream matches), which is a
+        // separate workflow; a non-completed match has no result. The stage
+        // type is the discriminator - a group fixture carries a round-robin
+        // `roundNumber`, so the bracket-position fields cannot be used.
+        if (!isMatchCorrectable(match, stage)) {
+          throw new BusinessRuleViolationError(
+            'Only a completed group match result can be corrected.',
+          );
+        }
+
+        // A group match is a single game, scored by the group validator
+        // (21 target, 30 ceiling).
+        const matchKind: MatchKind = stage.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
+        const rule = resolveKnockoutRule(stage, match);
+        const games =
+          stage.type === 'GROUP'
+            ? scoreGroupMatch(command.games)
+            : scoreKnockoutMatch(command.games, rule);
+
+        const participants = await tx.matchParticipants.listByMatch(matchId);
+        const slot1 = participants.find((participant) => participant.slot === 1);
+        const slot2 = participants.find((participant) => participant.slot === 2);
+        if (!slot1 || !slot2) {
+          throw new BusinessRuleViolationError(
+            'A match must have exactly two participants before it can be scored.',
+          );
+        }
+
+        // Replace the stored games, then reset the match (winner cleared, back
+        // to IN_PROGRESS) and re-complete it with the newly derived winner.
+        await tx.matchGames.deleteByMatch(matchId);
+        const savedGames = await tx.matchGames.createMany(
+          games.map((game) => ({ matchId, ...game })),
+        );
+
+        const outcome =
+          matchKind === 'GROUP'
+            ? determineMatchOutcome(games, 'GROUP')
+            : determineKnockoutOutcome(games, rule);
+        const winnerEntryId = outcome.winnerSlot === 1 ? slot1.entryId : slot2.entryId;
+        const loserEntryId = outcome.winnerSlot === 1 ? slot2.entryId : slot1.entryId;
+
+        await tx.matches.clearResult(matchId);
+        const completed = await tx.matches.complete(matchId, winnerEntryId);
+
+        const tournamentId = await resolveMatchTournamentId(tx, match);
+
+        // The authoritative result changed, so the same two events
+        // `recordResult` emits are recorded here, in the same transaction.
+        // There is deliberately no knockout progression: this path is group-only.
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_RESULT_RECORDED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: matchId,
+        });
+        await events.record(tx, {
+          tournamentId,
+          eventType: REALTIME_EVENTS.MATCH_COMPLETED,
+          aggregateType: REALTIME_AGGREGATES.MATCH,
+          aggregateId: matchId,
+        });
 
         return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind, rule);
       });

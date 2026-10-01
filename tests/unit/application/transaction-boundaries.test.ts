@@ -1,5 +1,6 @@
 import {
   createKnockoutBracketService,
+  createMatchResultService,
   createMatchService,
   createPlayerService,
   createRealtimeEventService,
@@ -267,5 +268,50 @@ describe('atomic operations open exactly one transaction', () => {
 
     // A read of the bracket opens no transaction.
     expect(await transactionsUsed(() => knockout.getBracket(stageId))).toBe(0);
+  });
+
+  it('wraps a result correction in exactly one transaction, like recording a result', async () => {
+    const { matches } = services();
+    const results = createMatchResultService(
+      repos.client,
+      counter.unitOfWork,
+      createRealtimeEventService(),
+    );
+
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const stageId = await seedStage(repos.client, categoryId);
+    const matchId = await seedMatch(repos.client, stageId);
+    const playerA = await seedPlayer(repos.client, 'A');
+    const playerB = await seedPlayer(repos.client, 'B');
+    const entryA = await repos.client.entries.create({
+      categoryId,
+      playerId: playerA,
+      teamId: null,
+      seed: null,
+      status: 'CONFIRMED',
+    });
+    const entryB = await repos.client.entries.create({
+      categoryId,
+      playerId: playerB,
+      teamId: null,
+      seed: null,
+      status: 'CONFIRMED',
+    });
+    await matches.addParticipant(matchId, { entryId: entryA.id, slot: 1 });
+    await matches.addParticipant(matchId, { entryId: entryB.id, slot: 2 });
+    await matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
+
+    // Recording a result is the reference atomic operation.
+    const recordGames = [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }];
+    expect(
+      await transactionsUsed(() => results.recordResult(matchId, { games: recordGames })),
+    ).toBe(1);
+
+    // A correction opens exactly one transaction as well.
+    const correctedGames = [{ gameNumber: 1, participant1Points: 18, participant2Points: 21 }];
+    expect(
+      await transactionsUsed(() => results.correctResult(matchId, { games: correctedGames })),
+    ).toBe(1);
   });
 });

@@ -672,6 +672,20 @@ function buildClient(state: State): RepositoryClient {
       state.matches.set(id, updated);
       return updated;
     },
+    async clearResult(id: string) {
+      const current = state.matches.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      const updated: Match = {
+        ...current,
+        status: 'IN_PROGRESS',
+        winnerEntryId: null,
+        updatedAt: now(),
+      };
+      state.matches.set(id, updated);
+      return updated;
+    },
     async schedule(id: string, data: MatchScheduleData) {
       const current = state.matches.get(id);
       if (!current) {
@@ -765,6 +779,13 @@ function buildClient(state: State): RepositoryClient {
         created.push(toDomainGame(row));
       }
       return created;
+    },
+    async deleteByMatch(matchId) {
+      for (const [id, row] of state.matchGames) {
+        if (row.matchId === matchId) {
+          state.matchGames.delete(id);
+        }
+      }
     },
     async listByMatch(matchId) {
       return [...state.matchGames.values()]

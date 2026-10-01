@@ -223,4 +223,40 @@ describe('MatchScoring', () => {
       await screen.findByText('The match must have exactly two participants.'),
     ).toBeInTheDocument();
   });
+
+  it('pre-fills a correction and submits through the correction endpoint', async () => {
+    const user = userEvent.setup();
+    const api = createStubApi();
+    const onCompleted = vi.fn();
+    renderWithProviders(
+      <MatchScoring
+        matchId={MATCH_ID}
+        slot1Label="Alice"
+        slot2Label="Bob"
+        matchKind="GROUP"
+        correct
+        initialGames={[{ participant1Points: 21, participant2Points: 15 }]}
+        onCompleted={onCompleted}
+      />,
+      { api },
+    );
+
+    // The stored score is pre-filled, and the button reads as a correction.
+    const slot1 = screen.getByLabelText('Game — Alice points');
+    const slot2 = screen.getByLabelText('Game — Bob points');
+    expect(slot1).toHaveValue(21);
+    expect(slot2).toHaveValue(15);
+
+    await user.clear(slot2);
+    await user.type(slot2, '19');
+    await user.click(screen.getByRole('button', { name: 'Save correction' }));
+
+    await waitFor(() => {
+      expect(api.matches.correctResult).toHaveBeenCalledWith(MATCH_ID, {
+        games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 19 }],
+      });
+    });
+    expect(api.matches.recordResult).not.toHaveBeenCalled();
+    expect(onCompleted).toHaveBeenCalled();
+  });
 });
