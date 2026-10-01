@@ -762,10 +762,14 @@ describe('loop state machine transitions', () => {
   });
 
   it('refuses a transition the loop does not define', () => {
+    // Pin the starting status so the assertion does not depend on whatever the
+    // committed state happens to be: `next-task` cannot jump straight to
+    // `complete` (the terminal status is spelled `completed`).
+    expect(set(['--status', 'next-task', '--force']).status).toBe(0);
     const result = set(['--status', 'complete']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('refusing the transition completed -> complete');
-    expect(status()).toBe('completed');
+    expect(result.stderr).toContain('refusing the transition next-task -> complete');
+    expect(status()).toBe('next-task');
   });
 
   it('allows blocking from any state without --force', () => {

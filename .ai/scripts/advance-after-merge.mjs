@@ -11,18 +11,31 @@
  * event: the loop must not silently generate the next task when its own pull
  * request was abandoned, and it must not merge anything either.
  *
+ * It also runs on a `push` that changes the loop state files (`EVENT_NAME=push`).
+ * In that mode it is a recovery check only: when the state is a legitimate
+ * `next-task` state with no active task or pull request it reports
+ * `managed=true` so the workflow dispatches the architect, and otherwise reports
+ * `managed=false`. It never advances a merge, creates a task or touches a pull
+ * request on the push path.
+ *
  * Usage (from a workflow step):
  *   node .ai/scripts/advance-after-merge.mjs
  *
  * Environment:
  *   GH_TOKEN, GITHUB_REPOSITORY, MERGED_PR, MERGED_SHA, MERGED_BRANCH
+ *   EVENT_NAME     `push` selects the recovery path; anything else is a PR close
  *   AI_LOOP_ROOT   overrides the repository root (tests only)
  */
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { isAiManagedPullRequest, loadConfig, REPO_ROOT } from './loop-core.mjs';
+import {
+  isAiManagedPullRequest,
+  isRecoverableNextTaskState,
+  loadConfig,
+  REPO_ROOT,
+} from './loop-core.mjs';
 import { parseReviewMarkers } from './review-core.mjs';
 
 const root = process.env.AI_LOOP_ROOT ?? REPO_ROOT;
@@ -87,11 +100,35 @@ function emitManaged(value) {
   }
 }
 
+const statePath = resolve(root, config.paths.state);
+const queuePath = resolve(root, config.paths.queue);
+
+// --- push-event recovery ---------------------------------------------------
+//
+// The workflow also fires on a push that changes the loop state files. When the
+// state lands in a legitimate `next-task` state with no active task or pull
+// request — a merge whose architect dispatch never ran — the loop must restart
+// itself rather than wait for a human. This is a *recovery* path, not a second
+// generator: it only reports `managed=true` so the workflow dispatches the
+// next-task conversation, exactly as the pull-request-closed path does. It never
+// creates a task, never touches a pull request and never advances a merge.
+if (process.env.EVENT_NAME === 'push') {
+  const state = readJson(statePath, 'loop state');
+  if (isRecoverableNextTaskState(state)) {
+    emitManaged(true);
+    log(
+      'the loop is in a recoverable next-task state with no active task or pull request; dispatching the architect.',
+    );
+    process.exit(0);
+  }
+  emitManaged(false);
+  log('the loop is not in a recoverable next-task state; nothing to recover.');
+  process.exit(0);
+}
+
 const prNumber = Number.parseInt(process.env.MERGED_PR ?? '', 10);
 if (!Number.isInteger(prNumber) || prNumber < 1) fail('MERGED_PR must be a pull request number', 2);
 
-const statePath = resolve(root, config.paths.state);
-const queuePath = resolve(root, config.paths.queue);
 const state = readJson(statePath, 'loop state');
 const queue = readJson(queuePath, 'task queue');
 
