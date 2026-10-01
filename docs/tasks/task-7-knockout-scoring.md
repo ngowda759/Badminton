@@ -73,6 +73,27 @@ state.matches.some(m => m.stage !== 'group')` — a durable latch set by
 - Knockout games are **uncapped** in V2 too, matching V1; group games keep the
   21/30/2 rule set.
 
+### Domain scoring design (review fix)
+
+The first cut shared one `scoreOneGame` helper between GROUP and KNOCKOUT, which
+called the group validator — so the group 30-point ceiling and 21 target were
+still applied to knockout games. That was the load-bearing bug. The fix keeps
+**separate explicit validators** and shares only genuinely common logic:
+
+- `validateGroupGameScore(points1, points2, gameNumber)` — the group rule:
+  21 target, two-point margin, hard 30 ceiling (30-29 legal, 31-29 illegal).
+- `validateKnockoutGameScore(points1, points2, target, gameNumber?)` — the
+  knockout rule: the round's target, two-point margin, **no ceiling**.
+- Shared helpers: `isNonNegativeInteger` (whole-number/non-negative check),
+  `determineGameWinner` (winner derivation) and the `MatchGame` result shape.
+- `scoreGroupMatch` calls the group validator; `scoreKnockoutMatch` calls the
+  knockout validator for each game under its rule. The dead, misnamed
+  `scoreMatchGames` (which shared the group path) was removed.
+
+`GAME_POINT_CEILING` was **not** raised and the group validator was **not**
+weakened. The web layer mirrors the split (`isValidGroupGameScore` /
+`groupGameScoreMessage` vs `isValidKnockoutGameScore` / `knockoutGameScoreMessage`).
+
 ### Database change
 
 `match_games_points_in_range` originally capped both point columns at 30 (from
@@ -95,7 +116,12 @@ modified.
   `e2e/knockout-scoring.spec.ts` (round targets, straight-set final, 31-29 past
   30, and the config lock once the knockout starts).
 - `tests/integration/database/tournament-database.test.ts` asserts the widened
-  bound accepts 31-29 and still rejects 199 and -1.
+  bound accepts a legal knockout 31-29, still rejects 199 and -1 structurally,
+  and that the domain rejects the same 31-29 as a group result.
+- `tests/unit/domain/scoring.test.ts` covers the GROUP and KNOCKOUT matrices
+  (targets 11/21/30, both `best_of_3` and `single_game`) plus the explicit
+  validators; `e2e/group-scoring.spec.ts` asserts a group 31-29 cannot be
+  submitted.
 
 ## Out of scope
 

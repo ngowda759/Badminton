@@ -125,8 +125,14 @@ export function resolveKnockoutRule(
   return { format: 'best_of_3', pointsPerGame: 21 };
 }
 
-/** True when a game score is a legal badminton result. */
-export function isValidGameScore(points1: number, points2: number): boolean {
+/**
+ * True when a **group** game score is a legal result. This is the group-only
+ * predicate (21 target, two-point margin, hard 30 ceiling); a knockout game is
+ * checked by `isValidKnockoutGameScore` against its round target, which has no
+ * ceiling. The two are deliberately separate so a knockout score can never be
+ * rejected by the group ceiling.
+ */
+export function isValidGroupGameScore(points1: number, points2: number): boolean {
   if (
     !Number.isInteger(points1) ||
     !Number.isInteger(points2) ||
@@ -191,8 +197,8 @@ export function knockoutGameScoreMessage(
   return `${label}: a game must be won by at least ${GAME_MIN_MARGIN} clear points.`;
 }
 
-/** A per-game message for an illegal score, or `undefined` when valid. */
-export function gameScoreMessage(
+/** A per-game message for an illegal **group** score, or `undefined` when valid. */
+export function groupGameScoreMessage(
   points1: number,
   points2: number,
   gameNumber: number,
@@ -201,7 +207,7 @@ export function gameScoreMessage(
   if (points1 === points2) {
     return `${label} cannot end in a tie.`;
   }
-  if (isValidGameScore(points1, points2)) {
+  if (isValidGroupGameScore(points1, points2)) {
     return undefined;
   }
   const higher = Math.max(points1, points2);
@@ -252,7 +258,7 @@ export function analyseDraftGame(
 
   const error =
     rule === undefined
-      ? gameScoreMessage(points1, points2, gameNumber)
+      ? groupGameScoreMessage(points1, points2, gameNumber)
       : knockoutGameScoreMessage(points1, points2, rule.pointsPerGame, gameNumber);
   if (error) {
     return { gameNumber, complete: true, winnerSlot: undefined, error };

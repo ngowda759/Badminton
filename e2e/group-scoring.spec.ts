@@ -121,6 +121,12 @@ test.describe('group-stage scoring', () => {
     await page.getByRole('button', { name: 'In Progress' }).click();
     await expect(page.getByText('In progress').first()).toBeVisible();
 
+    // A group game is capped at 30: 31-29 is illegal and cannot be submitted.
+    await page.getByLabel(`Game — ${playerOne} points`).fill('31');
+    await page.getByLabel(`Game — ${playerTwo} points`).fill('29');
+    await expect(page.getByTestId('match-score-error')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save & complete result' })).toBeDisabled();
+
     // Enter a valid single-game group result: 21-18.
     await page.getByLabel(`Game — ${playerOne} points`).fill('21');
     await page.getByLabel(`Game — ${playerTwo} points`).fill('18');

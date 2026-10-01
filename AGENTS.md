@@ -125,7 +125,10 @@ database — integration tests use `app.inject()` with stub probes.
   (`scoreGroupMatch`, win 2 pts / loss 0 pts) and a **KNOCKOUT** match is played
   under its round's rule (`scoreKnockoutMatch`, loss 1 pt) — **best of three**
   by default, or a **straight set** (one game) when the round is configured that
-  way. The domain functions share one game rule set; the service reads
+  way. GROUP and KNOCKOUT use **separate game validators**
+  (`validateGroupGameScore` vs `validateKnockoutGameScore`) and share only the
+  whole-number check, winner derivation and result shape — a knockout game must
+  never be routed through the group validator. The service reads
   the stage inside the transaction to pick the format, so a stale client can
   never record a best-of-three result for a group match (422). Standings order is
   the V1 order: **points → point difference → points scored → competitor name

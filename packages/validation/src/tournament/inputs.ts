@@ -267,9 +267,10 @@ export const generateGroupFixturesInputSchema = z.object({
  * rule, and whether the match is a single game (GROUP) or best of three
  * (KNOCKOUT) is decided by the match's stage in the application layer.
  *
- * The point ceiling is 99 rather than the game's 30 so the two domain rules are
- * distinguishable: a score above 30 is a 422 business-rule violation from
- * `scoreGroupMatch`/`scoreMatchGames`, not a 400 shape error.
+ * The point ceiling is 99 rather than a game's ceiling so the two domain rules
+ * are distinguishable: a score above a group game's 30 (or short of a knockout
+ * round's target/margin) is a 422 business-rule violation from
+ * `scoreGroupMatch`/`scoreKnockoutMatch`, not a 400 shape error.
  */
 export const recordMatchGameInputSchema = z.object({
   gameNumber: positiveIntegerSchema.max(3, 'A match is best of three games (game number 1-3).'),

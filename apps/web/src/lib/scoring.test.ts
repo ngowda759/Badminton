@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   analyseDraftGame,
   analyseDraftResult,
-  gameScoreMessage,
-  isValidGameScore,
+  groupGameScoreMessage,
+  isValidGroupGameScore,
   isValidKnockoutGameScore,
   knockoutRoundKey,
   MAX_GAMES_PER_MATCH,
   resolveKnockoutRule,
 } from '@/lib/scoring.ts';
 
-describe('isValidGameScore', () => {
+describe('isValidGroupGameScore', () => {
   it.each([
     [21, 0],
     [21, 19],
@@ -20,7 +20,7 @@ describe('isValidGameScore', () => {
     [30, 28],
     [0, 21],
   ])('accepts %i-%i', (points1, points2) => {
-    expect(isValidGameScore(points1, points2)).toBe(true);
+    expect(isValidGroupGameScore(points1, points2)).toBe(true);
   });
 
   it.each([
@@ -30,11 +30,11 @@ describe('isValidGameScore', () => {
     [31, 29],
     [20, 20],
   ])('rejects %i-%i', (points1, points2) => {
-    expect(isValidGameScore(points1, points2)).toBe(false);
+    expect(isValidGroupGameScore(points1, points2)).toBe(false);
   });
 
   it('rejects a tie', () => {
-    expect(gameScoreMessage(18, 18, 2)).toMatch(/tie/i);
+    expect(groupGameScoreMessage(18, 18, 2)).toMatch(/tie/i);
   });
 });
 

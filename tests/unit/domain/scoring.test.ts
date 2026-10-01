@@ -2,13 +2,14 @@ import {
   determineGameWinner,
   determineKnockoutOutcome,
   determineMatchOutcome,
-  isValidGameScore,
+  isValidGroupGameScore,
   isValidKnockoutGameScore,
   knockoutRoundKey,
   normalizeKnockoutRules,
   scoreGroupMatch,
   scoreKnockoutMatch,
-  scoreMatchGames,
+  validateGroupGameScore,
+  validateKnockoutGameScore,
   validateKnockoutRule,
   BusinessRuleViolationError,
   type MatchGame,
@@ -20,10 +21,12 @@ import { describe, expect, it } from 'vitest';
  * Pure badminton scoring-rule tests.
  *
  * These exercise the single source of truth for game and match validity with no
- * database, API or UI involved. The game rules are standard (a game is won at 21
- * with a two-point lead, extended to a hard 30 ceiling); the match kind decides
- * how many games decide it: a GROUP match is a single game and a KNOCKOUT match
- * is best of three.
+ * database, API or UI involved. GROUP and KNOCKOUT use **separate** game
+ * validators: a group game is won at 21 with a two-point lead up to a hard
+ * 30-point ceiling, while a knockout game is played to its round's target with a
+ * two-point lead and **no ceiling**. The match kind decides how many games
+ * decide it: a GROUP match is a single game and a KNOCKOUT match follows its
+ * round's rule (best of three, or a single "straight set" game).
  */
 
 function games(...scores: readonly [number, number][]): MatchGameInput[] {
@@ -34,53 +37,44 @@ function games(...scores: readonly [number, number][]): MatchGameInput[] {
   }));
 }
 
-describe('isValidGameScore', () => {
-  it('accepts a 21-0 win', () => {
-    expect(isValidGameScore(21, 0)).toBe(true);
+describe('isValidGroupGameScore', () => {
+  it.each([
+    [21, 19],
+    [30, 29],
+    [30, 28],
+    [22, 20],
+    [19, 21],
+  ])('accepts a legal group game %i-%i', (points1, points2) => {
+    expect(isValidGroupGameScore(points1, points2)).toBe(true);
   });
 
-  it('accepts a 21-19 win', () => {
-    expect(isValidGameScore(21, 19)).toBe(true);
+  it.each([
+    [31, 29],
+    [21, 20],
+    [20, 19],
+    [30, 30],
+    [20, 0],
+    [-1, 21],
+    [21.5, 19],
+  ])('rejects an illegal group game %i-%i', (points1, points2) => {
+    expect(isValidGroupGameScore(points1, points2)).toBe(false);
+  });
+});
+
+describe('validateGroupGameScore', () => {
+  it('accepts a legal group game and rejects a 31-29 game beyond the ceiling', () => {
+    expect(() => {
+      validateGroupGameScore(30, 29, 1);
+    }).not.toThrow();
+    expect(() => {
+      validateGroupGameScore(31, 29, 1);
+    }).toThrow(BusinessRuleViolationError);
   });
 
-  it('accepts a 22-20 extended win', () => {
-    expect(isValidGameScore(22, 20)).toBe(true);
-  });
-
-  it('accepts a 30-29 win at the ceiling', () => {
-    expect(isValidGameScore(30, 29)).toBe(true);
-  });
-
-  it('accepts a 30-28 win at the ceiling', () => {
-    expect(isValidGameScore(30, 28)).toBe(true);
-  });
-
-  it('accepts a win regardless of which slot is higher', () => {
-    expect(isValidGameScore(19, 21)).toBe(true);
-  });
-
-  it('rejects an unfinished 20-0 game', () => {
-    expect(isValidGameScore(20, 0)).toBe(false);
-  });
-
-  it('rejects a 21-20 game that lacks a two-point margin', () => {
-    expect(isValidGameScore(21, 20)).toBe(false);
-  });
-
-  it('rejects a 30-30 tie', () => {
-    expect(isValidGameScore(30, 30)).toBe(false);
-  });
-
-  it('rejects a 31-29 game beyond the ceiling', () => {
-    expect(isValidGameScore(31, 29)).toBe(false);
-  });
-
-  it('rejects negative points', () => {
-    expect(isValidGameScore(-1, 21)).toBe(false);
-  });
-
-  it('rejects fractional points', () => {
-    expect(isValidGameScore(21.5, 19)).toBe(false);
+  it('rejects a one-point margin at the target', () => {
+    expect(() => {
+      validateGroupGameScore(21, 20, 1);
+    }).toThrow(BusinessRuleViolationError);
   });
 });
 
@@ -137,9 +131,11 @@ describe('scoreGroupMatch', () => {
   });
 });
 
-describe('scoreMatchGames', () => {
+describe('scoreKnockoutMatch best of three (target 21)', () => {
+  const bestOfThree = { format: 'best_of_3' as const, pointsPerGame: 21 };
+
   it('accepts a 2-0 result and derives slot winners', () => {
-    const scored = scoreMatchGames(games([21, 15], [21, 18]));
+    const scored = scoreKnockoutMatch(games([21, 15], [21, 18]), bestOfThree);
     expect(scored).toEqual([
       { gameNumber: 1, participant1Points: 21, participant2Points: 15, winnerSlot: 1 },
       { gameNumber: 2, participant1Points: 21, participant2Points: 18, winnerSlot: 1 },
@@ -147,41 +143,48 @@ describe('scoreMatchGames', () => {
   });
 
   it('accepts a 2-1 result', () => {
-    const scored = scoreMatchGames(games([21, 18], [18, 21], [21, 19]));
+    const scored = scoreKnockoutMatch(games([21, 18], [18, 21], [21, 19]), bestOfThree);
     expect(scored.map((game) => game.winnerSlot)).toEqual([1, 2, 1]);
   });
 
   it('accepts a 2-1 result where slot 2 wins the match', () => {
-    const scored = scoreMatchGames(games([18, 21], [21, 18], [19, 21]));
+    const scored = scoreKnockoutMatch(games([18, 21], [21, 18], [19, 21]), bestOfThree);
     expect(scored.map((game) => game.winnerSlot)).toEqual([2, 1, 2]);
   });
 
+  it('accepts a deciding game past 30 (no knockout ceiling)', () => {
+    const scored = scoreKnockoutMatch(games([21, 15], [15, 21], [31, 29]), bestOfThree);
+    expect(scored.map((game) => game.winnerSlot)).toEqual([1, 2, 1]);
+  });
+
   it('rejects a single-game result as incomplete', () => {
-    expect(() => scoreMatchGames(games([21, 18]))).toThrow(BusinessRuleViolationError);
+    expect(() => scoreKnockoutMatch(games([21, 18]), bestOfThree)).toThrow(
+      BusinessRuleViolationError,
+    );
   });
 
   it('rejects a 1-1 result as undecided', () => {
-    expect(() => scoreMatchGames(games([21, 18], [18, 21]))).toThrow(BusinessRuleViolationError);
+    expect(() => scoreKnockoutMatch(games([21, 18], [18, 21]), bestOfThree)).toThrow(
+      BusinessRuleViolationError,
+    );
   });
 
   it('rejects a third game after a 2-0 result', () => {
-    expect(() => scoreMatchGames(games([21, 18], [21, 19], [21, 15]))).toThrow(
+    expect(() => scoreKnockoutMatch(games([21, 18], [21, 19], [21, 15]), bestOfThree)).toThrow(
       BusinessRuleViolationError,
     );
   });
 
   it('rejects more than three games', () => {
-    expect(() => scoreMatchGames(games([21, 18], [18, 21], [21, 18], [18, 21]))).toThrow(
-      BusinessRuleViolationError,
-    );
+    expect(() =>
+      scoreKnockoutMatch(games([21, 18], [18, 21], [21, 18], [18, 21]), bestOfThree),
+    ).toThrow(BusinessRuleViolationError);
   });
 
   it('rejects an invalid game score inside an otherwise complete result', () => {
-    expect(() => scoreMatchGames(games([21, 20], [21, 15]))).toThrow(BusinessRuleViolationError);
-  });
-
-  it('rejects a game beyond the 30-point ceiling', () => {
-    expect(() => scoreMatchGames(games([31, 29], [21, 15]))).toThrow(BusinessRuleViolationError);
+    expect(() => scoreKnockoutMatch(games([21, 20], [21, 15]), bestOfThree)).toThrow(
+      BusinessRuleViolationError,
+    );
   });
 
   it('rejects out-of-order game numbers', () => {
@@ -189,7 +192,7 @@ describe('scoreMatchGames', () => {
       { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
       { gameNumber: 1, participant1Points: 21, participant2Points: 18 },
     ];
-    expect(() => scoreMatchGames(outOfOrder)).toThrow(BusinessRuleViolationError);
+    expect(() => scoreKnockoutMatch(outOfOrder, bestOfThree)).toThrow(BusinessRuleViolationError);
   });
 });
 
@@ -224,29 +227,68 @@ describe('determineMatchOutcome', () => {
 });
 
 describe('isValidKnockoutGameScore', () => {
-  it('accepts a game played to the round target with a two-point margin', () => {
-    expect(isValidKnockoutGameScore(21, 15, 21)).toBe(true);
-    expect(isValidKnockoutGameScore(15, 21, 21)).toBe(true);
-    expect(isValidKnockoutGameScore(22, 20, 21)).toBe(true);
-    expect(isValidKnockoutGameScore(11, 5, 11)).toBe(true);
-    expect(isValidKnockoutGameScore(13, 11, 11)).toBe(true);
+  it.each([
+    [21, 19],
+    [22, 20],
+    [30, 28],
+    [31, 29],
+    [19, 21],
+  ])('accepts a legal game at target 21: %i-%i', (points1, points2) => {
+    expect(isValidKnockoutGameScore(points1, points2, 21)).toBe(true);
   });
 
-  it('has no ceiling, so a game past 30 is legal', () => {
-    expect(isValidKnockoutGameScore(31, 29, 21)).toBe(true);
-    expect(isValidKnockoutGameScore(30, 29, 21)).toBe(false);
+  it.each([
+    [30, 29],
+    [21, 20],
+    [20, 15],
+  ])('rejects an illegal game at target 21: %i-%i', (points1, points2) => {
+    expect(isValidKnockoutGameScore(points1, points2, 21)).toBe(false);
   });
 
-  it('rejects a game short of the target and a one-point margin', () => {
-    expect(isValidKnockoutGameScore(20, 15, 21)).toBe(false);
-    expect(isValidKnockoutGameScore(21, 20, 21)).toBe(false);
-    expect(isValidKnockoutGameScore(10, 5, 11)).toBe(false);
+  it.each([
+    [11, 9],
+    [12, 10],
+    [31, 29],
+  ])('accepts a legal game at target 11: %i-%i', (points1, points2) => {
+    expect(isValidKnockoutGameScore(points1, points2, 11)).toBe(true);
+  });
+
+  it('rejects an illegal game at target 11 (one-point margin)', () => {
     expect(isValidKnockoutGameScore(11, 10, 11)).toBe(false);
   });
 
-  it('rejects a tie and non-whole points', () => {
+  it.each([
+    [30, 28],
+    [31, 29],
+  ])('accepts a legal game at target 30: %i-%i', (points1, points2) => {
+    expect(isValidKnockoutGameScore(points1, points2, 30)).toBe(true);
+  });
+
+  it('rejects a one-point margin at target 30', () => {
+    expect(isValidKnockoutGameScore(30, 29, 30)).toBe(false);
+  });
+
+  it('rejects a tie, fractional points and a game short of the target', () => {
     expect(isValidKnockoutGameScore(21, 21, 21)).toBe(false);
     expect(isValidKnockoutGameScore(21.5, 15, 21)).toBe(false);
+    expect(isValidKnockoutGameScore(10, 5, 11)).toBe(false);
+  });
+});
+
+describe('validateKnockoutGameScore', () => {
+  it('accepts a 31-29 game past the group ceiling', () => {
+    expect(() => {
+      validateKnockoutGameScore(31, 29, 21);
+    }).not.toThrow();
+  });
+
+  it('rejects a one-point margin and a game short of the target', () => {
+    expect(() => {
+      validateKnockoutGameScore(30, 29, 30);
+    }).toThrow(BusinessRuleViolationError);
+    expect(() => {
+      validateKnockoutGameScore(20, 15, 21);
+    }).toThrow(BusinessRuleViolationError);
   });
 });
 
@@ -329,10 +371,18 @@ describe('scoreKnockoutMatch', () => {
     ).not.toThrow();
   });
 
-  it('accepts a straight-set single game', () => {
-    const scored = scoreKnockoutMatch(games([11, 5]), straight);
+  it('accepts a straight-set single game at target 11', () => {
+    const scored = scoreKnockoutMatch(games([11, 9]), straight);
     expect(scored).toHaveLength(1);
     expect(scored[0]?.winnerSlot).toBe(1);
+  });
+
+  it('accepts a straight-set game past 30 (no ceiling) at target 11', () => {
+    expect(() => scoreKnockoutMatch(games([31, 29]), straight)).not.toThrow();
+  });
+
+  it('rejects a straight-set game won by only one point', () => {
+    expect(() => scoreKnockoutMatch(games([11, 10]), straight)).toThrow(BusinessRuleViolationError);
   });
 
   it('rejects a second game in a straight-set match', () => {

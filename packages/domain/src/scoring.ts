@@ -10,10 +10,15 @@ import type { MatchSlot } from './tournament.ts';
  * it. The database stores only validated results, so the rules are enforced in
  * the domain layer rather than as SQL.
  *
- * The game rules are shared by every match kind:
+ * The game rules differ by match kind and are kept in **separate validators**,
+ * never shared through one generic entry point:
  *
- * - a game is won at 21 points with a two-point lead, extended up to a
- *   30-point ceiling (30-29 is legal, 31-29 is not);
+ * - a **GROUP** game (`validateGroupGameScore`) is a single game won at 21
+ *   points with a two-point lead, extended up to a hard 30-point ceiling
+ *   (30-29 is legal, 31-29 is not);
+ * - a **KNOCKOUT** game (`validateKnockoutGameScore`) is played to the round's
+ *   configured target with the same two-point lead but **no ceiling**, so a
+ *   31-29 game is legal;
  * - the winner is always derived from the points, never chosen.
  *
  * A match kind decides only **how many games** a completed result contains,
@@ -21,10 +26,12 @@ import type { MatchSlot } from './tournament.ts';
  *
  * - a **GROUP** match is a **single game** (`scoreGroupMatch`) - the original
  *   group-stage rule, a straight game to 21 with no second or third game;
- * - a **KNOCKOUT** match is **best of three** (`scoreMatchGames`): won by the
- *   first participant to win two games (2-0 or 2-1), and a result is complete
- *   only when it contains exactly the games that decided it, so a 2-0 recorded
- *   with a third game, or a 1-1 result with no decider, is rejected.
+ * - a **KNOCKOUT** match is played under its round's rule (`scoreKnockoutMatch`):
+ *   **best of three** by default, or a single "straight set" game when the round
+ *   is configured that way; a best-of-three match is won by the first participant
+ *   to win two games (2-0 or 2-1), and a result is complete only when it contains
+ *   exactly the games that decided it, so a 2-0 recorded with a third game, or a
+ *   1-1 result with no decider, is rejected.
  *
  * The rules are deliberately not labelled an official federation rule set; they
  * follow the widely-used Laws of Badminton scoring and can be replaced later.
@@ -298,32 +305,39 @@ export interface MatchResult extends MatchOutcome {
   readonly games: readonly MatchGame[];
 }
 
-/** True when `points` is a whole number inside the legal game range. */
-function isLegalPointValue(points: number): boolean {
-  return Number.isInteger(points) && points >= 0 && points <= GAME_POINT_CEILING;
+/** True when `points` is a non-negative whole number. */
+function isNonNegativeInteger(points: number): boolean {
+  return Number.isInteger(points) && points >= 0;
+}
+
+/** True when `points` is a whole number inside the legal **group** game range. */
+function isLegalGroupPointValue(points: number): boolean {
+  return isNonNegativeInteger(points) && points <= GAME_POINT_CEILING;
 }
 
 /**
- * True when the leading score in a game respects the scoring rules.
+ * True when the leading score in a **group** game respects the scoring rules.
  *
- * A game is won by reaching 21 with a two-point lead, so the score is extended
- * while the margin stays at one (22-20, 25-23, ...). At the hard ceiling of 30
- * the next point ends the game regardless of margin, so a 30-29 win is legal;
- * a 30-30 tie and any 31-point total are not.
+ * A group game is won by reaching 21 with a two-point lead, so the score is
+ * extended while the margin stays at one (22-20, 25-23, ...). At the hard
+ * ceiling of 30 the next point ends the game regardless of margin, so a 30-29
+ * win is legal; a 30-30 tie and any 31-point total are not.
  */
-function isValidWinningScore(higher: number, margin: number): boolean {
+function isValidGroupWinningScore(higher: number, margin: number): boolean {
   if (higher >= GAME_POINT_CEILING) {
-    // A game cannot pass 30, so at 30 any single-point lead wins (30-29).
+    // A group game cannot pass 30, so at 30 any single-point lead wins (30-29).
     return higher === GAME_POINT_CEILING && margin >= 1;
   }
   return higher >= GAME_POINT_TARGET && margin >= GAME_MIN_MARGIN;
 }
 
 /**
- * True when a game ending `points1`–`points2` respects the scoring rules.
+ * True when a **group** game ending `points1`–`points2` respects the group
+ * rules. This is the group-only predicate; a knockout game is checked by
+ * `isValidKnockoutGameScore` against its round target, which has no ceiling.
  */
-export function isValidGameScore(points1: number, points2: number): boolean {
-  if (!isLegalPointValue(points1) || !isLegalPointValue(points2)) {
+export function isValidGroupGameScore(points1: number, points2: number): boolean {
+  if (!isLegalGroupPointValue(points1) || !isLegalGroupPointValue(points2)) {
     return false;
   }
   if (points1 === points2) {
@@ -331,7 +345,7 @@ export function isValidGameScore(points1: number, points2: number): boolean {
   }
   const higher = Math.max(points1, points2);
   const margin = Math.abs(points1 - points2);
-  return isValidWinningScore(higher, margin);
+  return isValidGroupWinningScore(higher, margin);
 }
 
 /**
@@ -346,11 +360,18 @@ export function determineGameWinner(points1: number, points2: number): MatchSlot
   return points1 > points2 ? 1 : 2;
 }
 
-/** Validates a single game, throwing a `BusinessRuleViolationError`. */
-export function validateGameScore(points1: number, points2: number, gameNumber: number): void {
+/**
+ * Validates a single **group** game, throwing a `BusinessRuleViolationError`.
+ *
+ * The group rule is fixed: target 21, two-point margin, hard 30-point ceiling.
+ * A knockout game is validated by `validateKnockoutGameScore`, which takes the
+ * round's configured target and has no ceiling; the two validators are kept
+ * separate so a knockout game can never be rejected by the group ceiling.
+ */
+export function validateGroupGameScore(points1: number, points2: number, gameNumber: number): void {
   const label = `Game ${gameNumber}`;
 
-  if (!isLegalPointValue(points1) || !isLegalPointValue(points2)) {
+  if (!isLegalGroupPointValue(points1) || !isLegalGroupPointValue(points2)) {
     throw new BusinessRuleViolationError(
       `${label}: points must be whole numbers between 0 and ${GAME_POINT_CEILING}.`,
     );
@@ -362,7 +383,7 @@ export function validateGameScore(points1: number, points2: number, gameNumber: 
   const higher = Math.max(points1, points2);
   const margin = Math.abs(points1 - points2);
 
-  if (isValidWinningScore(higher, margin)) {
+  if (isValidGroupWinningScore(higher, margin)) {
     return;
   }
 
@@ -394,28 +415,14 @@ function validateGameNumbers(games: readonly MatchGameInput[]): void {
 }
 
 /**
- * Validates a single game and returns it with its derived `winnerSlot`.
- *
- * Shared by both match kinds so the game rules can never drift: a group match
- * and a knockout match accept exactly the same legal game scores.
- */
-function scoreOneGame(game: MatchGameInput): MatchGame {
-  validateGameScore(game.participant1Points, game.participant2Points, game.gameNumber);
-  return {
-    gameNumber: game.gameNumber,
-    participant1Points: game.participant1Points,
-    participant2Points: game.participant2Points,
-    winnerSlot: determineGameWinner(game.participant1Points, game.participant2Points),
-  };
-}
-
-/**
  * Validates and scores a **group-stage** result.
  *
  * A group match is a **single game** - the original tournament rule - so a
  * completed result must contain exactly one game and the winner is the higher
  * score. A second game is rejected rather than ignored, so a stale client can
- * never smuggle a best-of-three result into the group table.
+ * never smuggle a best-of-three result into the group table. The game is
+ * validated by the **group** validator (21 target, 30 ceiling); a knockout
+ * match never comes through here.
  */
 export function scoreGroupMatch(games: readonly MatchGameInput[]): readonly MatchGame[] {
   if (games.length !== 1) {
@@ -427,59 +434,15 @@ export function scoreGroupMatch(games: readonly MatchGameInput[]): readonly Matc
   validateGameNumbers(games);
 
   const game = games[0] as MatchGameInput;
-  return [scoreOneGame(game)];
-}
-
-/**
- * Validates and scores a **knockout** (best-of-three) result.
- *
- * Returns the games with their derived `winnerSlot`. Rejects an incomplete or
- * impossible result: fewer than two or more than three games, a game whose
- * points break the scoring rules, a third game after the match was already
- * decided, and a result that leaves the match undecided (for example 1-1).
- */
-export function scoreMatchGames(games: readonly MatchGameInput[]): readonly MatchGame[] {
-  if (games.length < MIN_GAMES_PER_MATCH) {
-    throw new BusinessRuleViolationError(
-      `A completed result must contain at least ${MIN_GAMES_PER_MATCH} games.`,
-    );
-  }
-  if (games.length > MAX_GAMES_PER_MATCH) {
-    throw new BusinessRuleViolationError(
-      `A match is best of three and cannot contain more than ${MAX_GAMES_PER_MATCH} games.`,
-    );
-  }
-
-  validateGameNumbers(games);
-
-  const scored: MatchGame[] = [];
-  let slot1Wins = 0;
-  let slot2Wins = 0;
-
-  for (const game of games) {
-    if (slot1Wins === GAMES_TO_WIN_MATCH || slot2Wins === GAMES_TO_WIN_MATCH) {
-      throw new BusinessRuleViolationError(
-        'The match was already decided after two games; no further games are allowed.',
-      );
-    }
-
-    const scoredGame = scoreOneGame(game);
-    if (scoredGame.winnerSlot === 1) {
-      slot1Wins += 1;
-    } else {
-      slot2Wins += 1;
-    }
-
-    scored.push(scoredGame);
-  }
-
-  if (slot1Wins !== GAMES_TO_WIN_MATCH && slot2Wins !== GAMES_TO_WIN_MATCH) {
-    throw new BusinessRuleViolationError(
-      `The match is not decided; one participant must win ${GAMES_TO_WIN_MATCH} games.`,
-    );
-  }
-
-  return scored;
+  validateGroupGameScore(game.participant1Points, game.participant2Points, game.gameNumber);
+  return [
+    {
+      gameNumber: game.gameNumber,
+      participant1Points: game.participant1Points,
+      participant2Points: game.participant2Points,
+      winnerSlot: determineGameWinner(game.participant1Points, game.participant2Points),
+    },
+  ];
 }
 
 /**
@@ -541,7 +504,7 @@ export function determineMatchOutcome(
  * and is deliberately different from a group game's 30-point cap.
  */
 function isLegalKnockoutPointValue(points: number, target: number): boolean {
-  return Number.isInteger(points) && points >= 0 && points <= target + MAX_KNOCKOUT_EXTENSION;
+  return isNonNegativeInteger(points) && points <= target + MAX_KNOCKOUT_EXTENSION;
 }
 
 /**
@@ -564,12 +527,12 @@ export function isValidKnockoutGameScore(
   return higher >= target && margin >= GAME_MIN_MARGIN;
 }
 
-/** Validates a knockout game against the round's target. */
-function validateKnockoutGameScore(
+/** Validates a knockout game against the round's target, throwing on a violation. */
+export function validateKnockoutGameScore(
   points1: number,
   points2: number,
   target: number,
-  gameNumber: number,
+  gameNumber = 1,
 ): void {
   const label = `Game ${gameNumber}`;
 
