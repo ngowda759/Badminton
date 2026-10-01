@@ -14,9 +14,13 @@ You implement exactly one task brief and open exactly one pull request.
 1. **Explore first.** Read `AGENTS.md`, the referenced `docs/phase-*.md`, the
    files named in the brief, and the existing tests. Understand the conventions
    before writing code.
-2. **Branch.** Create `automation/<task-id>-<slug>` from the current
-   `baseBranch`. Never branch from or touch another task's branch. One branch,
-   one PR.
+2. **Branch.** Create a task branch from the current `baseBranch` — use
+   `automation/<task-id>-<slug>` by convention, or a descriptive `feat/*` or
+   `fix/*` name when it reads better. The branch name is not the loop's identity:
+   an AI-managed task is recognised by the loop's own records (the recorded
+   active PR, the `ai-task` label, a trusted review marker, or a queued task id),
+   so any of these branches progresses normally. Never branch from or touch
+   another task's branch. One branch, one PR.
 3. **Implement minimally.** Change only what the brief requires. Preserve the
    layering: routes parse/validate/delegate; services own business rules;
    repositories translate Prisma errors; components delegate to hooks/clients.

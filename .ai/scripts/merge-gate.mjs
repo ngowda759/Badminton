@@ -96,6 +96,17 @@ function readState() {
   }
 }
 
+/** The task queue, or null when it cannot be read. Used for task-id identity. */
+function readQueue() {
+  const path = resolve(root, config.paths.queue);
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    fail(`the task queue is not valid JSON: ${error.message}`);
+  }
+}
+
 /** The latest review verdict recorded in the PR comments, and the SHA it covered. */
 function latestVerdict(comments) {
   let best = null;
@@ -132,7 +143,7 @@ function main() {
     '--repo',
     repo,
     '--json',
-    'number,title,state,merged,baseRefName,headRefName,headRefOid,labels,comments,isCrossRepository,mergeable,mergeStateStatus',
+    'number,title,state,mergedAt,baseRefName,headRefName,headRefOid,labels,comments,isCrossRepository,mergeable,mergeStateStatus',
   ]);
 
   const checks = ghJson([
@@ -156,7 +167,7 @@ function main() {
     pr: {
       number: pr.number,
       state: pr.state,
-      merged: pr.merged,
+      merged: typeof pr.mergedAt === 'string' && pr.mergedAt.length > 0,
       baseRefName: pr.baseRefName,
       headRefName: pr.headRefName,
       headRefOid: pr.headRefOid,
@@ -171,6 +182,7 @@ function main() {
     ci,
     changedPaths: paths,
     config,
+    queue: readQueue(),
   });
 
   const report = {

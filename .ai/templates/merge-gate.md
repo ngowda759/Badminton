@@ -7,8 +7,7 @@ between the approval and the merge would otherwise be merged on stale evidence.
 | Gate                                     | Source                         | Status |
 | ---------------------------------------- | ------------------------------ | ------ |
 | PR open, targets `main`, same repository | `gh pr view`                   | <…>    |
-| PR is the loop's recorded active PR      | loop state + `ai-task` label   | <…>    |
-| Branch uses the `automation/` prefix     | `gh pr view`                   | <…>    |
+| PR is AI-managed (`isAiManagedPullRequest`) | loop state, label, marker, task id, branch prefix | <…> |
 | Latest review verdict `approved`         | review marker on the PR        | <…>    |
 | Approval covers the current head commit  | marker `head=` vs `headRefOid` | <…>    |
 | Required CI green (`requiredChecks`)     | `gh pr checks`                 | <…>    |

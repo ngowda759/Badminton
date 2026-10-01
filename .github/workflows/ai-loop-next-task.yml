@@ -3,18 +3,22 @@ name: AI loop next task
 # Automatic task progression: merge -> architect -> implement -> PR.
 #
 # This workflow fires when a pull request is closed. It advances the loop only
-# when that pull request is the loop's own active pull request and it actually
-# merged; a closed-without-merge pull request stops the loop for a human instead
-# of silently starting the next task.
+# when that pull request is an AI-managed task (the loop's own recorded active
+# pull request, its trigger label, a trusted review marker, or a queued task id)
+# and it actually merged; a closed-without-merge pull request stops the loop for
+# a human instead of silently starting the next task. An unrelated pull request
+# closing is a no-op.
 #
 # There is no manual `workflow_dispatch` on the normal path. The dispatch trigger
 # exists purely as an operator recovery mechanism for a loop that stopped for a
 # human and was then resolved by hand.
 #
-# SECURITY MODEL: the loop's own branch is what merges here, but the checkout is
-# still pinned to the default branch, and the architect conversation is given the
-# repository (not the pull request's code) to inspect. No PR-controlled file is
-# executed.
+# SECURITY MODEL: the checkout is pinned to the default branch, and the architect
+# conversation is given the repository (not the pull request's code) to inspect.
+# No PR-controlled file is executed. `advance-after-merge.mjs` runs from the
+# trusted base branch and reports `managed=true|false`; the dispatch steps gate on
+# that output, so the identity rules live in one reviewed place rather than in a
+# GitHub expression.
 
 on:
   pull_request:
@@ -39,13 +43,16 @@ permissions:
 jobs:
   next-task:
     name: Generate and dispatch the next task
-    # Automatic path: an AI-loop pull request that merged into the base branch.
+    # Coarse automatic filter only. Whether the closed pull request is actually
+    # AI-managed is decided by `advance-after-merge.mjs` from the loop's own
+    # records (state, label, review marker, queued task id) — never from the
+    # branch name alone, because an AI task may live on `feat/*` or `fix/*` just
+    # as legitimately as on `automation/*`. A closed-without-merge pull request
+    # reaches the script too, so it can record the hard stop.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       github.event.pull_request.base.ref == 'main' &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       startsWith(github.event.pull_request.head.ref, 'automation/'))
+      (github.event.pull_request.base.ref == 'main' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the trusted base branch
@@ -62,7 +69,8 @@ jobs:
       - name: Validate the loop state before advancing
         run: node .ai/scripts/validate-loop-config.mjs
 
-      - name: Confirm the merged pull request is the active one
+      - name: Advance the loop when the closed pull request is AI-managed
+        id: identity
         if: ${{ github.event_name == 'pull_request' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -73,12 +81,18 @@ jobs:
         run: node .ai/scripts/advance-after-merge.mjs
 
       - name: Enforce exactly one active task
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          steps.identity.outputs.managed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .ai/scripts/loop-tasks.mjs enforce-single
 
       - name: Dispatch the next-task (architect) conversation
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          steps.identity.outputs.managed == 'true'
         env:
           OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
           OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}

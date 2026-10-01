@@ -19,10 +19,10 @@
  *   AI_LOOP_ROOT   overrides the repository root (tests only)
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { loadConfig, REPO_ROOT } from './loop-core.mjs';
+import { isAiManagedPullRequest, loadConfig, REPO_ROOT } from './loop-core.mjs';
 import { parseReviewMarkers } from './review-core.mjs';
 
 const root = process.env.AI_LOOP_ROOT ?? REPO_ROOT;
@@ -68,6 +68,25 @@ function stop(event, note) {
   process.exit(1);
 }
 
+/**
+ * Write a `managed=` output for the workflow to gate on.
+ *
+ * The workflow cannot evaluate the loop's identity rules in a GitHub expression,
+ * so this script — which runs from the trusted base branch — decides whether the
+ * closed pull request is AI-managed and reports it. Anything other than a clear
+ * `true` leaves the job skipped.
+ */
+function emitManaged(value) {
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile !== undefined) {
+    try {
+      appendFileSync(outputFile, `managed=${value ? 'true' : 'false'}\n`);
+    } catch (error) {
+      fail(`could not write GITHUB_OUTPUT: ${error.message}`);
+    }
+  }
+}
+
 const prNumber = Number.parseInt(process.env.MERGED_PR ?? '', 10);
 if (!Number.isInteger(prNumber) || prNumber < 1) fail('MERGED_PR must be a pull request number', 2);
 
@@ -83,24 +102,36 @@ const pr = ghJson([
   '--repo',
   repo,
   '--json',
-  'number,state,merged,mergedAt,mergeCommit,headRefName,baseRefName,isCrossRepository,labels,comments,title',
+  'number,state,mergedAt,mergeCommit,headRefName,baseRefName,isCrossRepository,labels,comments,title',
 ]);
 
-if (pr.merged !== true) {
+// Only an AI-managed pull request can affect the loop. The identity is the
+// loop's own record — the recorded active PR, the trigger label, a trusted
+// review marker, a queued task id — plus the loop's own `automation/*` branch.
+// An implementation task on `feat/*` or `fix/*` is just as much the loop's own
+// work, so branch naming alone must never be the test. This check runs first so
+// that an unrelated pull request closing (with or without a merge) is a no-op
+// rather than a hard stop.
+const aiManaged = isAiManagedPullRequest({
+  pr,
+  state,
+  queue,
+  config,
+  mergeCommitSha: pr.mergeCommit?.oid,
+});
+if (!aiManaged) {
+  emitManaged(false);
+  log(`PR #${prNumber} is not an AI-managed loop pull request; nothing to advance.`);
+  process.exit(0);
+}
+
+// `gh pr view` has no `merged` boolean field; a merged pull request is one whose
+// `mergedAt` is set. Asking for a non-existent field makes `gh` exit non-zero, so
+// the previous field list made every next-task run fail before it advanced.
+if (typeof pr.mergedAt !== 'string' || pr.mergedAt.length === 0) {
   // The loop's own pull request was closed without merging. That is a human
   // decision the loop cannot interpret, so it stops rather than guessing.
   stop('merge-conflict', `PR #${prNumber} was closed without merging`);
-}
-
-// Only the loop's own pull request advances the loop. Anything else is a
-// pull request the loop does not own and must not act on.
-const recorded = state.currentPr ?? null;
-const isRecordedPr = recorded !== null && recorded.number === prNumber;
-const looksLikeLoopPr =
-  typeof pr.headRefName === 'string' && pr.headRefName.startsWith(config.branchPrefix);
-if (!isRecordedPr && !looksLikeLoopPr) {
-  log(`PR #${prNumber} is not an AI-loop pull request; nothing to advance.`);
-  process.exit(0);
 }
 
 const taskId = state.currentTaskId;
@@ -114,6 +145,19 @@ const task = queue.tasks.find((candidate) => candidate.id === taskId);
 if (task === undefined) {
   stop('state-corruption', `active task ${taskId} is not present in the task queue`);
 }
+
+// Idempotency: a duplicate `pull_request: closed` delivery (or an operator
+// re-run) must not generate the next task twice. The task's own `status` is the
+// discriminator — the implementation stage already records `task.pr` before the
+// merge, so the PR number alone cannot tell "about to advance" from "already
+// advanced". A task already recorded `done` means the transition happened.
+if (task.status === 'done') {
+  emitManaged(false);
+  log(`task ${taskId} is already recorded as done; nothing to advance.`);
+  process.exit(0);
+}
+
+emitManaged(true);
 
 // Carry the reviewer's outstanding findings onto the task so the architect can
 // read what the review actually found, not just that it approved.
@@ -138,7 +182,14 @@ queue.updatedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 writeFileSync(queuePath, `${JSON.stringify(queue, null, 2)}\n`);
 log(`recorded ${taskId} as done (PR #${prNumber} merged).`);
 
-// completed -> next-task. Both steps are legal transitions and are recorded.
+// ready-to-merge -> merging -> completed -> next-task. The state machine
+// requires the `merging` step, so the loop records it explicitly; jumping
+// straight to `completed` would be refused as an illegal transition. A state
+// that has already reached `merging` (a re-run) is not re-recorded.
+const statusBeforeComplete = state.status;
+if (statusBeforeComplete === 'ready-to-merge') {
+  runState(['set', '--status', 'merging', '--note', `PR #${prNumber} merged`]);
+}
 runState(['complete', '--task', taskId, '--note', `PR #${prNumber} merged`]);
 runState(['set', '--status', 'next-task', '--note', 'advancing to next-task generation']);
 log('the loop is ready to generate the next task.');

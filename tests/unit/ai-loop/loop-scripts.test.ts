@@ -44,6 +44,36 @@ describe('AI loop scripts', () => {
     expect(stdout).toContain('security check passed');
   });
 
+  it('gates next-task on the loop identity, not on an automation/* branch name', () => {
+    const workflow = readFileSync(resolve(root, '.github/workflows/ai-loop-next-task.yml'), 'utf8');
+    // The old bug: the automatic trigger required the head branch to start with
+    // `automation/`, so an AI task on `feat/*` never advanced the loop.
+    expect(workflow).not.toMatch(/startsWith\(github\.event\.pull_request\.head\.ref/);
+    expect(workflow).toContain('steps.identity.outputs.managed');
+    // Closed-without-merge must still reach the script so it can record the stop.
+    expect(workflow).not.toContain('pull_request.merged == true');
+  });
+
+  it('asks gh for the merged pull request state via mergedAt, never the invalid `merged` field', () => {
+    for (const script of ['advance-after-merge.mjs', 'merge-gate.mjs']) {
+      const source = readFileSync(resolve(root, '.ai/scripts', script), 'utf8');
+      const jsonFields = [...source.matchAll(/'--json',\s*'([^']+)'/g)]
+        .map((match) => match[1])
+        .filter((fields): fields is string => fields !== undefined);
+      expect(jsonFields.length).toBeGreaterThan(0);
+      for (const fields of jsonFields) {
+        // `gh pr view --json` has no `merged` field; requesting it makes gh exit
+        // non-zero. `mergedAt` is the real field.
+        expect(fields.split(',')).not.toContain('merged');
+      }
+      // The pull request detail query (identified by `headRefName`) must ask for
+      // the real merge field, so "was this merged?" is answerable.
+      const detail = jsonFields.find((fields) => fields.includes('headRefName'));
+      expect(detail).toBeDefined();
+      expect(detail ?? '').toContain('mergedAt');
+    }
+  });
+
   it('reports the loop state without mutating it', () => {
     const { status, stdout } = run('loop-state.mjs', ['status']);
     expect(status).toBe(0);
