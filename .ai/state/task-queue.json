@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-01T10:57:48Z",
+  "updatedAt": "2026-10-01T12:51:30Z",
   "tasks": [
     {
       "id": "AI-001",
@@ -39,7 +39,7 @@
       "id": "AI-002",
       "title": "Match result correction with downstream propagation (TASK-8, parity gap G6)",
       "phase": "parity (G6 from the TASK-5 audit)",
-      "status": "approved",
+      "status": "done",
       "summary": "A recorded result is currently immutable: MatchResultService.recordResult rejects a second completion and there is no reset. V1 lets an operator re-enter a score (saveGroupScore) and reset a match (resetMatch); the TASK-5 audit records the missing correction workflow as gap G6 and as the top remaining parity item. Add a guarded GROUP-match result-correction workflow: a completed group match can be re-scored in one atomic operation, so a mistyped score is fixed without touching the database. Standings and qualification are derived from the stored games, so they correct automatically. Correcting a knockout result (which requires bracket re-derivation) is out of scope and stays immutable.",
       "acceptanceCriteria": [
         "tests/unit/domain/correction.test.ts passes: isMatchCorrectable is true for a COMPLETED group match (roundNumber/matchNumber null) and false for a completed knockout match (non-null bracket position) and for any non-COMPLETED match.",
@@ -77,7 +77,59 @@
         "apps/web/src/pages/tournaments/match-detail.tsx",
         "apps/web/src/components/tournaments/match-scoring.tsx"
       ],
-      "createdAt": "2026-10-01T10:38:58Z"
+      "createdAt": "2026-10-01T10:38:58Z",
+      "pr": 28,
+      "branch": "feat/match-result-correction",
+      "headSha": "79be752c3593f6e5d92b09412ebaf085521c8f4a",
+      "completedAt": "2026-10-01T12:47:42Z"
+    },
+    {
+      "id": "AI-003",
+      "title": "Knockout result correction with bracket re-derivation (TASK-9, parity gap G6)",
+      "phase": "parity (G6 from the TASK-5 audit)",
+      "status": "approved",
+      "summary": "AI-002 made a GROUP result correctable and deliberately left a KNOCKOUT result immutable, because correcting one also requires re-deriving the bracket. docs/phase-6-knockout.md section 17 records a result-correction workflow as the top future extension point and the TASK-5 audit records the same as gap G6, noting V1's sourceA/sourceB re-derivation exists so a corrected earlier result flows downstream. This task completes G6: a completed knockout match becomes correctable through the existing POST /api/v1/matches/:id/result/correction endpoint, and the correction re-derives the bracket in one transaction - the immediate destination slot is re-filled with the new winner, any downstream match that was already decided is reset (winner and games cleared) because its participants changed, and a COMPLETED stage whose final is invalidated reopens to ACTIVE. Group correction is unchanged.",
+      "acceptanceCriteria": [
+        "tests/unit/domain/correction.test.ts passes: isMatchCorrectable is true for a COMPLETED match in a GROUP stage and for a COMPLETED match in a KNOCKOUT stage (with and without a bracket position), and false for any non-COMPLETED match in either stage type.",
+        "tests/unit/application/knockout-correction.service.test.ts passes over the in-memory ports: for a 4-entry bracket, correcting the final re-derives nothing; correcting semifinal 1 re-fills the final's slot 1 with the new winner and, when the final was COMPLETED, resets it (winner cleared, games deleted) and reopens a COMPLETED stage to ACTIVE; for an 8-entry bracket, correcting quarterfinal 1 re-fills semifinal 1's slot 1 and, when semifinal 1 was COMPLETED, resets it and clears its old winner from the final's slot 1 (resetting the final too when it was COMPLETED), cascading in ascending round order; a destination already holding the new winner is a no-op; a corrected match with no bracket position or no drawSize re-derives nothing; a missing destination match raises BusinessRuleViolationError.",
+        "tests/unit/application/match-correction.service.test.ts is extended so correctResult accepts a completed knockout match, returns the new result, and leaves the old winner absent from the next round's slot (the destination now holds the new winner); the existing group cases still pass.",
+        "tests/unit/application/transaction-boundaries.test.ts records exactly one runInTransaction for a knockout correctResult and asserts recordResult is unchanged.",
+        "tests/integration/api/routes.test.ts asserts POST /api/v1/matches/:id/result/correction returns 201 with the new result for a completed knockout match (a 4-entry bracket, correcting a semifinal so the final's slot 1 changes and the final is reset), 422 for a non-completed match, 404 for an unknown id and 400 for an empty games array; the existing group-correction cases still pass unchanged.",
+        "apps/web/src/pages/tournaments/match-detail.test.tsx passes: the Correct result control is rendered for a completed knockout match and submitting it calls the correction endpoint (never the record endpoint); the group case still passes.",
+        "e2e/result-correction.spec.ts passes against the real UI/API/PostgreSQL: generate a 4-entry bracket, play both semifinals, play the final; correct a semifinal so the other competitor wins, assert the semifinal stays COMPLETED with the new winner, the final's slot 1 holds the new winner and the final is no longer COMPLETED (its stale result was reset); the existing group-correction assertions still pass and the read-only knockout assertion is replaced by the new correction behaviour.",
+        "No database migration, seed change or workflow change is introduced: the cascade reuses the existing matches, match_participants and match_games tables and the diff adds nothing under prisma/migrations/** and does not touch prisma/seed.ts or .github/workflows/ci.yml.",
+        "The realtime catalogue is unchanged: tests/unit/domain/realtime.test.ts (its exact-list assertion) passes without edits; the cascade reuses MATCH_RESULT_RECORDED, MATCH_COMPLETED, KNOCKOUT_MATCH_POPULATED and STAGE_STATUS_CHANGED.",
+        "npm run lint, npm run typecheck, npm test, npm run build and npm run test:e2e pass."
+      ],
+      "outOfScope": [
+        "A reset bracket / re-generate bracket route, or changing bracket size or first-round pairings after generation (the bracket stays generated-once).",
+        "An audit trail / correction history (V1 has none).",
+        "Any new realtime event type, any second data-fetching framework, any change to recordResult, MATCH_TRANSITIONS or MatchService.transitionStatus.",
+        "Export/import/reset of a whole tournament, court/stage deletion, scheduler parity, team levels and the other TASK-5 gaps (G7-G16).",
+        "Production data, credentials, or a hand merge."
+      ],
+      "humanApproval": false,
+      "dependsOn": [
+        "AI-002"
+      ],
+      "references": [
+        "AGENTS.md",
+        "docs/phase-6-knockout.md",
+        "docs/tasks/task-5-parity-audit.md",
+        "docs/tasks/AI-002-match-result-correction.md",
+        "packages/domain/src/correction.ts",
+        "packages/domain/src/bracket.ts",
+        "packages/domain/src/scoring.ts",
+        "packages/application/src/services/match-result.service.ts",
+        "packages/application/src/services/knockout-progression.service.ts",
+        "packages/application/src/repositories/index.ts",
+        "packages/infrastructure/src/repositories.ts",
+        "apps/api/src/http/routes/stage-match.routes.ts",
+        "apps/api/src/composition/api-services.ts",
+        "apps/web/src/pages/tournaments/match-detail.tsx",
+        "e2e/result-correction.spec.ts"
+      ],
+      "createdAt": "2026-10-01T12:40:00Z"
     }
   ]
 }
