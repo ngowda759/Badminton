@@ -127,7 +127,11 @@ if (typeof args.stage !== 'string') {
 }
 
 const prompt = buildPrompt(args);
-const host = (process.env.OPENHANDS_HOST ?? 'https://app.all-hands.dev').replace(/\/$/, '');
+// `${{ vars.OPENHANDS_HOST }}` is injected as an *empty string* when the
+// repository variable is unset, so `?? default` is not enough — an empty value
+// must fall back too, or the request URL degrades to a bare path and dispatch
+// fails with ERR_INVALID_URL.
+const host = (process.env.OPENHANDS_HOST || 'https://app.all-hands.dev').replace(/\/$/, '');
 const apiKey = process.env.OPENHANDS_API_KEY ?? '';
 const repository = process.env.GITHUB_REPOSITORY ?? 'ngowda759/Badminton';
 const branch =
@@ -152,6 +156,8 @@ if (args['dry-run'] === true || apiKey.length === 0) {
     console.log(
       JSON.stringify(
         {
+          host,
+          url: `${host}/api/v1/app-conversations`,
           ...payload,
           initial_message: { content: [{ type: 'text', text: `<${prompt.length} chars>` }] },
         },

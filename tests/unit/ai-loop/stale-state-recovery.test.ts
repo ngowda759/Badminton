@@ -192,6 +192,12 @@ describe('stale-state recovery (loop-state.mjs recover)', () => {
   beforeEach(() => {
     scratch = mkdtempSync(join(tmpdir(), 'badminton-recover-'));
     cpSync(resolve(root, '.ai'), join(scratch, '.ai'), { recursive: true });
+    // Pin the queue to a fixed one-task baseline: the live queue gains AI-002,
+    // AI-003, … as the loop runs, and these tests assert recovery never appends.
+    writeFileSync(
+      join(scratch, '.ai/state/task-queue.json'),
+      `${JSON.stringify(queue(), null, 2)}\n`,
+    );
     mkdirSync(join(scratch, 'bin'), { recursive: true });
   });
 
@@ -301,6 +307,10 @@ describe('push-event recovery (advance-after-merge.mjs)', () => {
   beforeEach(() => {
     scratch = mkdtempSync(join(tmpdir(), 'badminton-push-recovery-'));
     cpSync(resolve(root, '.ai'), join(scratch, '.ai'), { recursive: true });
+    writeFileSync(
+      join(scratch, '.ai/state/task-queue.json'),
+      `${JSON.stringify(queue(), null, 2)}\n`,
+    );
   });
 
   afterEach(() => {
@@ -371,5 +381,40 @@ describe('architect / next-task stage owns AI-002 generation', () => {
     );
     expect(pushBranch).not.toMatch(/loop-tasks\.mjs/);
     expect(pushBranch).not.toMatch(/\bappend\b/);
+  });
+});
+
+describe('dispatch-conversation host resolution', () => {
+  function dryRun(env: Record<string, string | undefined>): { host: string; url: string } {
+    const result = spawnSync(
+      'node',
+      [resolve(root, '.ai/scripts/dispatch-conversation.mjs'), '--stage', 'next-task', '--dry-run'],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, ...env } },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const start = result.stdout.indexOf('{');
+    return JSON.parse(result.stdout.slice(start)) as { host: string; url: string };
+  }
+
+  it('falls back to the default host when OPENHANDS_HOST is unset', () => {
+    const payload = dryRun({ OPENHANDS_HOST: undefined });
+    expect(payload.host).toBe('https://app.all-hands.dev');
+    expect(payload.url).toBe('https://app.all-hands.dev/api/v1/app-conversations');
+  });
+
+  it('falls back to the default host when OPENHANDS_HOST is an empty string', () => {
+    // `${{ vars.OPENHANDS_HOST }}` is injected as an empty string when the
+    // repository variable is unset; a bare `?? default` would keep the empty
+    // value and produce an invalid URL (ERR_INVALID_URL) — the exact failure
+    // that broke the first recovery dispatch.
+    const payload = dryRun({ OPENHANDS_HOST: '' });
+    expect(payload.host).toBe('https://app.all-hands.dev');
+    expect(payload.url).toBe('https://app.all-hands.dev/api/v1/app-conversations');
+  });
+
+  it('honours a configured host and strips a trailing slash', () => {
+    const payload = dryRun({ OPENHANDS_HOST: 'https://example.test/' });
+    expect(payload.host).toBe('https://example.test');
+    expect(payload.url).toBe('https://example.test/api/v1/app-conversations');
   });
 });

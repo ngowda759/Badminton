@@ -113,9 +113,38 @@ describe('AI loop scripts', () => {
 describe('AI loop state machine', () => {
   let scratch: string;
 
+  // A fixed one-task queue so these tests exercise the state machine, not the
+  // live queue. The loop appends real tasks (AI-002, AI-003, …) as it runs, so
+  // copying `.ai/state/task-queue.json` verbatim would make the suite depend on
+  // how far the autonomous loop happens to have progressed.
+  const baseQueue = {
+    version: 1,
+    updatedAt: '2026-01-01T00:00:00Z',
+    tasks: [
+      {
+        id: 'AI-001',
+        title: 'Establish the autonomous AI development loop',
+        phase: 'infrastructure',
+        status: 'done',
+        summary: 'loop infrastructure',
+        acceptanceCriteria: ['validates'],
+        outOfScope: [],
+        humanApproval: false,
+        dependsOn: [],
+        createdAt: '2026-01-01T00:00:00Z',
+        pr: 19,
+        branch: 'automation/ai-development-loop',
+      },
+    ],
+  };
+
   beforeEach(() => {
     scratch = mkdtempSync(join(tmpdir(), 'badminton-loop-'));
     cpSync(resolve(root, '.ai'), join(scratch, '.ai'), { recursive: true });
+    writeFileSync(
+      join(scratch, '.ai/state/task-queue.json'),
+      `${JSON.stringify(baseQueue, null, 2)}\n`,
+    );
   });
 
   afterEach(() => {
