@@ -258,6 +258,13 @@ export interface MatchParticipantRepository {
    * `findSlot`.
    */
   fillSlot(matchId: string, slot: number, entryId: string): Promise<MatchParticipant>;
+  /**
+   * Removes the participant occupying `slot`, if any, so a corrected result can
+   * re-derive the bracket: the downstream slot is emptied before the new winner
+   * is written. A no-op when the slot is already empty. The compound unique
+   * index is the database's final guard on the subsequent `fillSlot`.
+   */
+  clearSlot(matchId: string, slot: number): Promise<void>;
 }
 
 export interface MatchGameRepository {

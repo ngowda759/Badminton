@@ -138,6 +138,10 @@ export {
   createKnockoutProgressionService,
   type KnockoutProgressionService,
 } from './services/knockout-progression.service.ts';
+export {
+  createKnockoutCorrectionService,
+  type KnockoutCorrectionService,
+} from './services/knockout-correction.service.ts';
 export type {
   Bracket,
   BracketMatch,

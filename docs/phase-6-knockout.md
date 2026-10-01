@@ -564,10 +564,13 @@ Deliberate limitations (Phase 6 plus TASK-4 progression):
   (rank-interleaved) qualifiers.
 - Single elimination only; no double elimination, consolation or third-place
   match.
-- No bracket reset/edit after generation; a completed result is immutable.
+- No bracket reset/edit after generation; a completed result is immutable except
+  through the result-correction workflow (TASK-9/AI-003), which re-derives the
+  bracket from the corrected match downward.
 - No automatic advancement without an explicit completed result; a bye is the one
   exception, advanced at generation time.
-- No result-correction workflow.
+- A corrected result re-derives the bracket; there is no correction history or
+  audit trail (V1 has none).
 - Stage completion is derived on read; there is no background reconciliation.
 
 ## 16. Non-goals
@@ -577,14 +580,15 @@ federation seeding rules, court allocation, venue scheduling, time-slot
 optimization, live scoring, WebSockets/realtime, authentication/authorization,
 payments, notifications, public spectator pages, CSV import/export, AI features,
 analytics, tournament statistics dashboards, double elimination, consolation
-brackets, third-place matches, best-of-five scoring, and match-result correction.
-Group→knockout qualification is now implemented (TASK-4) and is no longer a
-non-goal.
+brackets, third-place matches, best-of-five scoring, and an audit trail for
+match-result correction. Group→knockout qualification is now implemented
+(TASK-4) and is no longer a non-goal, and match-result correction is now
+implemented (TASK-9/AI-003).
 
 ## 17. Future extension points
 
 - Ranking/Elo inputs to replace the group-standing draw.
-- A result-correction workflow with an audit trail.
+- An audit trail / correction history for the result-correction workflow.
 - Consolation/third-place brackets, double elimination.
 - Court/time scheduling integrated with the bracket.
 

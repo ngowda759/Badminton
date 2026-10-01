@@ -1956,8 +1956,17 @@ describe('/api/v1 match result correction', () => {
     return { matchId: match.id, entryOne: entryOne.id, entryTwo: entryTwo.id };
   }
 
-  /** A completed KNOCKOUT match with a bracket position. */
-  async function completedKnockoutMatch(): Promise<string> {
+  /**
+   * A 4-entry KNOCKOUT bracket with both semifinals and the final completed.
+   * Returns the semifinal 1 match (whose correction re-derives the bracket) and
+   * the final match (whose slot 1 is re-filled and whose stale result is reset).
+   */
+  async function completedKnockoutBracket(): Promise<{
+    semi1: string;
+    finalId: string;
+    semi1Slot1: string;
+    semi1Slot2: string;
+  }> {
     const tournamentId = await registrationOpenTournament();
     const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
     const stage = await api.services.stages.create(categoryId, {
@@ -1965,25 +1974,31 @@ describe('/api/v1 match result correction', () => {
       type: 'KNOCKOUT',
       sequence: 1,
     });
-    const match = await api.services.matches.create(stage.id, {
-      sequence: 1,
-      roundNumber: 1,
-      matchNumber: 1,
-    });
-    const p1 = await api.services.players.create({ name: 'K1' });
-    const p2 = await api.services.players.create({ name: 'K2' });
-    const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
-    const entryTwo = await api.services.entries.register({ categoryId, playerId: p2.id });
-    await api.services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
-    await api.services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
-    await api.services.matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
-    await api.services.matchResults.recordResult(match.id, {
-      games: [
-        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-        { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
-      ],
-    });
-    return match.id;
+    const entryIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const player = await api.services.players.create({ name: `K${String(index + 1)}` });
+      const entry = await api.services.entries.register({ categoryId, playerId: player.id });
+      entryIds.push(entry.id);
+    }
+    const bracket = await api.services.knockout.generateBracket(stage.id, { entryIds });
+    await api.services.stages.transitionStatus(stage.id, { status: 'ACTIVE' });
+
+    const semi1 = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+    const semi2 = bracket.rounds[0]?.matches[1]?.matchId ?? '';
+    const finalId = bracket.rounds[1]?.matches[0]?.matchId ?? '';
+    const twoZero = [
+      { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+      { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+    ];
+    for (const matchId of [semi1, semi2, finalId]) {
+      await api.services.matches.transitionStatus(matchId, { status: 'IN_PROGRESS' });
+      await api.services.matchResults.recordResult(matchId, { games: twoZero });
+    }
+
+    const semi1Participants = await api.services.matches.listParticipants(semi1);
+    const semi1Slot1 = semi1Participants.find((slot) => slot.slot === 1)?.entryId ?? '';
+    const semi1Slot2 = semi1Participants.find((slot) => slot.slot === 2)?.entryId ?? '';
+    return { semi1, finalId, semi1Slot1, semi1Slot2 };
   }
 
   it('corrects a completed group result and returns 201 with the new winner', async () => {
@@ -2007,12 +2022,80 @@ describe('/api/v1 match result correction', () => {
     expect(result.json<{ data: { winnerEntryId: string } }>().data.winnerEntryId).toBe(entryTwo);
   });
 
-  it('rejects correcting a knockout match with 422', async () => {
-    const matchId = await completedKnockoutMatch();
+  it('corrects a completed knockout semifinal, re-fills the final and resets it (201)', async () => {
+    const { semi1, finalId, semi1Slot1, semi1Slot2 } = await completedKnockoutBracket();
+
+    // The final was won by the semifinal 1 winner, who sits in its slot 1.
+    const finalBefore = await app.inject({ method: 'GET', url: `/api/v1/matches/${finalId}` });
+    expect(finalBefore.json<{ data: { status: string } }>().data.status).toBe('COMPLETED');
+    const finalParticipantsBefore = await app.inject({
+      method: 'GET',
+      url: `/api/v1/matches/${finalId}/participants`,
+    });
+    expect(
+      finalParticipantsBefore
+        .json<{ data: readonly { slot: number; entryId: string }[] }>()
+        .data.find((slot) => slot.slot === 1)?.entryId,
+    ).toBe(semi1Slot1);
+
+    // Correct semifinal 1 so the other competitor wins.
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/matches/${semi1}/result/correction`,
+      payload: {
+        games: [
+          { gameNumber: 1, participant1Points: 15, participant2Points: 21 },
+          { gameNumber: 2, participant1Points: 18, participant2Points: 21 },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json<{ data: { winnerEntryId: string } }>();
+    expect(body.data.winnerEntryId).toBe(semi1Slot2);
+
+    // The semifinal stays COMPLETED with the new winner.
+    const semiAfter = await app.inject({ method: 'GET', url: `/api/v1/matches/${semi1}` });
+    expect(semiAfter.json<{ data: { status: string } }>().data.status).toBe('COMPLETED');
+
+    // The final's slot 1 holds the new winner and the final is reset.
+    const finalParticipantsAfter = await app.inject({
+      method: 'GET',
+      url: `/api/v1/matches/${finalId}/participants`,
+    });
+    expect(
+      finalParticipantsAfter
+        .json<{ data: readonly { slot: number; entryId: string }[] }>()
+        .data.find((slot) => slot.slot === 1)?.entryId,
+    ).toBe(semi1Slot2);
+    const finalAfter = await app.inject({ method: 'GET', url: `/api/v1/matches/${finalId}` });
+    expect(finalAfter.json<{ data: { status: string } }>().data.status).not.toBe('COMPLETED');
+    const finalResult = await app.inject({
+      method: 'GET',
+      url: `/api/v1/matches/${finalId}/result`,
+    });
+    expect(finalResult.json<{ data: unknown }>().data).toBeNull();
+  });
+
+  it('returns 422 for a non-completed match', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const match = await api.services.matches.create(stage.id, { sequence: 1 });
+    const p1 = await api.services.players.create({ name: 'P1' });
+    const p2 = await api.services.players.create({ name: 'P2' });
+    const entryOne = await api.services.entries.register({ categoryId, playerId: p1.id });
+    const entryTwo = await api.services.entries.register({ categoryId, playerId: p2.id });
+    await api.services.matches.addParticipant(match.id, { entryId: entryOne.id, slot: 1 });
+    await api.services.matches.addParticipant(match.id, { entryId: entryTwo.id, slot: 2 });
 
     const response = await app.inject({
       method: 'POST',
-      url: `/api/v1/matches/${matchId}/result/correction`,
+      url: `/api/v1/matches/${match.id}/result/correction`,
       payload: { games: [{ gameNumber: 1, participant1Points: 21, participant2Points: 15 }] },
     });
 

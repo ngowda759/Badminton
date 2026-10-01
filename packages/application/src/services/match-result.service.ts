@@ -22,6 +22,7 @@ import type { RealtimeEventService } from '../realtime/event.service.ts';
 import type { RepositoryClient } from '../repositories/index.ts';
 import type { UnitOfWork } from '../repositories/unit-of-work.ts';
 import type { RecordMatchResultCommand } from './commands.ts';
+import type { KnockoutCorrectionService } from './knockout-correction.service.ts';
 import type { KnockoutProgressionService } from './knockout-progression.service.ts';
 import { resolveMatchTournamentId } from './resolve-tournament.ts';
 
@@ -56,11 +57,12 @@ import { resolveMatchTournamentId } from './resolve-tournament.ts';
 export interface MatchResultService {
   recordResult(matchId: string, command: RecordMatchResultCommand): Promise<MatchResult>;
   /**
-   * Re-scores a completed **group** match, replacing its stored games and
-   * winner in one transaction so a mistyped score can be corrected. Standings
-   * and qualification are derived from the stored games, so they correct
-   * automatically. A knockout match - which would require re-deriving the
-   * bracket - is rejected; see `isMatchCorrectable`.
+   * Re-scores a completed match, replacing its stored games and winner in one
+   * transaction so a mistyped score can be corrected. For a group match,
+   * standings and qualification are derived from the stored games, so they
+   * correct automatically. For a knockout match the bracket is re-derived in
+   * the same transaction (see `KnockoutCorrectionService`); see
+   * `isMatchCorrectable`.
    */
   correctResult(matchId: string, command: RecordMatchResultCommand): Promise<MatchResult>;
   /** The stored result of a completed match, or `undefined` if it is not complete. */
@@ -72,6 +74,7 @@ export function createMatchResultService(
   unitOfWork: UnitOfWork,
   events: RealtimeEventService,
   progression?: KnockoutProgressionService,
+  correction?: KnockoutCorrectionService,
 ): MatchResultService {
   return {
     async recordResult(matchId, command): Promise<MatchResult> {
@@ -170,10 +173,12 @@ export function createMatchResultService(
 
     async correctResult(matchId, command): Promise<MatchResult> {
       // A correction replaces the stored games and the derived winner of a
-      // completed group match in one unit of work, so a mistyped score is fixed
+      // completed match in one unit of work, so a mistyped score is fixed
       // atomically: a failure leaves the original result, games and winner
-      // untouched. Standings and qualification are derived from the stored
-      // games, so they correct automatically once this commits.
+      // untouched. For a group match, standings and qualification are derived
+      // from the stored games, so they correct automatically once this commits.
+      // For a knockout match the bracket is re-derived below, in the same
+      // transaction.
       return unitOfWork.runInTransaction(async (tx) => {
         const match = await tx.matches.findById(matchId);
         if (!match) {
@@ -188,20 +193,18 @@ export function createMatchResultService(
           throw new NotFoundError('Stage', match.stageId);
         }
 
-        // Only a completed **group** match may be corrected. A knockout match
-        // feeds a bracket and would require re-deriving it (clearing the
-        // next-round slot and un-completing downstream matches), which is a
-        // separate workflow; a non-completed match has no result. The stage
-        // type is the discriminator - a group fixture carries a round-robin
-        // `roundNumber`, so the bracket-position fields cannot be used.
+        // Only a completed match may be corrected: a non-completed match has no
+        // result. A knockout match's correction additionally re-derives the
+        // bracket (below); a group match's standings correct from the stored
+        // games. The stage type is the discriminator - a group fixture carries a
+        // round-robin `roundNumber`, so the bracket-position fields cannot be
+        // used.
         if (!isMatchCorrectable(match, stage)) {
-          throw new BusinessRuleViolationError(
-            'Only a completed group match result can be corrected.',
-          );
+          throw new BusinessRuleViolationError('Only a completed match result can be corrected.');
         }
 
-        // A group match is a single game, scored by the group validator
-        // (21 target, 30 ceiling).
+        // The stage type decides the format: a group match is a single game, a
+        // knockout match is played under its snapshotted per-round rule.
         const matchKind: MatchKind = stage.type === 'GROUP' ? 'GROUP' : 'KNOCKOUT';
         const rule = resolveKnockoutRule(stage, match);
         const games =
@@ -239,7 +242,6 @@ export function createMatchResultService(
 
         // The authoritative result changed, so the same two events
         // `recordResult` emits are recorded here, in the same transaction.
-        // There is deliberately no knockout progression: this path is group-only.
         await events.record(tx, {
           tournamentId,
           eventType: REALTIME_EVENTS.MATCH_RESULT_RECORDED,
@@ -252,6 +254,15 @@ export function createMatchResultService(
           aggregateType: REALTIME_AGGREGATES.MATCH,
           aggregateId: matchId,
         });
+
+        // A knockout correction changes who advances, so the bracket must be
+        // re-derived from this match downward - the next-round slot re-filled,
+        // already-decided downstream matches reset and a completed stage
+        // reopened - all in this same unit of work. A group correction derives
+        // its standings from the stored games, so it needs no cascade.
+        if (correction && stage.type === 'KNOCKOUT') {
+          await correction.reopen(tx, stage.id, matchId, winnerEntryId);
+        }
 
         return toResult(completed, winnerEntryId, loserEntryId, savedGames, matchKind, rule);
       });

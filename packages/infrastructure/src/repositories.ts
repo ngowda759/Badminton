@@ -770,6 +770,13 @@ function createMatchParticipantRepository(db: Db): MatchParticipantRepository {
         toMatchParticipant(await db.matchParticipant.create({ data: { matchId, slot, entryId } })),
       );
     },
+    async clearSlot(matchId, slot) {
+      // Empties a slot so a corrected bracket can re-fill it. `deleteMany` is a
+      // no-op when the slot is already empty, so re-derivation stays idempotent.
+      return translatePersistenceErrors(async () => {
+        await db.matchParticipant.deleteMany({ where: { matchId, slot } });
+      });
+    },
   };
 }
 

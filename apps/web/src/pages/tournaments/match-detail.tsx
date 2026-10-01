@@ -21,7 +21,8 @@ import { useApiQuery } from '@/hooks/use-api-query.ts';
 import { useEntryNames } from '@/hooks/use-entry-names.ts';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { orDash } from '@/lib/format.ts';
-import { resolveKnockoutRule, type MatchKind } from '@/lib/scoring.ts';
+import { isResultCorrectable } from '@/lib/correction.ts';
+import { resolveKnockoutRule, type KnockoutRule, type MatchKind } from '@/lib/scoring.ts';
 import { matchNextStatuses } from '@/lib/lifecycle.ts';
 import {
   compactErrors,
@@ -36,10 +37,11 @@ import { useTournamentRefresh } from '@/realtime/tournament-refresh.tsx';
  *
  * Only two slots exist (1 and 2). Scoring is available once the match is in
  * progress; the winner is always derived from the scores by the API, never
- * chosen here. A completed result is shown read-only. Phase 8.5 refetches every
- * query on this screen when a tournament realtime event arrives, so an opponent
- * scoring the same match on another device is reflected without a manual
- * refresh.
+ * chosen here. A completed result can be corrected: for a group match the
+ * standings are recalculated, and for a knockout match the bracket is
+ * re-derived on the server. Phase 8.5 refetches every query on this screen when
+ * a tournament realtime event arrives, so an opponent scoring the same match on
+ * another device is reflected without a manual refresh.
  */
 export function MatchDetailPage() {
   const api = useApi();
@@ -113,6 +115,11 @@ export function MatchDetailPage() {
   const refreshAll = (): void => {
     matchQuery.refetch();
     resultQuery.refetch();
+    // A knockout correction re-derives the bracket (the next-round slot and any
+    // reset downstream match), so the participant slots and stage status must
+    // be refetched too.
+    participantQuery.refetch();
+    stageQuery.refetch();
   };
 
   return (
@@ -235,15 +242,18 @@ export function MatchDetailPage() {
             ) : null}
             {isKnockout ? (
               <p className="text-muted-foreground text-sm">
-                The winner has advanced to the next knockout round.
+                The winner has advanced to the next knockout round. Correcting the result re-derives
+                the bracket: the next round is re-seeded and any already-decided downstream match is
+                reset.
               </p>
             ) : null}
-            {!isKnockout ? (
+            {isResultCorrectable(match.status) ? (
               <ResultCorrection
                 matchId={match.id}
                 matchKind={matchKind}
                 slot1Label={slot1Label}
                 slot2Label={slot2Label}
+                {...(knockoutRule ? { rule: knockoutRule } : {})}
                 {...(resultQuery.state.status === 'loaded' && resultQuery.state.data
                   ? { initialGames: resultQuery.state.data.games }
                   : {})}
@@ -284,20 +294,23 @@ export function MatchDetailPage() {
 }
 
 /**
- * Correction control for a completed group match.
+ * Correction control for a completed match.
  *
- * A recorded group result can be corrected when it was mistyped. The action is
+ * A recorded result can be corrected when it was mistyped. The action is
  * destructive (it replaces the stored result), so it goes through the existing
  * `ConfirmDialog` before the scoring form is revealed, pre-filled from the
  * stored games. Submitting goes through `MatchScoring` in correction mode, so
- * the score-entry UI and its validation are never duplicated. A knockout result
- * is immutable and never renders this control.
+ * the score-entry UI and its validation are never duplicated. For a knockout
+ * match the correction also re-derives the bracket on the server (the
+ * next-round slot and any already-decided downstream match are reset), which
+ * the confirmation copy makes explicit.
  */
 function ResultCorrection({
   matchId,
   matchKind,
   slot1Label,
   slot2Label,
+  rule,
   initialGames,
   onCorrected,
 }: {
@@ -305,11 +318,14 @@ function ResultCorrection({
   readonly matchKind: MatchKind;
   readonly slot1Label: string;
   readonly slot2Label: string;
+  /** The knockout match's scoring rule; ignored for a group match. */
+  readonly rule?: KnockoutRule;
   readonly initialGames?: readonly InitialGameScore[];
   readonly onCorrected: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [editing, setEditing] = useState(false);
+  const isKnockout = matchKind === 'KNOCKOUT';
 
   if (!editing) {
     return (
@@ -327,7 +343,11 @@ function ResultCorrection({
           open={confirming}
           onOpenChange={setConfirming}
           title="Correct this result?"
-          description="The recorded score and winner will be replaced. Group standings and qualification are recalculated from the corrected result."
+          description={
+            isKnockout
+              ? 'The recorded score and winner will be replaced. The bracket is re-derived: the winner advances in the next round and any downstream match that was already decided is reset.'
+              : 'The recorded score and winner will be replaced. Group standings and qualification are recalculated from the corrected result.'
+          }
           confirmLabel="Correct result"
           destructive
           onConfirm={() => {
@@ -347,6 +367,7 @@ function ResultCorrection({
         slot1Label={slot1Label}
         slot2Label={slot2Label}
         matchKind={matchKind}
+        {...(rule ? { rule } : {})}
         correct
         {...(initialGames ? { initialGames } : {})}
         onCompleted={onCorrected}
