@@ -232,7 +232,7 @@ describe('MatchResultService.recordResult (knockout stage)', () => {
     ).rejects.toBeInstanceOf(BusinessRuleViolationError);
   });
 
-  it('accepts a 30-29 deciding game at the ceiling', async () => {
+  it('accepts a deciding game past 30 at the round target (no ceiling)', async () => {
     const categoryId = await singlesCategory();
     const stageId = await seedKnockoutStage(repos.client, categoryId);
     const { matchId } = await knockoutMatchInStage(categoryId, stageId);
@@ -241,11 +241,65 @@ describe('MatchResultService.recordResult (knockout stage)', () => {
       games: [
         { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
         { gameNumber: 2, participant1Points: 15, participant2Points: 21 },
-        { gameNumber: 3, participant1Points: 30, participant2Points: 29 },
+        { gameNumber: 3, participant1Points: 31, participant2Points: 29 },
       ],
     });
     expect(result.winnerSlot).toBe(1);
     expect(result.winnerGames).toBe(2);
+  });
+
+  it('records a straight-set knockout result from the snapshotted rule', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const match = await repos.client.matches.create({
+      stageId,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+      knockoutFormat: 'single_game',
+      knockoutPointsPerGame: 11,
+    });
+    const slot1 = await entryIn(categoryId, 'Player A');
+    const slot2 = await entryIn(categoryId, 'Player B');
+    await matches.addParticipant(match.id, { entryId: slot1, slot: 1 });
+    await matches.addParticipant(match.id, { entryId: slot2, slot: 2 });
+    await matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+
+    const result = await results.recordResult(match.id, {
+      games: [{ gameNumber: 1, participant1Points: 11, participant2Points: 5 }],
+    });
+    expect(result.winnerSlot).toBe(1);
+    expect(result.winnerGames).toBe(1);
+    expect(result.loserGames).toBe(0);
+  });
+
+  it('applies the round target when the stage configures one', async () => {
+    const categoryId = await singlesCategory();
+    const stageId = await seedKnockoutStage(repos.client, categoryId, {
+      knockoutRules: { qf: { format: 'best_of_3', pointsPerGame: 15 } },
+    });
+    const match = await repos.client.matches.create({
+      stageId,
+      sequence: 1,
+      roundNumber: 1,
+      matchNumber: 1,
+      status: 'SCHEDULED',
+    });
+    const slot1 = await entryIn(categoryId, 'Player A');
+    const slot2 = await entryIn(categoryId, 'Player B');
+    await matches.addParticipant(match.id, { entryId: slot1, slot: 1 });
+    await matches.addParticipant(match.id, { entryId: slot2, slot: 2 });
+    await matches.transitionStatus(match.id, { status: 'IN_PROGRESS' });
+
+    // A 15-13 game is a legal quarter-final under the configured 15 target.
+    const result = await results.recordResult(match.id, {
+      games: [
+        { gameNumber: 1, participant1Points: 15, participant2Points: 13 },
+        { gameNumber: 2, participant1Points: 15, participant2Points: 12 },
+      ],
+    });
+    expect(result.winnerSlot).toBe(1);
   });
 });
 
@@ -269,7 +323,7 @@ describe('MatchResultService.recordResult (lifecycle)', () => {
     expect(await repos.client.matchGames.listByMatch(matchId)).toHaveLength(0);
   });
 
-  it('rejects a 30-29 game beyond the ceiling semantics', async () => {
+  it('rejects a knockout game won by a single point at the target (no ceiling)', async () => {
     const categoryId = await singlesCategory();
     const stageId = await seedKnockoutStage(repos.client, categoryId);
     const { matchId } = await knockoutMatchInStage(categoryId, stageId);
@@ -277,7 +331,7 @@ describe('MatchResultService.recordResult (lifecycle)', () => {
     await expect(
       results.recordResult(matchId, {
         games: [
-          { gameNumber: 1, participant1Points: 31, participant2Points: 29 },
+          { gameNumber: 1, participant1Points: 30, participant2Points: 29 },
           { gameNumber: 2, participant1Points: 21, participant2Points: 15 },
         ],
       }),

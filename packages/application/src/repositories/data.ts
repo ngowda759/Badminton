@@ -4,7 +4,9 @@ import type {
   CategoryStatus,
   CourtStatus,
   EntryStatus,
+  KnockoutMatchFormat,
   MatchGame,
+  MatchScoringRule,
   MatchSlot,
   MatchStatus,
   RealtimeAggregateType,
@@ -97,6 +99,7 @@ export interface CreateStageData {
   readonly sequence: number;
   readonly drawSize: number | null;
   readonly qualifiersPerGroup: number | null;
+  readonly knockoutRules?: Readonly<Record<string, MatchScoringRule>> | null;
   readonly status: StageStatus;
 }
 
@@ -105,6 +108,7 @@ export interface UpdateStageData {
   readonly sequence?: number;
   readonly drawSize?: number | null;
   readonly qualifiersPerGroup?: number | null;
+  readonly knockoutRules?: Readonly<Record<string, MatchScoringRule>> | null;
 }
 
 export interface CreateMatchData {
@@ -113,6 +117,8 @@ export interface CreateMatchData {
   readonly roundNumber: number | null;
   readonly matchNumber: number | null;
   readonly status: MatchStatus;
+  readonly knockoutFormat?: KnockoutMatchFormat | null;
+  readonly knockoutPointsPerGame?: number | null;
 }
 
 export interface UpdateMatchData {

@@ -119,6 +119,18 @@ export interface EntryDto {
   readonly updatedAt: string;
 }
 
+/** A knockout match format: first to two games, or a single "straight" game. */
+export type KnockoutFormat = 'best_of_3' | 'single_game';
+
+/** One round's knockout scoring rule: match format and game points target. */
+export interface KnockoutRuleDto {
+  readonly format: KnockoutFormat;
+  readonly pointsPerGame: number;
+}
+
+/** Per-round knockout scoring configuration, keyed by round tag. */
+export type KnockoutRulesDto = Readonly<Record<string, KnockoutRuleDto>>;
+
 export interface StageDto {
   readonly id: string;
   readonly categoryId: string;
@@ -128,6 +140,8 @@ export interface StageDto {
   readonly drawSize: number | null;
   /** How many competitors advance from each feeder group; null when unset. */
   readonly qualifiersPerGroup: number | null;
+  /** Per-round knockout scoring configuration; null when unset. */
+  readonly knockoutRules: KnockoutRulesDto | null;
   readonly status: StageStatus;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -142,6 +156,9 @@ export interface MatchDto {
   readonly status: MatchStatus;
   /** Set once the match is completed; the winning entry. */
   readonly winnerEntryId: string | null;
+  /** The knockout rule snapshotted when the bracket was generated; null otherwise. */
+  readonly knockoutFormat: KnockoutFormat | null;
+  readonly knockoutPointsPerGame: number | null;
   readonly courtId: string | null;
   readonly scheduledStartAt: string | null;
   readonly scheduledEndAt: string | null;
@@ -417,6 +434,8 @@ export interface CreateStageInput {
   readonly drawSize?: number;
   /** How many competitors advance from each feeder group into a knockout. */
   readonly qualifiersPerGroup?: number;
+  /** Per-round knockout scoring configuration, keyed by round tag. */
+  readonly knockoutRules?: KnockoutRulesDto;
 }
 
 export interface UpdateStageInput {
@@ -424,6 +443,8 @@ export interface UpdateStageInput {
   readonly sequence?: number;
   readonly drawSize?: number | null;
   readonly qualifiersPerGroup?: number | null;
+  /** Per-round knockout scoring configuration; refused once the bracket exists. */
+  readonly knockoutRules?: KnockoutRulesDto | null;
 }
 
 export interface CreateMatchInput {

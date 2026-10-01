@@ -547,10 +547,21 @@ function registerDatabaseSuite(prisma: PrismaClient): void {
         );
       });
 
-      it('rejects points outside 0-30', async () => {
+      it('accepts a knockout game past 30 but rejects points outside the legal range', async () => {
         const matchId = await matchFixture();
+        // A knockout game has no 30-point ceiling (a 31-29 game is legal at the
+        // 30-point target), so the structural check allows the extension the
+        // domain can produce. The round's exact target and the two-point margin
+        // stay domain concerns.
+        await expect(
+          createMatchGame(prisma, {
+            matchId,
+            participant1Points: 31,
+            participant2Points: 29,
+          }),
+        ).resolves.toBeDefined();
         await expectRejectionContaining(
-          createMatchGame(prisma, { matchId, participant1Points: 31 }),
+          createMatchGame(prisma, { matchId, participant1Points: 199 }),
           'match_games_points_in_range',
         );
         await expectRejectionContaining(

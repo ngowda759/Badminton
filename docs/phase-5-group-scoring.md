@@ -105,7 +105,9 @@ true row-local invariants only; the full badminton scoring rules stay in the
 domain layer.
 
 - `match_games_number_valid`: `gameNumber IN (1, 2, 3)`
-- `match_games_points_in_range`: both point columns `BETWEEN 0 AND 30`
+- `match_games_points_in_range`: both point columns `BETWEEN 0 AND 198` (TASK-7
+  widened the original `0..30` cap so a knockout game can pass 30; a group
+  game's 30-point cap is a domain rule, not a database one)
 - `match_games_winner_slot_valid`: `winnerSlot IN (1, 2)`
 - `match_games_winner_matches_points`: the winner slot has the higher score
 

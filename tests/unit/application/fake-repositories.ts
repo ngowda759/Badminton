@@ -545,6 +545,7 @@ function buildClient(state: State): RepositoryClient {
       const row: TournamentStage = {
         id: nextId('stage'),
         ...data,
+        knockoutRules: data.knockoutRules ?? null,
         createdAt: now(),
         updatedAt: now(),
       };
@@ -597,6 +598,8 @@ function buildClient(state: State): RepositoryClient {
         id: nextId('match'),
         ...data,
         winnerEntryId: null,
+        knockoutFormat: data.knockoutFormat ?? null,
+        knockoutPointsPerGame: data.knockoutPointsPerGame ?? null,
         courtId: null,
         scheduledStartAt: null,
         scheduledEndAt: null,

@@ -95,6 +95,23 @@ export {
   scoreMatchGames,
   scoreGroupMatch,
   determineMatchOutcome,
+  KNOCKOUT_MATCH_FORMATS,
+  MIN_POINTS_PER_GAME,
+  MAX_POINTS_PER_GAME,
+  MAX_KNOCKOUT_EXTENSION,
+  KNOCKOUT_ROUND_KEYS,
+  DEFAULT_KNOCKOUT_ROUND_RULES,
+  defaultKnockoutRules,
+  knockoutRoundName,
+  knockoutRoundKey,
+  validateKnockoutRule,
+  normalizeKnockoutRules,
+  knockoutRuleFor,
+  knockoutMatchRule,
+  isStraightSetFormat,
+  isValidKnockoutGameScore,
+  scoreKnockoutMatch,
+  determineKnockoutOutcome,
 } from './scoring.ts';
 export type {
   GameNumber,
@@ -103,6 +120,9 @@ export type {
   MatchKind,
   MatchOutcome,
   MatchResult,
+  KnockoutMatchFormat,
+  KnockoutRoundKey,
+  MatchScoringRule,
 } from './scoring.ts';
 export {
   calculateStandings,

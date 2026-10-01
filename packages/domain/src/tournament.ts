@@ -5,6 +5,7 @@
  * This module must stay free of Prisma, Fastify, React and any runtime
  * dependency. Persistence adapters map Prisma rows onto these types.
  */
+import type { KnockoutMatchFormat, MatchScoringRule } from './scoring.ts';
 
 /** All six tournament lifecycle states, mirroring the database enum. */
 export const TOURNAMENT_STATUSES = [
@@ -117,6 +118,13 @@ export interface TournamentStage {
    * configured). Qualification reads it from the feeder GROUP stage.
    */
   readonly qualifiersPerGroup: number | null;
+  /**
+   * Per-round knockout scoring configuration, keyed by round tag
+   * (`qf`, `sf`, `final`, …). Only meaningful on a KNOCKOUT stage; `null` when
+   * unset, in which case the domain defaults apply. It is edited before the
+   * knockout is started and snapshotted onto each generated match.
+   */
+  readonly knockoutRules: Readonly<Record<string, MatchScoringRule>> | null;
   readonly status: StageStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -135,6 +143,14 @@ export interface Match {
    * match; it is never chosen by a caller.
    */
   readonly winnerEntryId: string | null;
+  /**
+   * The scoring rule snapshotted from the stage's per-round configuration when
+   * a knockout bracket is generated. `null` on a group match or a knockout match
+   * created outside a generated bracket (the domain defaults then apply). A live
+   * match keeps the rule it was created under even if the stage is later edited.
+   */
+  readonly knockoutFormat: KnockoutMatchFormat | null;
+  readonly knockoutPointsPerGame: number | null;
   /**
    * Scheduling information is optional: a match can exist before an operator
    * decides where and when it is played. `courtId`, `scheduledStartAt` and

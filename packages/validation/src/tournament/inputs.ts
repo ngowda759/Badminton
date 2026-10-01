@@ -141,6 +141,25 @@ export const updateTournamentEntryInputSchema = z.object({
   seed: positiveIntegerSchema.nullable().optional(),
 });
 
+/** One round's knockout scoring rule: match format and game points target. */
+export const knockoutRoundRuleSchema = z.object({
+  format: z.enum(['best_of_3', 'single_game']),
+  pointsPerGame: z.number().int().min(1).max(99),
+});
+
+/**
+ * Per-round knockout scoring configuration, keyed by round tag (`qf`, `sf`,
+ * `final`, …). Keys are the V1 round catalogue; the application normalizes the
+ * catalogue against the defaults, so an omitted round is simply filled in.
+ *
+ * A partial record is deliberate (Zod 4's `z.record` with an enum key would
+ * require every key): the caller supplies only the rounds it overrides.
+ */
+export const knockoutRulesSchema = z.partialRecord(
+  z.enum(['r128', 'r64', 'r32', 'r16', 'qf', 'sf', 'final']),
+  knockoutRoundRuleSchema,
+);
+
 export const createStageInputSchema = z.object({
   name: nameSchema,
   type: z.enum(['GROUP', 'KNOCKOUT']),
@@ -149,6 +168,9 @@ export const createStageInputSchema = z.object({
   // How many competitors advance from each group into this stage's feeder
   // knockout. Only meaningful on a KNOCKOUT stage; validated as positive.
   qualifiersPerGroup: positiveIntegerSchema.optional(),
+  // Per-round knockout scoring configuration, keyed by round tag. Only
+  // meaningful on a KNOCKOUT stage; the application validates each round's rule.
+  knockoutRules: knockoutRulesSchema.optional(),
 });
 
 export const updateStageInputSchema = z
@@ -157,6 +179,7 @@ export const updateStageInputSchema = z
     sequence: positiveIntegerSchema,
     drawSize: positiveIntegerSchema.nullable(),
     qualifiersPerGroup: positiveIntegerSchema.nullable(),
+    knockoutRules: knockoutRulesSchema.nullable(),
   })
   .partial();
 

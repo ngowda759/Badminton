@@ -96,6 +96,7 @@ export async function seedStage(
     sequence: input.sequence ?? 1,
     drawSize: null,
     qualifiersPerGroup: input.qualifiersPerGroup ?? null,
+    knockoutRules: null,
     status: input.status ?? 'PENDING',
   });
   return stage.id;
@@ -120,7 +121,14 @@ export async function seedMatch(
 export async function seedKnockoutStage(
   client: RepositoryClient,
   categoryId: string,
-  input: { sequence?: number; status?: 'PENDING' | 'ACTIVE'; qualifiersPerGroup?: number } = {},
+  input: {
+    sequence?: number;
+    status?: 'PENDING' | 'ACTIVE';
+    qualifiersPerGroup?: number;
+    knockoutRules?: Readonly<
+      Record<string, { format: 'best_of_3' | 'single_game'; pointsPerGame: number }>
+    >;
+  } = {},
 ): Promise<string> {
   const stage = await client.stages.create({
     categoryId,
@@ -129,6 +137,7 @@ export async function seedKnockoutStage(
     sequence: input.sequence ?? 1,
     drawSize: null,
     qualifiersPerGroup: input.qualifiersPerGroup ?? null,
+    knockoutRules: input.knockoutRules ?? null,
     status: input.status ?? 'PENDING',
   });
   return stage.id;

@@ -11,6 +11,7 @@ import {
   analyseDraftResult,
   MAX_GAMES_PER_MATCH,
   type DraftGame,
+  type KnockoutRule,
   type MatchKind,
 } from '@/lib/scoring.ts';
 
@@ -20,8 +21,13 @@ export interface MatchScoringProps {
   readonly matchId: string;
   readonly slot1Label: string;
   readonly slot2Label: string;
-  /** A GROUP match is a single game; a KNOCKOUT match is best of three. */
+  /** A GROUP match is a single game; a KNOCKOUT match is played under `rule`. */
   readonly matchKind: MatchKind;
+  /**
+   * The knockout match's scoring rule (format and points target). Ignored for a
+   * group match, which always uses the single-game 21/30 rule.
+   */
+  readonly rule?: KnockoutRule;
   readonly onCompleted: () => void;
 }
 
@@ -29,27 +35,33 @@ export interface MatchScoringProps {
  * Score entry for an in-progress match.
  *
  * Points are entered per participant slot; the winner is always derived from
- * the scores, never chosen. A group match shows a single game and a knockout
- * match shows best of three, matching the domain rules. Illegal or incomplete
- * results are flagged immediately, but the API re-validates through the real
- * domain rules and stays authoritative - this form never decides a result.
+ * the scores, never chosen. A group match shows a single game; a knockout match
+ * follows its round's rule - best of three, or a single "straight set" game -
+ * and validates each game against the round's points target. Illegal or
+ * incomplete results are flagged immediately, but the API re-validates through
+ * the real domain rules and stays authoritative - this form never decides a
+ * result.
  */
 export function MatchScoring({
   matchId,
   slot1Label,
   slot2Label,
   matchKind,
+  rule,
   onCompleted,
 }: MatchScoringProps) {
   const api = useApi();
   const isGroup = matchKind === 'GROUP';
-  const initialGames = isGroup ? 1 : 2;
+  const straight = !isGroup && rule?.format === 'single_game';
+  const singleGame = isGroup || straight;
+  const initialGames = singleGame ? 1 : 2;
   const [games, setGames] = useState<readonly DraftGame[]>(
     Array.from({ length: initialGames }, () => ({ ...EMPTY_GAME })),
   );
   const mutation = useMutation<MatchResultDto>();
 
-  const analysis = analyseDraftResult(games, matchKind);
+  const analysis = analyseDraftResult(games, matchKind, rule);
+  const maxPoints = isGroup ? 30 : (rule?.pointsPerGame ?? 21) + 20;
 
   const setPoints = (index: number, field: keyof DraftGame, value: string): void => {
     setGames((current) =>
@@ -64,7 +76,7 @@ export function MatchScoring({
   };
 
   const removeGame = (index: number): void => {
-    const minimum = isGroup ? 1 : 2;
+    const minimum = singleGame ? 1 : 2;
     if (games.length > minimum) {
       setGames((current) => current.filter((_, position) => position !== index));
     }
@@ -98,7 +110,7 @@ export function MatchScoring({
             : gameAnalysis?.winnerSlot === 2
               ? slot2Label
               : undefined;
-        const gameLabel = isGroup ? 'Game' : `Game ${index + 1}`;
+        const gameLabel = singleGame ? 'Game' : `Game ${index + 1}`;
         return (
           <fieldset key={index} className="rounded-md border p-3">
             <legend className="px-1 text-sm font-medium">{gameLabel}</legend>
@@ -114,7 +126,7 @@ export function MatchScoring({
                     type="number"
                     inputMode="numeric"
                     min={0}
-                    max={30}
+                    max={maxPoints}
                     {...(describedBy ? { 'aria-describedby': describedBy } : {})}
                     aria-invalid={gameAnalysis?.error ? true : undefined}
                     value={game.participant1Points}
@@ -134,7 +146,7 @@ export function MatchScoring({
                     type="number"
                     inputMode="numeric"
                     min={0}
-                    max={30}
+                    max={maxPoints}
                     value={game.participant2Points}
                     onChange={(event) => {
                       setPoints(index, 'participant2Points', event.target.value);
@@ -147,7 +159,7 @@ export function MatchScoring({
               <p className="text-muted-foreground text-xs" data-testid={`game-${index + 1}-winner`}>
                 {winnerLabel ? `Game winner: ${winnerLabel}` : 'Game winner: —'}
               </p>
-              {isGroup ? null : (
+              {singleGame ? null : (
                 <Button
                   type="button"
                   variant="ghost"
@@ -166,7 +178,7 @@ export function MatchScoring({
       })}
 
       <div className="flex flex-wrap items-center gap-3">
-        {isGroup ? null : (
+        {singleGame ? null : (
           <Button
             type="button"
             variant="outline"
@@ -182,6 +194,12 @@ export function MatchScoring({
         </Button>
       </div>
 
+      {rule ? (
+        <p className="text-muted-foreground text-xs" data-testid="knockout-rule-hint">
+          {straight ? 'Straight set' : 'Best of 3'} to {rule.pointsPerGame} points, win by 2 clear
+          points.
+        </p>
+      ) : null}
       {analysis.matchError ? (
         <p className="text-destructive text-sm" role="alert" data-testid="match-score-error">
           {analysis.matchError}

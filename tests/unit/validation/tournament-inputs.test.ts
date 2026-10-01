@@ -2,8 +2,10 @@ import {
   addMatchParticipantInputSchema,
   createCategoryInputSchema,
   createPlayerInputSchema,
+  createStageInputSchema,
   createTournamentInputSchema,
   registerTournamentEntryInputSchema,
+  updateStageInputSchema,
 } from '@badminton/validation';
 import { describe, expect, it } from 'vitest';
 
@@ -170,5 +172,70 @@ describe('addMatchParticipantInputSchema', () => {
         slot: 3,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('createStageInputSchema knockout rules', () => {
+  it('accepts a partial per-round catalogue', () => {
+    const result = createStageInputSchema.safeParse({
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      knockoutRules: { final: { format: 'single_game', pointsPerGame: 21 } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a full catalogue', () => {
+    const result = createStageInputSchema.safeParse({
+      name: 'Knockout',
+      type: 'KNOCKOUT',
+      sequence: 1,
+      knockoutRules: {
+        qf: { format: 'best_of_3', pointsPerGame: 11 },
+        sf: { format: 'best_of_3', pointsPerGame: 15 },
+        final: { format: 'best_of_3', pointsPerGame: 21 },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an unknown round key', () => {
+    expect(
+      createStageInputSchema.safeParse({
+        name: 'Knockout',
+        type: 'KNOCKOUT',
+        sequence: 1,
+        knockoutRules: { semi: { format: 'best_of_3', pointsPerGame: 15 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an unknown format', () => {
+    expect(
+      createStageInputSchema.safeParse({
+        name: 'Knockout',
+        type: 'KNOCKOUT',
+        sequence: 1,
+        knockoutRules: { qf: { format: 'best_of_5', pointsPerGame: 11 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects an out-of-range target', () => {
+    for (const pointsPerGame of [0, 100]) {
+      expect(
+        createStageInputSchema.safeParse({
+          name: 'Knockout',
+          type: 'KNOCKOUT',
+          sequence: 1,
+          knockoutRules: { qf: { format: 'best_of_3', pointsPerGame } },
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('allows clearing the catalogue through update', () => {
+    expect(updateStageInputSchema.safeParse({ knockoutRules: null }).success).toBe(true);
   });
 });

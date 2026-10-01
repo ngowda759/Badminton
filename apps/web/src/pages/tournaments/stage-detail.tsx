@@ -2,12 +2,19 @@ import { useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { MatchDto, MatchParticipantDto, StageDto, StandingRowDto } from '@/api/types.ts';
+import type {
+  KnockoutRuleDto,
+  MatchDto,
+  MatchParticipantDto,
+  StageDto,
+  StandingRowDto,
+} from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { BracketSection } from '@/components/tournaments/knockout-bracket.tsx';
+import { KnockoutRulesEditor } from '@/components/tournaments/knockout-rules-editor.tsx';
 import { QualificationCard } from '@/components/tournaments/qualification-panel.tsx';
 import { GroupFixtureSetup } from '@/components/tournaments/group-fixture-setup.tsx';
 import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
@@ -396,12 +403,16 @@ function EditStageForm({
   const [qualifiersPerGroup, setQualifiersPerGroup] = useState(
     stage.qualifiersPerGroup === null ? '' : String(stage.qualifiersPerGroup),
   );
+  const [knockoutRules, setKnockoutRules] = useState<Readonly<Record<string, KnockoutRuleDto>>>(
+    stage.knockoutRules ?? {},
+  );
   const [errors, setErrors] = useState<FieldErrors>({});
   const mutation = useMutation<unknown>();
 
   // Qualification is configured on the feeder GROUP stage; a knockout stage
   // reads the qualifiers of the groups that precede it.
   const configuresQualification = stage.type === 'GROUP';
+  const configuresKnockout = stage.type === 'KNOCKOUT';
 
   const submit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -427,6 +438,9 @@ function EditStageForm({
         ...(configuresQualification
           ? { qualifiersPerGroup: qualifiersPerGroup.trim() ? Number(qualifiersPerGroup) : null }
           : {}),
+        // The knockout configuration is locked once the bracket exists, so it is
+        // not sent in that state (the API would refuse the edit anyway).
+        ...(configuresKnockout && !drawSizeLocked ? { knockoutRules } : {}),
       });
       onSaved();
     });
@@ -502,6 +516,24 @@ function EditStageForm({
             />
           )}
         </FormField>
+      ) : null}
+      {configuresKnockout ? (
+        <div className="space-y-3 sm:col-span-3">
+          <div>
+            <p className="text-sm font-medium">Knockout scoring</p>
+            <p className="text-muted-foreground text-xs">
+              {drawSizeLocked
+                ? 'Locked because the knockout stage has started.'
+                : 'Per-round format and points target. Applied when the bracket is generated.'}
+            </p>
+          </div>
+          <KnockoutRulesEditor
+            drawSize={drawSizeLocked ? stage.drawSize : drawSize.trim() ? Number(drawSize) : null}
+            rules={knockoutRules}
+            disabled={drawSizeLocked}
+            onChange={setKnockoutRules}
+          />
+        </div>
       ) : null}
       <div className="sm:col-span-3">
         <Button type="submit" disabled={mutation.pending}>

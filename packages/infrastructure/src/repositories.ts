@@ -37,7 +37,8 @@ import type {
   UpdateTeamData,
   UpdateTournamentData,
 } from '@badminton/application';
-import type { Prisma, PrismaClient, TransactionClient } from '@badminton/database';
+import { Prisma } from '@badminton/database';
+import type { PrismaClient, TransactionClient } from '@badminton/database';
 
 import { translatePersistenceErrors } from './errors.ts';
 import {
@@ -407,8 +408,13 @@ function createEntryRepository(db: Db): TournamentEntryRepository {
 function createStageRepository(db: Db): TournamentStageRepository {
   return {
     create(data: CreateStageData) {
+      const { knockoutRules, ...rest } = data;
       return translatePersistenceErrors(async () =>
-        toTournamentStage(await db.tournamentStage.create({ data })),
+        toTournamentStage(
+          await db.tournamentStage.create({
+            data: { ...rest, knockoutRules: toNullableJson(knockoutRules ?? null) },
+          }),
+        ),
       );
     },
     async findById(id: string) {
@@ -437,8 +443,19 @@ function createStageRepository(db: Db): TournamentStageRepository {
       });
     },
     update(id: string, data: UpdateStageData) {
+      const { knockoutRules, ...rest } = data;
       return translatePersistenceErrors(async () =>
-        toTournamentStage(await db.tournamentStage.update({ where: { id }, data })),
+        toTournamentStage(
+          await db.tournamentStage.update({
+            where: { id },
+            data: {
+              ...rest,
+              ...(knockoutRules !== undefined
+                ? { knockoutRules: toNullableJson(knockoutRules) }
+                : {}),
+            },
+          }),
+        ),
       );
     },
     updateStatus(id, status) {
@@ -447,6 +464,19 @@ function createStageRepository(db: Db): TournamentStageRepository {
       );
     },
   };
+}
+
+/**
+ * Encodes a nullable JSON column value.
+ *
+ * `null` becomes SQL NULL (`Prisma.DbNull`) rather than JSON `null`, so a
+ * cleared catalogue round-trips as "no rules" and the domain falls back to its
+ * defaults. A present value is passed through as JSONB.
+ */
+function toNullableJson(
+  value: Readonly<Record<string, unknown>> | null,
+): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput {
+  return value === null ? Prisma.DbNull : (value as unknown as Prisma.InputJsonValue);
 }
 
 function createMatchRepository(db: Db): MatchRepository {

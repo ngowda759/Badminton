@@ -1,9 +1,15 @@
 import {
   determineGameWinner,
+  determineKnockoutOutcome,
   determineMatchOutcome,
   isValidGameScore,
+  isValidKnockoutGameScore,
+  knockoutRoundKey,
+  normalizeKnockoutRules,
   scoreGroupMatch,
+  scoreKnockoutMatch,
   scoreMatchGames,
+  validateKnockoutRule,
   BusinessRuleViolationError,
   type MatchGame,
   type MatchGameInput,
@@ -214,5 +220,134 @@ describe('determineMatchOutcome', () => {
 
   it('throws when no participant has two wins', () => {
     expect(() => determineMatchOutcome(stored([1, 2]))).toThrow(BusinessRuleViolationError);
+  });
+});
+
+describe('isValidKnockoutGameScore', () => {
+  it('accepts a game played to the round target with a two-point margin', () => {
+    expect(isValidKnockoutGameScore(21, 15, 21)).toBe(true);
+    expect(isValidKnockoutGameScore(15, 21, 21)).toBe(true);
+    expect(isValidKnockoutGameScore(22, 20, 21)).toBe(true);
+    expect(isValidKnockoutGameScore(11, 5, 11)).toBe(true);
+    expect(isValidKnockoutGameScore(13, 11, 11)).toBe(true);
+  });
+
+  it('has no ceiling, so a game past 30 is legal', () => {
+    expect(isValidKnockoutGameScore(31, 29, 21)).toBe(true);
+    expect(isValidKnockoutGameScore(30, 29, 21)).toBe(false);
+  });
+
+  it('rejects a game short of the target and a one-point margin', () => {
+    expect(isValidKnockoutGameScore(20, 15, 21)).toBe(false);
+    expect(isValidKnockoutGameScore(21, 20, 21)).toBe(false);
+    expect(isValidKnockoutGameScore(10, 5, 11)).toBe(false);
+    expect(isValidKnockoutGameScore(11, 10, 11)).toBe(false);
+  });
+
+  it('rejects a tie and non-whole points', () => {
+    expect(isValidKnockoutGameScore(21, 21, 21)).toBe(false);
+    expect(isValidKnockoutGameScore(21.5, 15, 21)).toBe(false);
+  });
+});
+
+describe('validateKnockoutRule', () => {
+  it('accepts a known format and an in-range target', () => {
+    expect(validateKnockoutRule({ format: 'best_of_3', pointsPerGame: 21 })).toBeNull();
+    expect(validateKnockoutRule({ format: 'single_game', pointsPerGame: 11 })).toBeNull();
+  });
+
+  it('rejects an unknown format', () => {
+    expect(validateKnockoutRule({ format: 'best_of_5', pointsPerGame: 21 })).toBeTruthy();
+  });
+
+  it('rejects a target outside 1-99 or non-whole', () => {
+    expect(validateKnockoutRule({ format: 'best_of_3', pointsPerGame: 0 })).toBeTruthy();
+    expect(validateKnockoutRule({ format: 'best_of_3', pointsPerGame: 100 })).toBeTruthy();
+    expect(validateKnockoutRule({ format: 'best_of_3', pointsPerGame: 21.5 })).toBeTruthy();
+  });
+
+  it('rejects a non-object rule', () => {
+    expect(validateKnockoutRule(null)).toBeTruthy();
+    expect(validateKnockoutRule('qf')).toBeTruthy();
+  });
+});
+
+describe('normalizeKnockoutRules', () => {
+  it('fills every round from the defaults when nothing is stored', () => {
+    const rules = normalizeKnockoutRules(null);
+    expect(rules.qf).toEqual({ format: 'best_of_3', pointsPerGame: 11 });
+    expect(rules.sf).toEqual({ format: 'best_of_3', pointsPerGame: 15 });
+    expect(rules.final).toEqual({ format: 'best_of_3', pointsPerGame: 21 });
+  });
+
+  it('keeps a valid override and drops a malformed one', () => {
+    const rules = normalizeKnockoutRules({
+      final: { format: 'single_game', pointsPerGame: 30 },
+      sf: { format: 'nonsense', pointsPerGame: 15 },
+    });
+    expect(rules.final).toEqual({ format: 'single_game', pointsPerGame: 30 });
+    expect(rules.sf).toEqual({ format: 'best_of_3', pointsPerGame: 15 });
+  });
+});
+
+describe('knockoutRoundKey', () => {
+  it.each([
+    [8, 1, 'qf'],
+    [8, 2, 'sf'],
+    [8, 3, 'final'],
+    [16, 1, 'r16'],
+    [32, 1, 'r32'],
+    [64, 1, 'r64'],
+    [128, 1, 'r128'],
+  ])('maps a %i-entry bracket round %i to %s', (size, round, key) => {
+    expect(knockoutRoundKey(size, round)).toBe(key);
+  });
+
+  it('throws for a round outside the bracket', () => {
+    expect(() => knockoutRoundKey(8, 4)).toThrow(BusinessRuleViolationError);
+  });
+});
+
+describe('scoreKnockoutMatch', () => {
+  const bestOfThree = { format: 'best_of_3' as const, pointsPerGame: 15 };
+  const straight = { format: 'single_game' as const, pointsPerGame: 11 };
+
+  it('accepts a best-of-three result at the round target', () => {
+    const scored = scoreKnockoutMatch(games([15, 10], [15, 13]), bestOfThree);
+    expect(scored.map((game) => game.winnerSlot)).toEqual([1, 1]);
+  });
+
+  it('rejects a best-of-three game won by one point at the target', () => {
+    expect(() => scoreKnockoutMatch(games([15, 14], [15, 10]), bestOfThree)).toThrow(
+      BusinessRuleViolationError,
+    );
+  });
+
+  it('accepts a deciding game past 30 at the target', () => {
+    expect(() =>
+      scoreKnockoutMatch(games([15, 10], [10, 15], [31, 29]), bestOfThree),
+    ).not.toThrow();
+  });
+
+  it('accepts a straight-set single game', () => {
+    const scored = scoreKnockoutMatch(games([11, 5]), straight);
+    expect(scored).toHaveLength(1);
+    expect(scored[0]?.winnerSlot).toBe(1);
+  });
+
+  it('rejects a second game in a straight-set match', () => {
+    expect(() => scoreKnockoutMatch(games([11, 5], [11, 6]), straight)).toThrow(
+      BusinessRuleViolationError,
+    );
+  });
+});
+
+describe('determineKnockoutOutcome', () => {
+  it('awards a straight-set match to the single-game winner', () => {
+    const outcome = determineKnockoutOutcome(
+      [{ gameNumber: 1, participant1Points: 11, participant2Points: 5, winnerSlot: 1 }],
+      { format: 'single_game', pointsPerGame: 11 },
+    );
+    expect(outcome).toEqual({ winnerSlot: 1, winnerGames: 1, loserGames: 0 });
   });
 });
