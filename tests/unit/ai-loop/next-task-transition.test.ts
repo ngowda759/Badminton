@@ -391,6 +391,79 @@ describe('merge -> next-task transition (advance-after-merge.mjs)', () => {
     expect(second.loopState.status).toBe('next-task');
   });
 
+  it('(g) attributes a merged AI-managed pull request to its queue task when the state lost the active record', () => {
+    // The real stall: the loop state on `main` is still `next-task` with no
+    // active task (the implementation/review transitions were never committed),
+    // but the queue records PR #42 as AI-002's implementation. The merge must
+    // still advance the loop rather than hard-stop as state corruption.
+    seed(
+      pr({
+        number: 42,
+        headRefName: 'feat/tournament-progression',
+        comments: [
+          { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
+        ],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue(),
+    );
+
+    const result = run(42);
+    expect(result.status).toBe(0);
+    expect(result.managed).toBe(true);
+    expect(result.loopState.status).toBe('next-task');
+    expect(result.loopState.completedTasks).toContain('AI-002');
+    expect(result.taskQueue.tasks.find((task) => task.id === 'AI-002')?.status).toBe('done');
+  });
+
+  it('(g2) attributes a merged task PR by the task id in its title when the queue never recorded it', () => {
+    // The implementation opened the PR but did not record `pr`/`branch` on the
+    // queue task (the real AI-002 stall). The title still names the task, so the
+    // merge advances instead of hard-stopping.
+    seed(
+      pr({
+        number: 42,
+        headRefName: 'feat/match-result-correction',
+        title: '[AI-002] Match result correction with downstream propagation',
+        comments: [
+          { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
+        ],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue({ tasks: [queue().tasks[0], { ...queue().tasks[1], pr: null, branch: null }] }),
+    );
+
+    const result = run(42);
+    expect(result.status).toBe(0);
+    expect(result.managed).toBe(true);
+    expect(result.loopState.status).toBe('next-task');
+    expect(result.loopState.completedTasks).toContain('AI-002');
+    expect(result.taskQueue.tasks.find((task) => task.id === 'AI-002')?.status).toBe('done');
+  });
+
+  it('(h) hard-stops when neither the state nor the queue records the merged task', () => {
+    // A genuinely unattributable AI-managed merge must still stop for a human —
+    // the fallbacks must not invent a task.
+    seed(
+      pr({
+        number: 99,
+        headRefName: 'feat/orphan',
+        title: 'orphan work',
+        comments: [
+          { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
+        ],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue(),
+    );
+
+    const result = run(99);
+    expect(result.status).toBe(1);
+    expect(result.managed).toBe(false);
+    expect(result.loopState.status).toBe('blocked');
+    expect(result.loopState.blockedReason).toBe('state-corruption');
+  });
+
   it('(e) enforces exactly one active task across feat/* pull requests', () => {
     seed(pr(), state({ status: 'implementing' }));
     const one = spawnSync('node', [resolve(root, '.ai/scripts/loop-tasks.mjs'), 'enforce-single'], {
