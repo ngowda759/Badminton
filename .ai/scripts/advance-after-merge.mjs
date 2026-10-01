@@ -197,6 +197,16 @@ if (task === null) {
     ) ?? null;
 }
 if (task === null) {
+  // Last resort: the task id named in the pull request title or branch. This is
+  // the same signal `isAiManagedPullRequest` uses, so a task PR that never got
+  // its `pr`/`branch` recorded still advances — but only to a task that already
+  // exists in the queue, never an invented one.
+  const named = /AI-\d+(?:-T\d+)?/.exec(`${pr.title ?? ''} ${pr.headRefName ?? ''}`);
+  if (named !== null) {
+    task = queue.tasks.find((candidate) => candidate.id === named[0]) ?? null;
+  }
+}
+if (task === null) {
   // A merged loop pull request that neither the state nor the queue attributes
   // to a task means the loop lost track. Do not invent a task; stop for a human.
   stop(

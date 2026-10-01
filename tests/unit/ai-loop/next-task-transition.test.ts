@@ -416,14 +416,39 @@ describe('merge -> next-task transition (advance-after-merge.mjs)', () => {
     expect(result.taskQueue.tasks.find((task) => task.id === 'AI-002')?.status).toBe('done');
   });
 
+  it('(g2) attributes a merged task PR by the task id in its title when the queue never recorded it', () => {
+    // The implementation opened the PR but did not record `pr`/`branch` on the
+    // queue task (the real AI-002 stall). The title still names the task, so the
+    // merge advances instead of hard-stopping.
+    seed(
+      pr({
+        number: 42,
+        headRefName: 'feat/match-result-correction',
+        title: '[AI-002] Match result correction with downstream propagation',
+        comments: [
+          { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
+        ],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue({ tasks: [queue().tasks[0], { ...queue().tasks[1], pr: null, branch: null }] }),
+    );
+
+    const result = run(42);
+    expect(result.status).toBe(0);
+    expect(result.managed).toBe(true);
+    expect(result.loopState.status).toBe('next-task');
+    expect(result.loopState.completedTasks).toContain('AI-002');
+    expect(result.taskQueue.tasks.find((task) => task.id === 'AI-002')?.status).toBe('done');
+  });
+
   it('(h) hard-stops when neither the state nor the queue records the merged task', () => {
     // A genuinely unattributable AI-managed merge must still stop for a human —
-    // the queue fallback must not invent a task.
+    // the fallbacks must not invent a task.
     seed(
       pr({
         number: 99,
         headRefName: 'feat/orphan',
-        title: '[AI-002] orphan work',
+        title: 'orphan work',
         comments: [
           { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
         ],
