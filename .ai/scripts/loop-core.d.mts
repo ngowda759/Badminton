@@ -188,4 +188,16 @@ export function assertSingleActiveTask(input: {
     { number: number; branch: string; base: string; title: string; isAutomation: boolean }[] | null;
   config: LoopConfig;
 }): { ok: boolean; errors: string[]; activePr: number | null };
-export function isRecoverableNextTaskState(state: LoopState | null | undefined): boolean;
+export function isRecoverableNextTaskState(
+  state: LoopState | null | undefined,
+  queue?: TaskQueue | null,
+): boolean;
+export function classifyMergedLoopPr(input: {
+  pr: MergeGatePr | null;
+  state?: LoopState | null;
+  queue?: TaskQueue | null;
+}): {
+  kind: 'task' | 'infrastructure' | 'unattributable';
+  task: TaskBrief | null;
+  taskId: string | null;
+};

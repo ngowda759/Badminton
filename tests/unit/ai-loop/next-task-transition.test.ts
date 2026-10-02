@@ -5,7 +5,12 @@ import { join, resolve } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { isAiManagedPullRequest, loadConfig, REPO_ROOT } from '../../../.ai/scripts/loop-core.mjs';
+import {
+  classifyMergedLoopPr,
+  isAiManagedPullRequest,
+  loadConfig,
+  REPO_ROOT,
+} from '../../../.ai/scripts/loop-core.mjs';
 
 /**
  * The merge -> next-task transition.
@@ -227,6 +232,83 @@ describe('AI-managed pull request identity', () => {
         config,
       }),
     ).toBe(false);
+  });
+});
+
+describe('classifyMergedLoopPr', () => {
+  it('classifies a queued task by its recorded PR number', () => {
+    const result = classifyMergedLoopPr({
+      pr: pr({ number: 42, headRefName: 'feat/tournament-progression' }),
+      state: state({ currentTaskId: null, currentPr: null }),
+      queue: queue(),
+    });
+    expect(result.kind).toBe('task');
+    expect(result.taskId).toBe('AI-002');
+  });
+
+  it('classifies a queued task by its recorded branch', () => {
+    const result = classifyMergedLoopPr({
+      pr: pr({ number: 999, headRefName: 'feat/tournament-progression' }),
+      state: state({ currentTaskId: null, currentPr: null }),
+      queue: queue(),
+    });
+    expect(result.kind).toBe('task');
+    expect(result.taskId).toBe('AI-002');
+  });
+
+  it('classifies an infrastructure PR as infrastructure, never as a task', () => {
+    const result = classifyMergedLoopPr({
+      pr: pr({
+        number: 33,
+        headRefName: 'automation/ai-infra-openrouter-reviewer',
+        title: '[AI-INFRA] Use OpenRouter free reviewer for autonomous AI loop',
+      }),
+      state: state({ currentTaskId: 'AI-002', currentPr: { number: 42, branch: 'feat/x' } }),
+      queue: queue(),
+    });
+    expect(result.kind).toBe('infrastructure');
+    expect(result.task).toBeNull();
+    expect(result.taskId).toBeNull();
+  });
+
+  it('does not misattribute an infrastructure PR to an active task with no recorded PR', () => {
+    // The state names AI-002, but AI-002's queue record has no PR/branch yet —
+    // exactly the shape that used to make the state's active task the fallback.
+    // Infrastructure must still win over that weak signal.
+    const result = classifyMergedLoopPr({
+      pr: pr({
+        number: 33,
+        headRefName: 'automation/ai-infra-openrouter-reviewer',
+        title: '[AI-INFRA] Harden reviewer parsing for OpenRouter free router',
+      }),
+      state: state({ currentTaskId: 'AI-002' }),
+      queue: queue({ tasks: [queue().tasks[0], { ...queue().tasks[1], pr: null, branch: null }] }),
+    });
+    expect(result.kind).toBe('infrastructure');
+  });
+
+  it('classifies an unattributable loop PR as unattributable', () => {
+    const result = classifyMergedLoopPr({
+      pr: pr({ number: 77, headRefName: 'automation/ai-mystery', title: 'mystery work' }),
+      state: state({ currentTaskId: null, currentPr: null }),
+      queue: queue(),
+    });
+    expect(result.kind).toBe('unattributable');
+    expect(result.taskId).toBeNull();
+  });
+
+  it('classifies a task by the id in its title when the queue never recorded it', () => {
+    const result = classifyMergedLoopPr({
+      pr: pr({
+        number: 42,
+        headRefName: 'feat/anything',
+        title: '[AI-002] match result correction',
+      }),
+      state: state({ currentTaskId: null, currentPr: null }),
+      queue: queue({ tasks: [queue().tasks[0], { ...queue().tasks[1], pr: null, branch: null }] }),
+    });
+    expect(result.kind).toBe('task');
+    expect(result.taskId).toBe('AI-002');
   });
 });
 
@@ -458,6 +540,98 @@ describe('merge -> next-task transition (advance-after-merge.mjs)', () => {
     );
 
     const result = run(99);
+    expect(result.status).toBe(1);
+    expect(result.managed).toBe(false);
+    expect(result.loopState.status).toBe('blocked');
+    expect(result.loopState.blockedReason).toBe('state-corruption');
+  });
+
+  it('(i) reconciles an infrastructure merge as a no-op when a task is in flight', () => {
+    // The real stale-state case: PR #33 (`[AI-INFRA]`) merged while AI-003 was
+    // still open. The infrastructure PR is not a queued task, so the loop must
+    // not complete AI-003 — it must reconcile to a no-op and carry on.
+    seed(
+      pr({
+        number: 33,
+        headRefName: 'automation/ai-infra-openrouter-reviewer',
+        title: '[AI-INFRA] Use OpenRouter free reviewer for autonomous AI loop',
+        comments: [],
+      }),
+      state({
+        status: 'reviewing',
+        currentTaskId: 'AI-003',
+        currentPr: { number: 30, branch: 'automation/ai-003-knockout-correction' },
+      }),
+      queue({
+        tasks: [
+          queue().tasks[0],
+          queue().tasks[1],
+          {
+            ...queue().tasks[1],
+            id: 'AI-003',
+            status: 'in-progress',
+            pr: 30,
+            branch: 'automation/ai-003-knockout-correction',
+          },
+        ],
+      }),
+    );
+
+    const result = run(33);
+    expect(result.status).toBe(0);
+    expect(result.managed).toBe(false);
+    // The in-flight task is untouched: not completed, still in progress.
+    expect(result.loopState.status).toBe('reviewing');
+    expect(result.loopState.completedTasks).not.toContain('AI-003');
+    expect(result.taskQueue.tasks.find((task) => task.id === 'AI-003')?.status).toBe('in-progress');
+  });
+
+  it('(j) reconciles a merged infrastructure PR from a stale next-task state without stopping', () => {
+    // The exact state on `main` when the infra PRs merged: `next-task`, no
+    // active task, and the queue holding AI-003 as the next approved task. The
+    // previous code hard-stopped as `state-corruption`; it must now be a no-op.
+    seed(
+      pr({
+        number: 33,
+        headRefName: 'automation/ai-infra-openrouter-reviewer',
+        title: '[AI-INFRA] Use OpenRouter free reviewer for autonomous AI loop',
+        comments: [],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue({
+        tasks: [
+          queue().tasks[0],
+          { ...queue().tasks[1], status: 'done', pr: 28 },
+          { ...queue().tasks[1], id: 'AI-003', status: 'approved', pr: null, branch: null },
+        ],
+      }),
+    );
+
+    const result = run(33);
+    expect(result.status).toBe(0);
+    expect(result.managed).toBe(false);
+    expect(result.loopState.status).toBe('next-task');
+    expect(result.loopState.blockedReason ?? null).toBeNull();
+    expect(result.taskQueue.tasks.find((task) => task.id === 'AI-003')?.status).toBe('approved');
+  });
+
+  it('(k) still hard-stops a non-infrastructure merge that names no queued task', () => {
+    // The infrastructure exemption is narrow: an AI-managed merge that is not a
+    // queued task and does not declare itself infrastructure is still corruption.
+    seed(
+      pr({
+        number: 77,
+        headRefName: 'automation/ai-mystery',
+        title: 'mystery work',
+        comments: [
+          { body: `<!-- ai-loop-review round=1 head=${'a'.repeat(40)} verdict=approved -->` },
+        ],
+      }),
+      state({ status: 'next-task', currentTaskId: null, currentPr: null, lastVerdict: null }),
+      queue(),
+    );
+
+    const result = run(77);
     expect(result.status).toBe(1);
     expect(result.managed).toBe(false);
     expect(result.loopState.status).toBe('blocked');

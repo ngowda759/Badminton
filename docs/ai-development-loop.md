@@ -190,6 +190,16 @@ not silently generate the next task when its own pull request was abandoned.
 A duplicate `pull_request: closed` delivery is idempotent — the task is already
 `done`, so the script reports `managed=false` and generates nothing twice.
 
+A merged AI-managed pull request that is **not** a queued task is classified
+before it can stop the loop. Loop infrastructure (`[AI-INFRA]` tooling — a
+reviewer fix, a workflow hardening) is never in the task queue, so attributing it
+to a task would invent a completion and lose history; it reconciles to a no-op
+(`managed=false`) and the loop carries on with the task actually in flight. This
+is what keeps an infrastructure merge from hard-stopping the loop as
+`state-corruption` when it happens while a task is open. Any _other_ AI-managed
+merge that names no queued task is genuine corruption and still hard-stops —
+the exemption is deliberately narrow, and no task is ever invented.
+
 `assertSingleActiveTask` treats `next-task` as an **inactive** state (like `idle`
 and `completed`): it deliberately holds no active task and no open automation
 pull request, so the concurrency guard must not demand one there. The active
