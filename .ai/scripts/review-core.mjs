@@ -1,12 +1,16 @@
 /**
- * Pure logic for the ChatGPT review stage of the AI development loop.
+ * Pure logic for the review stage of the AI development loop.
  *
  * Everything here is deterministic and side-effect free so the loop's decision
- * rules can be tested directly. The CLI that talks to GitHub and OpenAI lives in
- * `chatgpt-review.mjs` and does nothing but wire these functions to the network.
+ * rules can be tested directly. The CLI that talks to GitHub and the reviewer
+ * provider lives in `chatgpt-review.mjs` and does nothing but wire these
+ * functions to the network.
  *
- * The review stage is owned by ChatGPT. OpenHands never reviews its own work; it
- * only fixes what this stage reports.
+ * The review stage is an external, non-OpenHands reviewer (the loop's default is
+ * OpenRouter's free model router). OpenHands never reviews its own work; it only
+ * fixes what this stage reports. The provider, endpoint, model and credential
+ * environment variable are read from `config.review`, so the stage stays
+ * provider-neutral.
  */
 
 /** Name used in the machine-readable PR marker. */
@@ -331,7 +335,8 @@ export function validateReport(report, facts) {
 
 /**
  * The schema the reviewer must satisfy, minus the keys that only describe the
- * document rather than the payload. OpenAI's strict mode rejects `$schema`/`$id`.
+ * document rather than the payload. Strict structured-output modes reject
+ * `$schema`/`$id` as schema properties.
  */
 export function stripSchemaMeta(schema) {
   const { $schema: _schema, $id: _id, ...rest } = schema;
@@ -339,11 +344,91 @@ export function stripSchemaMeta(schema) {
 }
 
 /**
- * Build the OpenAI Responses API request for a strict structured review.
+ * The credential environment variable a provider-neutral review reads.
+ *
+ * `apiKeyEnvVar` is the explicit, provider-neutral field. When it is absent the
+ * variable is derived from `provider` (`<PROVIDER>_API_KEY`), so the default
+ * loop configuration resolves `OPENROUTER_API_KEY` without any provider being
+ * hard-coded in this script.
+ */
+export function reviewApiKeyEnvVar(review) {
+  const explicit = typeof review?.apiKeyEnvVar === 'string' ? review.apiKeyEnvVar.trim() : '';
+  if (explicit.length > 0) return explicit;
+  const provider =
+    typeof review?.provider === 'string' && review.provider.trim().length > 0
+      ? review.provider.trim()
+      : 'openrouter';
+  return `${provider.toUpperCase()}_API_KEY`;
+}
+
+/**
+ * The model-override environment variable for the configured reviewer.
+ *
+ * Defaults to `<provider>_REVIEW_MODEL` (e.g. `OPENROUTER_REVIEW_MODEL`) so a
+ * provider swap changes the variable without a second hard-coded copy.
+ */
+export function reviewModelEnvVar(review) {
+  if (typeof review?.modelEnvVar === 'string' && review.modelEnvVar.trim().length > 0) {
+    return review.modelEnvVar.trim();
+  }
+  const provider =
+    typeof review?.provider === 'string' && review.provider.trim().length > 0
+      ? review.provider.trim()
+      : 'openrouter';
+  return `${provider.toUpperCase()}_REVIEW_MODEL`;
+}
+
+/**
+ * Resolve the reviewer's credential from the environment.
+ *
+ * GitHub Actions supplies an empty string for an unset variable, so a blank or
+ * whitespace-only value counts as absent. The key is returned, never logged.
+ *
+ * @returns {{ apiKey: string, envVar: string }}
+ */
+export function resolveApiKey(review, env = process.env) {
+  const envVar = reviewApiKeyEnvVar(review);
+  const raw = env?.[envVar];
+  const apiKey = typeof raw === 'string' ? raw.trim() : '';
+  return { apiKey, envVar };
+}
+
+/**
+ * The configured Responses endpoint, normalised to a full URL.
+ *
+ * `endpoint` may be the base URL (`https://openrouter.ai/api/v1`) or the full
+ * endpoint (`https://openrouter.ai/api/v1/responses`); both resolve to the same
+ * request URL.
+ */
+export function reviewEndpoint(review) {
+  const raw = typeof review?.endpoint === 'string' ? review.endpoint.trim() : '';
+  if (raw.length === 0) return '';
+  const withoutSlash = raw.replace(/\/+$/, '');
+  return withoutSlash.endsWith('/responses') ? withoutSlash : `${withoutSlash}/responses`;
+}
+
+/**
+ * Resolve the review model: an explicit override, then the model override
+ * environment variable, then the configured default.
+ *
+ * GitHub supplies an empty string for an unset Actions variable, so a blank or
+ * whitespace-only override must fall through to the configured model.
+ */
+export function resolveReviewModel({ review, override, env = process.env } = {}) {
+  if (typeof override === 'string' && override.trim().length > 0) return override.trim();
+  const envVar = reviewModelEnvVar(review);
+  const raw = env?.[envVar];
+  if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+  return review?.model;
+}
+
+/**
+ * Build the Responses API request for a strict structured review.
  *
  * `text.format` with `strict: true` is the Responses API's structured-output
- * contract; the model's decoding is constrained to the schema, so the response
- * is parseable JSON rather than prose that happens to contain JSON.
+ * contract and is supported by OpenRouter's OpenAI-compatible Responses API as
+ * well as OpenAI's. The model's decoding is constrained to the schema, so the
+ * response is parseable JSON rather than prose that happens to contain JSON.
  */
 export function buildReviewRequestBody({
   model,
@@ -370,9 +455,9 @@ export function buildReviewRequestBody({
 /**
  * Pull the assistant's text out of a Responses API payload.
  *
- * Handles the Responses shape (`output[].content[].text`), a convenience
- * `output_text` field some gateways add, and the Chat Completions fallback.
- * Throws when the payload carries no text at all.
+ * Handles the Responses shape (`output[].content[].text`) that both OpenAI and
+ * OpenRouter return, a convenience `output_text` field some gateways add, and
+ * the Chat Completions fallback. Throws when the payload carries no text at all.
  */
 export function extractOutputText(payload) {
   if (typeof payload?.output_text === 'string' && payload.output_text.length > 0) {
@@ -547,7 +632,7 @@ export function buildComment(report, decision) {
     '',
     '---',
     '',
-    'This review was produced by an AI agent (ChatGPT, orchestrated by GitHub Actions) on behalf of the user.',
+    'This review was produced by an AI agent (an external reviewer model, orchestrated by GitHub Actions) on behalf of the user.',
   );
 
   return `${lines.join('\n')}\n`;
@@ -564,7 +649,7 @@ export function buildFixContext({ report, pr, branch, headSha, maxReviewRounds }
   const advisory = report.findings.filter((finding) => !BLOCKING_SEVERITIES.has(finding.severity));
 
   const lines = [
-    '## Fix request — ChatGPT review round ' + report.round,
+    '## Fix request — review round ' + report.round,
     '',
     '### Facts',
     '',

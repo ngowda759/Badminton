@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /**
- * ChatGPT review stage of the AI development loop.
+ * Review stage of the AI development loop.
  *
- * ChatGPT is the reviewer; OpenHands is the implementer/fixer. This script is
- * the orchestrator between them, and it is the *only* place a review verdict is
- * produced.
+ * An external reviewer model is the reviewer; OpenHands is the
+ * implementer/fixer. This script is the orchestrator between them, and it is the
+ * *only* place a review verdict is produced. The provider is configuration, not
+ * code: `config.review` supplies the provider, endpoint, model and credential
+ * environment variable, and the loop's default is OpenRouter's free model router
+ * (`openrouter/free`) so the autonomous loop does not need a paid API.
  *
  * What it does, in order:
  *   1. reads the pull request (metadata, diff, checks, existing comments);
  *   2. decides whether this head SHA still needs a review (never twice);
- *   3. asks the OpenAI Responses API for a strict, schema-constrained verdict;
+ *   3. asks the configured Responses API for a strict, schema-constrained verdict;
  *   4. validates the verdict and applies the loop's own rules on top;
  *   5. records the review in `.ai/state/review-log.jsonl`;
  *   6. posts the review as a PR comment carrying the dedupe marker;
@@ -20,18 +23,24 @@
  * executed, installed, built or sourced — the diff is read as text and sent to
  * the model. No repository secret is ever printed.
  *
+ * Retry behaviour: a 429 / quota / rate-limit response is an infrastructure
+ * failure and stops the run. There is deliberately no automatic retry — the free
+ * router has a daily request budget and a retry loop would burn it. The operator
+ * re-runs the workflow once the quota resets.
+ *
  * Usage:
  *   node .ai/scripts/chatgpt-review.mjs --pr 42
  *   node .ai/scripts/chatgpt-review.mjs --pr 42 --dry-run
  *   node .ai/scripts/chatgpt-review.mjs --pr 42 --response-file canned.json
  *
  * Environment:
- *   OPENAI_API_KEY       required unless --dry-run/--response-file
- *   OPENAI_REVIEW_MODEL  optional; defaults to the configured review model
- *   OPENHANDS_API_KEY    optional; absent means the fix dispatch skips cleanly
- *   OPENHANDS_HOST       optional; defaults to https://app.all-hands.dev
- *   GH_TOKEN             required for every `gh` call
- *   AI_LOOP_ROOT         overrides the repository root (tests only)
+ *   OPENROUTER_API_KEY      required unless --dry-run/--response-file; the
+ *                           variable name comes from `config.review.apiKeyEnvVar`
+ *   OPENROUTER_REVIEW_MODEL optional; defaults to the configured review model
+ *   OPENHANDS_API_KEY       optional; absent means the fix dispatch skips cleanly
+ *   OPENHANDS_HOST          optional; defaults to https://app.all-hands.dev
+ *   GH_TOKEN                required for every `gh` call
+ *   AI_LOOP_ROOT            overrides the repository root (tests only)
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -50,6 +59,9 @@ import {
   normalizeModelReport,
   parseModelJson,
   planReview,
+  resolveApiKey,
+  resolveReviewModel,
+  reviewEndpoint,
   validateReport,
 } from './review-core.mjs';
 import { validateAgainstSchema } from './loop-schema.mjs';
@@ -238,8 +250,8 @@ function buildReviewInput({ pr, task, ci, diff, diffTruncated, round, maxReviewR
   return lines.join('\n');
 }
 
-async function callOpenAi({ apiKey, body }) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
+async function callReviewer({ apiKey, body, endpoint, provider }) {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -252,12 +264,20 @@ async function callOpenAi({ apiKey, body }) {
   const text = await response.text();
   if (!response.ok) {
     // The key is never echoed; only the status and the server's message.
-    fail(`OpenAI review request failed: HTTP ${response.status}\n${text.slice(0, 2000)}`);
+    const detail =
+      response.status === 429
+        ? '\nThis is a rate-limit / quota failure (HTTP 429). The loop does not retry ' +
+          'automatically — the free reviewer has a daily request budget. Re-run the workflow ' +
+          'after the quota resets rather than looping.'
+        : '';
+    fail(
+      `${provider} review request failed: HTTP ${response.status}\n${text.slice(0, 2000)}${detail}`,
+    );
   }
   try {
     return JSON.parse(text);
   } catch (error) {
-    fail(`OpenAI returned a non-JSON envelope: ${error.message}`);
+    fail(`${provider} returned a non-JSON envelope: ${error.message}`);
   }
 }
 
@@ -296,7 +316,7 @@ function setLoopState({ status, round, pr, taskId, verdict, ciStatus }) {
     '--ci',
     ciStatus,
     '--note',
-    `chatgpt review round ${round}: ${status}`,
+    `review round ${round}: ${status}`,
   ];
   const result = spawnSync('node', args, { cwd: root, encoding: 'utf8' });
   if (result.status !== 0) {
@@ -420,7 +440,7 @@ async function main() {
       '',
       '---',
       '',
-      'This review was produced by an AI agent (ChatGPT, orchestrated by GitHub Actions) on behalf of the user.',
+      'This review was produced by an AI agent (an external reviewer model, orchestrated by GitHub Actions) on behalf of the user.',
     ].join('\n');
     const commentFile = resolve(root, '.ai/state/.review-comment.md');
     writeFileSync(commentFile, `${comment}\n`);
@@ -471,16 +491,11 @@ async function main() {
   const reviewedAt = nowIso();
 
   // GitHub supplies an empty string for an unset Actions variable, so a blank
-  // --model/OPENAI_REVIEW_MODEL must fall through to the configured default.
-  const model =
-    (typeof args.model === 'string' && args.model.trim().length > 0
-      ? args.model.trim()
-      : undefined) ??
-    (typeof process.env.OPENAI_REVIEW_MODEL === 'string' &&
-    process.env.OPENAI_REVIEW_MODEL.trim().length > 0
-      ? process.env.OPENAI_REVIEW_MODEL.trim()
-      : undefined) ??
-    config.review.model;
+  // --model/OPENROUTER_REVIEW_MODEL must fall through to the configured default.
+  const model = resolveReviewModel({
+    review: config.review,
+    override: typeof args.model === 'string' ? args.model : undefined,
+  });
 
   const schema = JSON.parse(
     readFileSync(resolve(root, '.ai/schemas/review-report.schema.json'), 'utf8'),
@@ -513,18 +528,20 @@ async function main() {
       typeof parsed?.verdict === 'string' ? { output_text: JSON.stringify(parsed) } : parsed;
     log(`using the canned reviewer response from ${args['response-file']}`);
   } else {
-    const apiKey = process.env.OPENAI_API_KEY ?? '';
+    const { apiKey, envVar } = resolveApiKey(config.review);
     if (apiKey.length === 0) {
       fail(
-        'OPENAI_API_KEY is not configured; refusing to run the ChatGPT review stage.\n' +
-          'Configure the secret (Settings -> Secrets and variables -> Actions) and re-run.',
+        `${envVar} is not configured; refusing to run the review stage.\n` +
+          `The reviewer provider is "${config.review.provider}" and reads its credential from ` +
+          `${envVar}. Configure the secret (Settings -> Secrets and variables -> Actions) and re-run.`,
       );
     }
     if (dryRun) {
-      log('dry run: the OpenAI review request would be sent with:');
+      log('dry run: the review request would be sent with:');
       log(
         JSON.stringify(
           {
+            endpoint: reviewEndpoint(config.review),
             ...body,
             input: `<${body.input.length} chars>`,
             instructions: `<${body.instructions.length} chars>`,
@@ -535,8 +552,16 @@ async function main() {
       );
       process.exit(0);
     }
-    log(`requesting a review from ${model} (round ${plan.round})`);
-    modelPayload = await callOpenAi({ apiKey, body });
+    log(
+      `requesting a review from ${config.review.provider} (${model}) at ` +
+        `${reviewEndpoint(config.review)} (round ${plan.round})`,
+    );
+    modelPayload = await callReviewer({
+      apiKey,
+      body,
+      endpoint: reviewEndpoint(config.review),
+      provider: config.review.provider,
+    });
   }
 
   const modelText = extractOutputText(modelPayload);

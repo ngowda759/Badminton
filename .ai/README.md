@@ -8,7 +8,8 @@ ChatGPT architect  →  OpenHands implementation  →  GitHub PR
         ↑                                              ↓
         │                                        GitHub Actions CI
         │                                              ↓
-        │                                        ChatGPT PR review
+        │                                    external model review
+        │                                     (OpenRouter free)
         │                                              ↓
         │                              ┌───────────────┴───────────────┐
         │                           approved                  changes-requested
@@ -26,11 +27,12 @@ redesigns the web application and never touches production data. It **does** mer
 — through the merge gate, and only when every automated condition passes. Each
 stage is a separate, auditable step.
 
-**Roles.** ChatGPT is the architect and the reviewer. OpenHands is the
-implementer and the fixer. GitHub Actions is CI, the orchestrator and the merge
-gate. The human is an exception handler for hard stops only. OpenHands never
-reviews its own work — the review stage is `.ai/scripts/chatgpt-review.mjs`, not
-an OpenHands conversation.
+**Roles.** ChatGPT is the architect. The reviewer is an external model — the
+loop's default is OpenRouter's free model router (`openrouter/free`), so the
+review path needs no paid API. OpenHands is the implementer and the fixer. GitHub
+Actions is CI, the orchestrator and the merge gate. The human is an exception
+handler for hard stops only. OpenHands never reviews its own work — the review
+stage is `.ai/scripts/chatgpt-review.mjs`, not an OpenHands conversation.
 
 ## Contents
 
@@ -46,8 +48,9 @@ an OpenHands conversation.
 ## Review stage
 
 `.ai/scripts/chatgpt-review.mjs` is the reviewer. It reads the pull request as
-**data**, asks the OpenAI Responses API for a strict schema-constrained report,
-validates it, records it, posts it as a PR comment, and routes the verdict:
+**data**, asks the configured reviewer provider (OpenRouter's free model router
+by default) for a strict schema-constrained report, validates it, records it,
+posts it as a PR comment, and routes the verdict:
 
 - `approved` + green CI → `ai-ready` (a human still merges);
 - `changes-requested` → dispatch OpenHands on the **same** PR and branch;

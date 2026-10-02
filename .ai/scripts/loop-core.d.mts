@@ -27,6 +27,7 @@ export interface LoopConfig {
     provider: string;
     endpoint: string;
     model: string;
+    apiKeyEnvVar?: string;
     modelEnvVar: string;
     schema: string;
     markerName: string;

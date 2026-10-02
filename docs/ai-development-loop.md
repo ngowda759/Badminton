@@ -7,7 +7,8 @@ ChatGPT architect  →  OpenHands implementation  →  GitHub PR
         ↑                                              ↓
         │                                        GitHub Actions CI
         │                                              ↓
-        │                                        ChatGPT PR review
+        │                                 external model review
+        │                                  (OpenRouter free router)
         │                                              ↓
         │                              ┌───────────────┴───────────────┐
         │                              │                               │
@@ -20,7 +21,7 @@ ChatGPT architect  →  OpenHands implementation  →  GitHub PR
         │                          merge → CI ───────────────────────► CI
         │                              │                               │
         │                              │                               ▼
-        │                              │                     ChatGPT re-review
+        │                              │                     reviewer re-review
         │                              │                      (round+1, max 3)
         │                              ▼
    next-task generation  ◄────────────┘
@@ -33,17 +34,41 @@ gate, and only when every automated condition passes.
 
 ## Who does what
 
-| Actor          | Roles                                    |
-| -------------- | ---------------------------------------- |
-| ChatGPT        | Architect (task briefs) and **reviewer** |
-| OpenHands      | Implementer and **fixer**                |
-| GitHub Actions | CI, orchestrator and **merge gate**      |
-| Human          | Exception handler only (hard stops)      |
+| Actor          | Roles                                                                           |
+| -------------- | ------------------------------------------------------------------------------- |
+| ChatGPT        | Architect (task briefs)                                                         |
+| Reviewer model | **Reviewer** — an external model provider (OpenRouter's free router by default) |
+| OpenHands      | Implementer and **fixer**                                                       |
+| GitHub Actions | CI, orchestrator and **merge gate**                                             |
+| Human          | Exception handler only (hard stops)                                             |
 
 The reviewer and the implementer are different actors **by design**. OpenHands
-never reviews its own work: it implements, then fixes what ChatGPT reports. The
-review stage is not an OpenHands conversation — it is
+never reviews its own work: it implements, then fixes what the reviewer reports.
+The review stage is not an OpenHands conversation — it is
 `.ai/scripts/chatgpt-review.mjs`, driven by the `AI loop review` workflow.
+
+### Reviewer provider
+
+The reviewer is provider-neutral: `review.provider`, `review.endpoint`,
+`review.model` and `review.apiKeyEnvVar` in `.ai/loop.config.json` decide which
+service the review request is sent to and which credential it reads.
+
+| Setting           | Default                        |
+| ----------------- | ------------------------------ |
+| Provider          | `openrouter`                   |
+| Model             | `openrouter/free`              |
+| Endpoint          | `https://openrouter.ai/api/v1` |
+| Credential secret | `OPENROUTER_API_KEY`           |
+
+OpenRouter's free model router routes each request to a free model that supports
+the features the request needs (here: structured outputs). **Free-tier limit:**
+OpenRouter grants free-model access under a **daily request limit** (`GET
+/api/v1/key` reports `free_model_daily_requests`). The loop must therefore never
+implement an aggressive retry loop — a 429/quota/rate-limit response is an
+infrastructure failure that stops the run and waits for a human or the daily
+reset. The reviewer script issues exactly one request per review round, and
+`.ai/scripts/chatgpt-review.mjs` deliberately has no automatic retry and no paid
+fallback provider.
 
 ## Where things live
 
@@ -85,7 +110,7 @@ typecheck, unit/integration tests, migrations, seed, build, and Playwright
 end-to-end tests. The required check name comes from `requiredChecks` in
 `.ai/loop.config.json`.
 
-### 4. Review — ChatGPT (automatic)
+### 4. Review — external reviewer model (automatic)
 
 `ai-loop-review.yml` is triggered by the `CI` workflow completing
 (`workflow_run`), waits for the required checks to finish
@@ -93,7 +118,8 @@ end-to-end tests. The required check name comes from `requiredChecks` in
 
 1. reads the PR (title, body, diff, checks, existing comments) as **data**;
 2. derives the round and refuses to review a head SHA it has already reviewed;
-3. asks the OpenAI Responses API for a strict, schema-constrained report;
+3. asks the configured reviewer provider (OpenRouter's free Responses endpoint)
+   for a strict, schema-constrained report;
 4. applies the loop's own rules on top of the model's verdict;
 5. appends the report to `.ai/state/review-log.jsonl`;
 6. posts the report as a PR comment carrying the dedupe marker
@@ -281,7 +307,7 @@ like any legal one.
 | ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
 | `ci.yml`                 | PR / push to `main`                                                                  | Unchanged product CI                                                              |
 | `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill)            | Validate config, state, schemas and workflow structure                            |
-| `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                                 | Wait for CI, run the ChatGPT review, route the verdict                            |
+| `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                                 | Wait for CI, run the review, route the verdict                                    |
 | `ai-loop-merge-gate.yml` | `workflow_run` after the review, or manual                                           | Re-check every gate, then merge (or stop for a human)                             |
 | `ai-loop-next-task.yml`  | PR `closed` (AI-managed PR), push to `.ai/state/loop-state.json`, or manual recovery | Record the merge (or recover a stalled `next-task` state), dispatch the architect |
 | `ai-loop-implement.yml`  | push to `main` touching `.ai/state/task-queue.json`, or manual recovery              | Dispatch the implementation conversation                                          |
@@ -338,24 +364,26 @@ the operator recovery path.
 
 Configure these under **Settings → Secrets and variables → Actions**:
 
-| Name                  | Kind     | Required | Purpose                                                          |
-| --------------------- | -------- | -------- | ---------------------------------------------------------------- |
-| `OPENAI_API_KEY`      | Secret   | Yes      | ChatGPT reviewer credential                                      |
-| `OPENHANDS_API_KEY`   | Secret   | Yes      | Bearer token used to start OpenHands conversations               |
-| `OPENHANDS_HOST`      | Variable | No       | OpenHands API base URL (defaults to `https://app.all-hands.dev`) |
-| `OPENAI_REVIEW_MODEL` | Variable | No       | Review model override (defaults to `review.model` in the config) |
+| Name                      | Kind     | Required | Purpose                                                          |
+| ------------------------- | -------- | -------- | ---------------------------------------------------------------- |
+| `OPENROUTER_API_KEY`      | Secret   | Yes      | Reviewer credential (OpenRouter free model router)               |
+| `OPENHANDS_API_KEY`       | Secret   | Yes      | Bearer token used to start OpenHands conversations               |
+| `OPENHANDS_HOST`          | Variable | No       | OpenHands API base URL (defaults to `https://app.all-hands.dev`) |
+| `OPENROUTER_REVIEW_MODEL` | Variable | No       | Review model override (defaults to `review.model` in the config) |
 
 `GITHUB_TOKEN` is provided automatically by GitHub Actions and needs no
 configuration. No database, Supabase or production credential is required by any
-loop workflow — the loop never touches production data.
+loop workflow — the loop never touches production data. The paid `OPENAI_API_KEY`
+is **not** required on the normal review path.
 
-If `OPENAI_API_KEY` is absent, the review workflow skips the review, prints a
-warning and reports it in the step summary, so an unconfigured secret never turns
-the check red. The reviewer script itself fails loudly when invoked without the
-key, so a review can never be silently skipped once the credential exists. If
-`OPENHANDS_API_KEY` is absent, the fix dispatch prints a skip message and exits
-`0`, so the review still publishes its findings. The CI workflow itself needs no
-secret at all.
+The review workflow derives the required credential from
+`review.apiKeyEnvVar` in `.ai/loop.config.json` (currently `OPENROUTER_API_KEY`)
+and injects the matching secret, so a missing `OPENROUTER_API_KEY` fails the job
+with a clear infrastructure/credential error (`::error::OPENROUTER_API_KEY is not
+configured`) and a step-summary message. The workflow never falls back to OpenAI
+or any other provider. If `OPENHANDS_API_KEY` is absent, the fix dispatch prints a
+skip message and exits `0`, so the review still publishes its findings. The CI
+workflow itself needs no secret at all.
 
 ## Required permissions
 
@@ -429,8 +457,8 @@ The loop is autonomous once these one-time settings exist:
 
 1. Add the `ai-review`, `ai-task`, `ai-ready` and `ai-blocked` labels to the
    repository (the loop reads them from `.ai/loop.config.json`).
-2. Create the `OPENAI_API_KEY` and `OPENHANDS_API_KEY` secrets (and optionally
-   the `OPENHANDS_HOST` and `OPENAI_REVIEW_MODEL` variables).
+2. Create the `OPENROUTER_API_KEY` and `OPENHANDS_API_KEY` secrets (and
+   optionally the `OPENHANDS_HOST` and `OPENROUTER_REVIEW_MODEL` variables).
 3. Protect `main` and require the `CI` check. Because the merge gate uses
    GitHub's **native auto-merge**, branch protection is honoured: the merge waits
    for the required checks rather than bypassing them. If you also require a human
@@ -467,8 +495,10 @@ The loop is autonomous once these one-time settings exist:
   pull request number, so a fork contribution is only reviewed when its branch
   uses the loop prefix — which is intentional.
 - The architect and next-task stages call the OpenHands Cloud API
-  (`dispatch-conversation.mjs`) and the ChatGPT Responses API
-  (`chatgpt-review.mjs`); the loop cannot run without both credentials.
+  (`dispatch-conversation.mjs`); the review stage calls the configured reviewer
+  provider's Responses API (OpenRouter's free router by default) through
+  `chatgpt-review.mjs`. The loop cannot run without the OpenHands and reviewer
+  credentials.
 - **Known pre-existing e2e flake.** `e2e/phase8-6-hardening.spec.ts:213`
   ("a reconnect after missed events recovers the authoritative state") fails
   intermittently on `main` and on unrelated branches; it reproduces on the

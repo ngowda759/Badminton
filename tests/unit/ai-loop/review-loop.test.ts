@@ -17,19 +17,25 @@ import {
   normalizeModelReport,
   parseModelJson,
   planReview,
+  resolveApiKey,
+  resolveReviewModel,
+  reviewApiKeyEnvVar,
+  reviewEndpoint,
   reviewMarker,
+  reviewModelEnvVar,
   reviewedHeads,
   validateReport,
 } from '../../../.ai/scripts/review-core.mjs';
 
 /**
- * The ChatGPT review stage of the AI development loop.
+ * The review stage of the AI development loop.
  *
- * ChatGPT is the reviewer and OpenHands is the fixer, so the loop's decision
- * rules are the contract that keeps those two apart. They are pure functions, so
- * they are tested directly. The two network boundaries — `gh` and the OpenAI
- * Responses API — are exercised through the CLI with canned inputs; neither
- * OpenAI nor OpenHands is ever called.
+ * An external reviewer model is the reviewer and OpenHands is the fixer, so the
+ * loop's decision rules are the contract that keeps those two apart. They are
+ * pure functions, so they are tested directly. The two network boundaries — `gh`
+ * and the configured reviewer Responses API (OpenRouter's free router by
+ * default) — are exercised through the CLI with canned inputs; neither the
+ * reviewer nor OpenHands is ever called.
  */
 
 const root = resolve(import.meta.dirname, '..', '..', '..');
@@ -343,7 +349,7 @@ describe('loop decision', () => {
   });
 });
 
-describe('OpenAI request and response handling', () => {
+describe('review request and response handling', () => {
   const schema = {
     $schema: 'http://json-schema.org/draft-07/schema#',
     $id: 'https://example.test/schema.json',
@@ -354,12 +360,12 @@ describe('OpenAI request and response handling', () => {
 
   it('requests a strict structured response and strips schema meta keys', () => {
     const body = buildReviewRequestBody({
-      model: 'gpt-5.6-sol',
+      model: 'openrouter/free',
       instructions: 'review it',
       input: 'the diff',
       schema,
     });
-    expect(body.model).toBe('gpt-5.6-sol');
+    expect(body.model).toBe('openrouter/free');
     expect(body.text.format).toMatchObject({ type: 'json_schema', strict: true });
     expect(body.text.format.schema).not.toHaveProperty('$schema');
     expect(body.text.format.schema).not.toHaveProperty('$id');
@@ -401,6 +407,109 @@ describe('OpenAI request and response handling', () => {
   it('rejects a JSON payload that is not an object', () => {
     expect(() => parseModelJson('["approved"]')).toThrow(/not an object/);
     expect(() => parseModelJson('')).toThrow(/empty body/);
+  });
+});
+
+describe('provider-neutral reviewer configuration', () => {
+  const openRouterReview = {
+    provider: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1',
+    model: 'openrouter/free',
+    apiKeyEnvVar: 'OPENROUTER_API_KEY',
+    modelEnvVar: 'OPENROUTER_REVIEW_MODEL',
+  };
+
+  it('selects the credential environment variable from the configured provider', () => {
+    expect(reviewApiKeyEnvVar(openRouterReview)).toBe('OPENROUTER_API_KEY');
+    // The explicit apiKeyEnvVar wins over the provider-derived default.
+    expect(reviewApiKeyEnvVar({ provider: 'openrouter', apiKeyEnvVar: 'CUSTOM_KEY' })).toBe(
+      'CUSTOM_KEY',
+    );
+  });
+
+  it('derives the credential variable from the provider when apiKeyEnvVar is unset', () => {
+    expect(reviewApiKeyEnvVar({ provider: 'openrouter' })).toBe('OPENROUTER_API_KEY');
+    expect(reviewApiKeyEnvVar({ provider: 'openai' })).toBe('OPENAI_API_KEY');
+  });
+
+  it('defaults to the OpenRouter credential when nothing is configured', () => {
+    expect(reviewApiKeyEnvVar({})).toBe('OPENROUTER_API_KEY');
+  });
+
+  it('derives the model override variable from the provider when unset', () => {
+    expect(reviewModelEnvVar({ provider: 'openrouter' })).toBe('OPENROUTER_REVIEW_MODEL');
+    expect(reviewModelEnvVar({ provider: 'openai' })).toBe('OPENAI_REVIEW_MODEL');
+    expect(reviewModelEnvVar(openRouterReview)).toBe('OPENROUTER_REVIEW_MODEL');
+  });
+
+  it('reads the API key from the configured environment variable only', () => {
+    const resolved = resolveApiKey(openRouterReview, {
+      OPENROUTER_API_KEY: 'or-key',
+      OPENAI_API_KEY: 'openai-key',
+    });
+    expect(resolved).toEqual({ apiKey: 'or-key', envVar: 'OPENROUTER_API_KEY' });
+  });
+
+  it('treats a blank or whitespace-only key as absent', () => {
+    expect(resolveApiKey(openRouterReview, { OPENROUTER_API_KEY: '' }).apiKey).toBe('');
+    expect(resolveApiKey(openRouterReview, { OPENROUTER_API_KEY: '   ' }).apiKey).toBe('');
+    expect(resolveApiKey(openRouterReview, {}).apiKey).toBe('');
+  });
+
+  it('trims a key that carries surrounding whitespace', () => {
+    expect(resolveApiKey(openRouterReview, { OPENROUTER_API_KEY: '  or-key\n' }).apiKey).toBe(
+      'or-key',
+    );
+  });
+
+  it('builds the Responses endpoint from a base URL', () => {
+    expect(reviewEndpoint({ endpoint: 'https://openrouter.ai/api/v1' })).toBe(
+      'https://openrouter.ai/api/v1/responses',
+    );
+  });
+
+  it('does not double-append /responses to a full endpoint', () => {
+    expect(reviewEndpoint({ endpoint: 'https://openrouter.ai/api/v1/responses' })).toBe(
+      'https://openrouter.ai/api/v1/responses',
+    );
+    expect(reviewEndpoint({ endpoint: 'https://openrouter.ai/api/v1/responses/' })).toBe(
+      'https://openrouter.ai/api/v1/responses',
+    );
+  });
+
+  it('tolerates a trailing slash on the base URL', () => {
+    expect(reviewEndpoint({ endpoint: 'https://openrouter.ai/api/v1/' })).toBe(
+      'https://openrouter.ai/api/v1/responses',
+    );
+  });
+
+  it('resolves the model from the override, the env var, then the configured default', () => {
+    expect(resolveReviewModel({ review: openRouterReview, env: {} })).toBe('openrouter/free');
+    expect(
+      resolveReviewModel({
+        review: openRouterReview,
+        env: { OPENROUTER_REVIEW_MODEL: 'some/model' },
+      }),
+    ).toBe('some/model');
+    expect(
+      resolveReviewModel({
+        review: openRouterReview,
+        override: 'cli/model',
+        env: { OPENROUTER_REVIEW_MODEL: 'some/model' },
+      }),
+    ).toBe('cli/model');
+  });
+
+  it('falls through a blank or whitespace-only model override', () => {
+    expect(
+      resolveReviewModel({ review: openRouterReview, env: { OPENROUTER_REVIEW_MODEL: '' } }),
+    ).toBe('openrouter/free');
+    expect(
+      resolveReviewModel({ review: openRouterReview, env: { OPENROUTER_REVIEW_MODEL: '   ' } }),
+    ).toBe('openrouter/free');
+    expect(resolveReviewModel({ review: openRouterReview, override: '  ', env: {} })).toBe(
+      'openrouter/free',
+    );
   });
 });
 
@@ -502,7 +611,7 @@ describe('review comment and fix handoff', () => {
   });
 });
 
-describe('ChatGPT review CLI', () => {
+describe('review CLI', () => {
   let scratch: string;
 
   beforeEach(() => {
@@ -585,9 +694,10 @@ describe('ChatGPT review CLI', () => {
     },
   ) {
     const bin = stubGh(pr);
-    // Start from a clean slate: an ambient OPENAI_REVIEW_MODEL would otherwise
+    // Start from a clean slate: an ambient review-model variable would otherwise
     // leak into the child and mask the fallback behaviour under test.
     const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete baseEnv.OPENROUTER_REVIEW_MODEL;
     delete baseEnv.OPENAI_REVIEW_MODEL;
     return spawnSync('node', [resolve(root, '.ai/scripts/chatgpt-review.mjs'), ...args], {
       cwd: root,
@@ -597,17 +707,34 @@ describe('ChatGPT review CLI', () => {
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         AI_LOOP_ROOT: scratch,
         AI_LOOP_STUB_PR: join(scratch, 'pr.json'),
+        OPENROUTER_API_KEY: '',
         OPENAI_API_KEY: '',
         ...env,
       },
     });
   }
 
-  it('fails safely when OPENAI_API_KEY is missing', () => {
+  it('fails safely when OPENROUTER_API_KEY is missing', () => {
     const result = runReview(['--pr', '19']);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('OPENAI_API_KEY is not configured');
+    expect(result.stderr).toContain('OPENROUTER_API_KEY is not configured');
+    // The failure must name the provider and never leak a key-shaped secret.
+    expect(result.stderr).toContain('openrouter');
     expect(result.stderr).not.toMatch(/sk-[A-Za-z0-9]/);
+  });
+
+  it('treats a whitespace-only OPENROUTER_API_KEY as missing', () => {
+    const result = runReview(['--pr', '19'], { OPENROUTER_API_KEY: '   ' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('OPENROUTER_API_KEY is not configured');
+  });
+
+  it('does not fall back to OPENAI_API_KEY when OPENROUTER_API_KEY is absent', () => {
+    // The OpenRouter provider must never be silently served by a paid OpenAI key.
+    const result = runReview(['--pr', '19'], { OPENAI_API_KEY: 'sk-test-openai' });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('OPENROUTER_API_KEY is not configured');
+    expect(result.stderr).not.toContain('sk-test-openai');
   });
 
   it('rejects a non-numeric --pr without touching the network', () => {
@@ -625,7 +752,7 @@ describe('ChatGPT review CLI', () => {
   it('plans a fix on the SAME pr and branch when the verdict needs work', () => {
     const result = runReview(
       ['--pr', '19', '--response-file', canned('changes-requested'), '--dry-run'],
-      { OPENAI_API_KEY: 'test-key' },
+      { OPENROUTER_API_KEY: 'test-key' },
     );
     expect(result.status).toBe(0);
     const out = `${result.stdout}${result.stderr}`;
@@ -639,7 +766,7 @@ describe('ChatGPT review CLI', () => {
 
   it('routes an approval to the human merge gate without dispatching a fix', () => {
     const result = runReview(['--pr', '19', '--response-file', canned('approved'), '--dry-run'], {
-      OPENAI_API_KEY: 'test-key',
+      OPENROUTER_API_KEY: 'test-key',
       AI_LOOP_STUB_CHECKS: JSON.stringify([
         { name: 'Lint, typecheck, test, build', state: 'SUCCESS', bucket: 'pass', link: '' },
       ]),
@@ -655,7 +782,7 @@ describe('ChatGPT review CLI', () => {
     // The reviewer still runs when CI is red, so a fix round is dispatched with
     // the failure attached instead of the loop going straight to blocked.
     const result = runReview(['--pr', '19', '--response-file', canned('approved'), '--dry-run'], {
-      OPENAI_API_KEY: 'test-key',
+      OPENROUTER_API_KEY: 'test-key',
       AI_LOOP_STUB_CHECKS: JSON.stringify([
         {
           name: 'Lint, typecheck, test, build',
@@ -679,7 +806,7 @@ describe('ChatGPT review CLI', () => {
     }));
     const result = runReview(
       ['--pr', '19', '--response-file', canned('changes-requested'), '--dry-run'],
-      { OPENAI_API_KEY: 'test-key' },
+      { OPENROUTER_API_KEY: 'test-key' },
       {
         number: 19,
         headRefName: 'automation/ai-development-loop',
@@ -698,7 +825,7 @@ describe('ChatGPT review CLI', () => {
     const sha = 'a'.repeat(40);
     const result = runReview(
       ['--pr', '19', '--dry-run'],
-      { OPENAI_API_KEY: 'test-key' },
+      { OPENROUTER_API_KEY: 'test-key' },
       {
         number: 19,
         headRefName: 'automation/ai-development-loop',
@@ -712,44 +839,44 @@ describe('ChatGPT review CLI', () => {
   });
 
   // GitHub Actions supplies an empty string for an unset variable, so a blank
-  // OPENAI_REVIEW_MODEL must not override the configured default. The dry-run
+  // OPENROUTER_REVIEW_MODEL must not override the configured default. The dry-run
   // body is printed with the resolved model, which is what these assert on.
   describe('review model resolution', () => {
-    const CONFIGURED_MODEL = 'gpt-5.6-sol';
+    const CONFIGURED_MODEL = 'openrouter/free';
 
     function resolvedModel(result: { stdout: string; stderr: string }): string {
       const match = /"model": "([^"]*)"/.exec(`${result.stdout}${result.stderr}`);
       return match?.[1] ?? '';
     }
 
-    it('falls back to the configured default when OPENAI_REVIEW_MODEL is unset', () => {
-      const result = runReview(['--pr', '19', '--dry-run'], { OPENAI_API_KEY: 'test-key' });
+    it('falls back to the configured default when OPENROUTER_REVIEW_MODEL is unset', () => {
+      const result = runReview(['--pr', '19', '--dry-run'], { OPENROUTER_API_KEY: 'test-key' });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
     });
 
-    it('falls back to the configured default for an empty OPENAI_REVIEW_MODEL', () => {
+    it('falls back to the configured default for an empty OPENROUTER_REVIEW_MODEL', () => {
       const result = runReview(['--pr', '19', '--dry-run'], {
-        OPENAI_API_KEY: 'test-key',
-        OPENAI_REVIEW_MODEL: '',
+        OPENROUTER_API_KEY: 'test-key',
+        OPENROUTER_REVIEW_MODEL: '',
       });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
     });
 
-    it('falls back to the configured default for a whitespace-only OPENAI_REVIEW_MODEL', () => {
+    it('falls back to the configured default for a whitespace-only OPENROUTER_REVIEW_MODEL', () => {
       const result = runReview(['--pr', '19', '--dry-run'], {
-        OPENAI_API_KEY: 'test-key',
-        OPENAI_REVIEW_MODEL: ' ',
+        OPENROUTER_API_KEY: 'test-key',
+        OPENROUTER_REVIEW_MODEL: ' ',
       });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe(CONFIGURED_MODEL);
     });
 
-    it('uses an explicitly configured OPENAI_REVIEW_MODEL', () => {
+    it('uses an explicitly configured OPENROUTER_REVIEW_MODEL', () => {
       const result = runReview(['--pr', '19', '--dry-run'], {
-        OPENAI_API_KEY: 'test-key',
-        OPENAI_REVIEW_MODEL: 'some-model',
+        OPENROUTER_API_KEY: 'test-key',
+        OPENROUTER_REVIEW_MODEL: 'some-model',
       });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe('some-model');
@@ -757,20 +884,29 @@ describe('ChatGPT review CLI', () => {
 
     it('lets --model take precedence over the configured default', () => {
       const result = runReview(['--pr', '19', '--model', 'cli-model', '--dry-run'], {
-        OPENAI_API_KEY: 'test-key',
+        OPENROUTER_API_KEY: 'test-key',
       });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe('cli-model');
     });
 
-    it('lets --model take precedence over OPENAI_REVIEW_MODEL', () => {
+    it('lets --model take precedence over OPENROUTER_REVIEW_MODEL', () => {
       const result = runReview(['--pr', '19', '--model', 'cli-model', '--dry-run'], {
-        OPENAI_API_KEY: 'test-key',
-        OPENAI_REVIEW_MODEL: 'env-model',
+        OPENROUTER_API_KEY: 'test-key',
+        OPENROUTER_REVIEW_MODEL: 'env-model',
       });
       expect(result.status).toBe(0);
       expect(resolvedModel(result)).toBe('cli-model');
     });
+  });
+
+  it('prints the configured provider endpoint in a dry run', () => {
+    const result = runReview(['--pr', '19', '--dry-run'], { OPENROUTER_API_KEY: 'test-key' });
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('https://openrouter.ai/api/v1/responses');
+    // The OpenAI endpoint must not appear anywhere in the request.
+    expect(out).not.toContain('api.openai.com');
   });
 });
 
@@ -881,7 +1017,7 @@ describe('review stage is not dispatched to OpenHands', () => {
     expect(source).toContain("fix: ['system.md', 'fix.md']");
   });
 
-  it('runs the ChatGPT reviewer from the review workflow, not OpenHands', () => {
+  it('runs the reviewer from the review workflow, not OpenHands', () => {
     const workflow = readFileSync(resolve(root, '.github/workflows/ai-loop-review.yml'), 'utf8');
     expect(workflow).toContain('chatgpt-review.mjs');
     expect(workflow).toContain('wait-for-ci.mjs');
@@ -910,11 +1046,23 @@ describe('review workflow safety', () => {
     );
   });
 
-  it('skips the review cleanly when OPENAI_API_KEY is absent', () => {
-    // The gate must exist so an unconfigured secret cannot turn the check red,
-    // and the review step must be conditional on it.
+  it('derives the required credential from the configured provider, not a hard-coded OpenAI key', () => {
+    // The credential check reads review.apiKeyEnvVar and injects the matching
+    // secret; OPENAI_API_KEY must not be required on the normal review path.
     expect(workflow).toContain('Check the reviewer credential');
+    expect(workflow).toContain('OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}');
+    expect(workflow).toContain('c.review&&c.review.apiKeyEnvVar');
+    expect(workflow).not.toContain('secrets.OPENAI_API_KEY');
+    expect(workflow).not.toContain('OPENAI_REVIEW_MODEL');
+  });
+
+  it('fails clearly when the reviewer credential is absent and never falls back to a paid provider', () => {
+    // A missing credential is an infrastructure failure, not a silent skip, and
+    // the workflow must say so without switching providers. The variable is
+    // interpolated from the config at run time, so assert on the stable text.
     expect(workflow).toContain("steps.creds.outputs.available == 'true'");
-    expect(workflow).toContain('::warning::OPENAI_API_KEY is not configured');
+    expect(workflow).toMatch(/::error::.*is not configured/);
+    expect(workflow).toContain('will not fall back to any paid provider');
+    expect(workflow).toContain('The review stage cannot run');
   });
 });

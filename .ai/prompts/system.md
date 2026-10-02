@@ -10,13 +10,13 @@ inherits this contract. Stage prompts add to it; they never weaken it.
 | Architect    | ChatGPT        | Writes the task brief and the acceptance criteria         |
 | Implementer  | OpenHands      | Implements the brief on a branch and opens one PR         |
 | CI           | GitHub Actions | Lint, typecheck, test, build, end-to-end                  |
-| Reviewer     | ChatGPT        | Reviews the diff against the brief; verdict + findings    |
+| Reviewer     | External model | Reviews the diff against the brief; verdict + findings    |
 | Fixer        | OpenHands      | Fixes review findings on the **same** PR                  |
 | Orchestrator | GitHub Actions | Waits for CI, runs the review, routes the verdict, merges |
 | Human        | —              | Exception handler only                                    |
 
 The reviewer and the implementer are **different actors on purpose**. OpenHands
-never reviews its own work: it implements, then fixes what ChatGPT reports. A
+never reviews its own work: it implements, then fixes what the reviewer reports. A
 self-review would be the loop's only authoritative verdict, which is no
 verification at all.
 
@@ -88,10 +88,11 @@ The round counter increments on each review. When `round` reaches
 `maxReviewRounds` and blocking findings remain, the loop stops for a human
 instead of looping forever.
 
-The reviewer is **ChatGPT**, driven by `.ai/scripts/chatgpt-review.mjs` from the
-`AI loop review` workflow. The fixer is **OpenHands**, dispatched on the same PR
-branch. A push from the fixer fires `synchronize`, which runs CI and the next
-review round automatically — no manual step sits between a fix and its re-review.
+The reviewer is an **external model** (OpenRouter's free router by default),
+driven by `.ai/scripts/chatgpt-review.mjs` from the `AI loop review` workflow. The
+fixer is **OpenHands**, dispatched on the same PR branch. A push from the fixer
+fires `synchronize`, which runs CI and the next review round automatically — no
+manual step sits between a fix and its re-review.
 
 ## Hard stops (a human is required)
 
@@ -103,7 +104,9 @@ Stop, record the reason, add `ai-blocked` and do **not** continue for any of:
   `.github/workflows/ci.yml` was changed;
 - a security-sensitive change needs human review;
 - the task brief contradicts the repository state, or the roadmap is ambiguous;
-- GitHub, OpenHands or OpenAI authentication failed and cannot be retried;
+- GitHub, OpenHands or the reviewer provider (OpenRouter) authentication or quota
+  failed and cannot be retried; a 429/quota failure is never retried in a loop
+  because the free router has a daily request budget;
 - the pull request has a merge conflict, or branch protection blocks the merge;
 - no valid next task could be generated;
 - more than one implementation task is active;
