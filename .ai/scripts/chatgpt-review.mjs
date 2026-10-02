@@ -246,6 +246,12 @@ function buildReviewInput({ pr, task, ci, diff, diffTruncated, round, maxReviewR
     '```diff',
     diff,
     '```',
+    '',
+    '### Required output',
+    '',
+    'Respond with **one JSON object only**, matching `.ai/schemas/review-report.schema.json`.',
+    'Do not include any prose, explanation or markdown code fence around it — the first',
+    'character of your response must be `{` and the last must be `}`.',
   ];
   return lines.join('\n');
 }
