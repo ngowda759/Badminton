@@ -408,6 +408,30 @@ describe('review request and response handling', () => {
     expect(() => parseModelJson('["approved"]')).toThrow(/not an object/);
     expect(() => parseModelJson('')).toThrow(/empty body/);
   });
+
+  it('prefers the final message over a reasoning item in a Responses payload', () => {
+    const payload = {
+      output: [
+        { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'Let me consider…' }] },
+        { type: 'message', content: [{ type: 'output_text', text: '{"verdict":"approved"}' }] },
+      ],
+    };
+    expect(extractOutputText(payload)).toBe('{"verdict":"approved"}');
+  });
+
+  it('parses a review wrapped in prose or a fenced code block', () => {
+    const fenced = 'Here is the review:\n```json\n{"verdict":"changes-requested"}\n```\nDone.';
+    expect(parseModelJson(fenced)).toEqual({ verdict: 'changes-requested' });
+    expect(parseModelJson('Let me carry out the review. {"verdict":"approved"}')).toEqual({
+      verdict: 'approved',
+    });
+  });
+
+  it('still rejects prose that contains no JSON object', () => {
+    expect(() => parseModelJson('Let me carry out the review and report back shortly.')).toThrow(
+      /invalid JSON/,
+    );
+  });
 });
 
 describe('provider-neutral reviewer configuration', () => {

@@ -464,19 +464,25 @@ export function extractOutputText(payload) {
     return payload.output_text;
   }
 
-  const parts = [];
+  const messageParts = [];
+  const reasoningParts = [];
   for (const item of Array.isArray(payload?.output) ? payload.output : []) {
     if (item?.type === 'refusal' && typeof item.refusal === 'string') {
       throw new Error(`the reviewer refused to answer: ${item.refusal}`);
     }
+    const isReasoning = item?.type === 'reasoning';
     for (const content of Array.isArray(item?.content) ? item.content : []) {
       if (content?.type === 'refusal' && typeof content.refusal === 'string') {
         throw new Error(`the reviewer refused to answer: ${content.refusal}`);
       }
-      if (typeof content?.text === 'string' && content.text.length > 0) parts.push(content.text);
+      if (typeof content?.text !== 'string' || content.text.length === 0) continue;
+      // A reasoning item is the model thinking out loud, not the answer. It is
+      // kept only as a last resort so the final message always wins.
+      (isReasoning ? reasoningParts : messageParts).push(content.text);
     }
   }
-  if (parts.length > 0) return parts.join('\n');
+  if (messageParts.length > 0) return messageParts.join('\n');
+  if (reasoningParts.length > 0) return reasoningParts.join('\n');
 
   const choice = Array.isArray(payload?.choices) ? payload.choices[0] : undefined;
   if (typeof choice?.message?.content === 'string' && choice.message.content.length > 0) {
@@ -484,6 +490,42 @@ export function extractOutputText(payload) {
   }
 
   throw new Error('the reviewer returned no text content');
+}
+
+/**
+ * Pull the first balanced JSON object out of a string.
+ *
+ * Some free/OpenAI-compatible gateways ignore the structured-output contract and
+ * wrap the JSON in prose or a fenced code block. Scanning for the first balanced
+ * object lets the reviewer be parsed without weakening the schema: the extracted
+ * value is still validated against the full review-report schema, and anything
+ * that is not a JSON object is still a hard failure.
+ *
+ * Returns the object text, or `null` when no balanced object is present.
+ */
+function extractJsonObject(text) {
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{') continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) return text.slice(start, index + 1);
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -500,7 +542,15 @@ export function parseModelJson(text) {
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new Error(`the reviewer returned invalid JSON: ${error.message}`, { cause: error });
+    const objectText = extractJsonObject(text);
+    if (objectText === null) {
+      throw new Error(`the reviewer returned invalid JSON: ${error.message}`, { cause: error });
+    }
+    try {
+      parsed = JSON.parse(objectText);
+    } catch (nested) {
+      throw new Error(`the reviewer returned invalid JSON: ${nested.message}`, { cause: nested });
+    }
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('the reviewer returned JSON that is not an object');
