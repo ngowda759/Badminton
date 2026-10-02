@@ -7,10 +7,10 @@
  * files and posts it to the OpenHands Cloud API. It never implements, reviews or
  * merges anything itself, and it never prints the API key.
  *
- * OpenHands is the implementer and the fixer. Reviewing is ChatGPT's job and is
- * driven by `.ai/scripts/chatgpt-review.mjs`, so there is deliberately no
- * `review` stage here — dispatching OpenHands to review its own work would make
- * the loop's only authoritative review self-certified.
+ * OpenHands is the implementer and the fixer. Reviewing is the external
+ * reviewer model's job and is driven by `.ai/scripts/chatgpt-review.mjs`, so
+ * there is deliberately no `review` stage here — dispatching OpenHands to review
+ * its own work would make the loop's only authoritative review self-certified.
  *
  * Usage:
  *   node .ai/scripts/dispatch-conversation.mjs --stage implement --task AI-002-T1

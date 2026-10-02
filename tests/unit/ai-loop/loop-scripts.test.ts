@@ -31,6 +31,30 @@ describe('AI loop scripts', () => {
     expect(stdout).toContain('valid');
   });
 
+  it('configures the review stage for the OpenRouter free router', () => {
+    const config = JSON.parse(readFileSync(resolve(root, '.ai/loop.config.json'), 'utf8')) as {
+      review: {
+        provider: string;
+        endpoint: string;
+        model: string;
+        apiKeyEnvVar: string;
+        schema: string;
+        markerName: string;
+      };
+      secrets: { required: string[] };
+    };
+    expect(config.review.provider).toBe('openrouter');
+    expect(config.review.endpoint).toBe('https://openrouter.ai/api/v1');
+    expect(config.review.model).toBe('openrouter/free');
+    expect(config.review.apiKeyEnvVar).toBe('OPENROUTER_API_KEY');
+    // The structured review contract and the dedupe marker are preserved.
+    expect(config.review.schema).toBe('.ai/schemas/review-report.schema.json');
+    expect(config.review.markerName).toBe('ai-loop-review');
+    // The normal review path must not require the paid OpenAI credential.
+    expect(config.secrets.required).toContain('OPENROUTER_API_KEY');
+    expect(config.secrets.required).not.toContain('OPENAI_API_KEY');
+  });
+
   it('accepts every workflow file, including the loop workflows', () => {
     const { status, stdout } = run('validate-workflows.mjs');
     expect(status).toBe(0);

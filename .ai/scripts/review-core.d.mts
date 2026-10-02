@@ -139,6 +139,18 @@ export function coerceVerdict(input: {
 export function normalizeModelReport(raw: unknown, facts: ReportFacts): ReviewReport;
 export function validateReport(report: ReviewReport, facts?: ReportFacts): string[];
 export function stripSchemaMeta(schema: Record<string, unknown>): Record<string, unknown>;
+export function reviewApiKeyEnvVar(review: { apiKeyEnvVar?: string; provider?: string }): string;
+export function reviewModelEnvVar(review: { provider?: string; modelEnvVar?: string }): string;
+export function resolveApiKey(
+  review: { apiKeyEnvVar?: string; provider?: string },
+  env?: Record<string, string | undefined>,
+): { apiKey: string; envVar: string };
+export function reviewEndpoint(review: { endpoint?: string }): string;
+export function resolveReviewModel(input?: {
+  review?: { provider?: string; model?: string; modelEnvVar?: string };
+  override?: string;
+  env?: Record<string, string | undefined>;
+}): string | undefined;
 export function buildReviewRequestBody(input: {
   model: string;
   instructions: string;

@@ -39,7 +39,7 @@ export function loadConfig(root = REPO_ROOT) {
  *   3. any task in the queue records this pull request number or branch as its
  *      implementation — the queue keeps that record even after the state moves on;
  *   4. the pull request carries the loop's trigger label (`ai-task`);
- *   5. a trusted ChatGPT review marker on the pull request covers its head or
+ *   5. a trusted review marker on the pull request covers its head or
  *      merge commit — only the loop's review stage writes one;
  *   6. the title or branch names a task id that exists in the loop's queue.
  *
@@ -502,6 +502,7 @@ export const HARD_STOPS = {
   'auth-failure-github': 'GitHub authentication failed and cannot be retried.',
   'auth-failure-openhands': 'OpenHands authentication failed and cannot be retried.',
   'auth-failure-openai': 'OpenAI authentication failed.',
+  'auth-failure-openrouter': 'OpenRouter authentication or quota failed.',
   'merge-conflict': 'The pull request has a merge conflict that needs a human.',
   'branch-protection': 'Branch protection prevents the merge.',
   'no-valid-next-task': 'No valid next task could be generated.',

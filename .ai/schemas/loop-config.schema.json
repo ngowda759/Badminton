@@ -101,6 +101,10 @@
           "type": "string",
           "minLength": 1
         },
+        "apiKeyEnvVar": {
+          "type": "string",
+          "minLength": 1
+        },
         "modelEnvVar": {
           "type": "string",
           "minLength": 1

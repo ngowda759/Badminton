@@ -1,6 +1,13 @@
 name: AI loop review
 
-# The ChatGPT review stage of the autonomous AI development loop.
+# The AI review stage of the autonomous AI development loop.
+#
+# The reviewer is an external model provider configured in `.ai/loop.config.json`
+# (`review.provider` / `review.endpoint` / `review.model` / `review.apiKeyEnvVar`).
+# The loop's default is OpenRouter's free model router, so the review path does
+# not require a paid API key. The credential is read from the configured
+# environment variable (`OPENROUTER_API_KEY` for the OpenRouter provider), never
+# hard-coded here.
 #
 # SECURITY MODEL — read before changing this file.
 #
@@ -51,7 +58,7 @@ permissions:
 
 jobs:
   review:
-    name: ChatGPT review
+    name: AI review
     runs-on: ubuntu-latest
     steps:
       # Trusted base branch only. The `ref` is explicit so this can never
@@ -73,14 +80,21 @@ jobs:
       - name: Check the reviewer credential
         id: creds
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
-          if [ -n "${OPENAI_API_KEY}" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::OPENAI_API_KEY is not configured; the review stage will be skipped."
+          # Provider-aware: the required variable is derived from the configured
+          # review provider/api-key field, never hard-coded to a paid provider.
+          REVIEW_API_KEY_ENV="$(node -e "const c=JSON.parse(require('fs').readFileSync('.ai/loop.config.json','utf8'));process.stdout.write((c.review&&c.review.apiKeyEnvVar)||'')")"
+          if [ -z "${REVIEW_API_KEY_ENV}" ]; then
+            echo "::error::.ai/loop.config.json review.apiKeyEnvVar is not set; cannot determine the reviewer credential."
+            exit 1
           fi
+          echo "env_var=${REVIEW_API_KEY_ENV}" >> "$GITHUB_OUTPUT"
+          if [ -z "${!REVIEW_API_KEY_ENV}" ]; then
+            echo "::error::${REVIEW_API_KEY_ENV} is not configured. The review stage cannot run and will not fall back to any paid provider. Configure the secret under Settings -> Secrets and variables -> Actions and re-run."
+            exit 1
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Resolve the pull request
         id: pr
@@ -104,26 +118,29 @@ jobs:
         run: |
           node .ai/scripts/wait-for-ci.mjs --pr "${{ steps.pr.outputs.number }}" --timeout-ms 900000
 
-      - name: Run the ChatGPT review
+      - name: Run the AI review
         if: ${{ steps.creds.outputs.available == 'true' && steps.pr.outputs.number != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_REVIEW_MODEL: ${{ vars.OPENAI_REVIEW_MODEL }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_REVIEW_MODEL: ${{ vars.OPENROUTER_REVIEW_MODEL }}
           OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
           OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
         run: |
           node .ai/scripts/chatgpt-review.mjs --pr "${{ steps.pr.outputs.number }}"
 
-      - name: Report a skipped review
-        if: ${{ steps.creds.outputs.available != 'true' }}
+      - name: Report an unavailable reviewer credential
+        if: ${{ always() && steps.creds.outputs.available != 'true' }}
         run: |
           {
-            echo "### ChatGPT review skipped"
+            echo "### AI review blocked: reviewer credential unavailable"
             echo
-            echo "\`OPENAI_API_KEY\` is not configured for this repository, so the review stage"
-            echo "cannot run. Configure it under Settings -> Secrets and variables -> Actions."
+            echo "The review stage could not run because its credential is not configured."
+            echo "It will not fall back to any paid provider."
+            echo
+            echo "Configure the credential named by \`review.apiKeyEnvVar\` in"
+            echo "\`.ai/loop.config.json\` under Settings -> Secrets and variables -> Actions, then re-run."
             echo
             echo "The loop will not merge a pull request it has not reviewed."
           } >> "$GITHUB_STEP_SUMMARY"
