@@ -135,6 +135,8 @@ export interface StageApi {
 
 export interface MatchApi {
   listByStage(stageId: string, signal?: AbortSignal): Promise<readonly MatchDto[]>;
+  /** Lists the matches that occupy a court (any status). */
+  listByCourt(courtId: string, signal?: AbortSignal): Promise<readonly MatchDto[]>;
   create(stageId: string, input: CreateMatchInput, signal?: AbortSignal): Promise<MatchDto>;
   get(id: string, signal?: AbortSignal): Promise<MatchDto>;
   update(id: string, input: UpdateMatchInput, signal?: AbortSignal): Promise<MatchDto>;
@@ -267,6 +269,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),
+      listByCourt: (courtId, signal) => client.get(`/api/v1/courts/${courtId}/matches`, signal),
       create: (stageId, input, signal) =>
         client.post(`/api/v1/stages/${stageId}/matches`, input, signal),
       get: (id, signal) => client.get(`/api/v1/matches/${id}`, signal),

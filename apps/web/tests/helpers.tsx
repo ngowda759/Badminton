@@ -459,6 +459,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
     },
     matches: {
       listByStage: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),
+      listByCourt: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),
       create: vi.fn(() => Promise.resolve(makeMatch())),
       get: vi.fn(() => Promise.resolve(makeMatch())),
       update: vi.fn(() => Promise.resolve(makeMatch())),

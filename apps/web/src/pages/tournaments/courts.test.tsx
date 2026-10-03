@@ -73,7 +73,7 @@ describe('CourtsManagePage removal', () => {
 
   it('disables the Remove control for a court that already has a match', async () => {
     const api = twoCourts();
-    vi.mocked(api.matches.listByStage).mockResolvedValue([makeMatch({ courtId: COURT_ONE })]);
+    vi.mocked(api.matches.listByCourt).mockResolvedValue([makeMatch({ courtId: COURT_ONE })]);
     renderPage(api);
 
     expect(await screen.findByText('Court One')).toBeInTheDocument();
@@ -83,6 +83,8 @@ describe('CourtsManagePage removal', () => {
     await waitFor(() => {
       expect(remove).toBeDisabled();
     });
+    // The occupancy check is court-scoped, not stage-scoped.
+    expect(api.matches.listByCourt).toHaveBeenCalledWith(COURT_ONE, expect.anything());
   });
 
   it('disables the Remove control when it is the tournament’s only court', async () => {

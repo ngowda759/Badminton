@@ -207,6 +207,33 @@ describe('DELETE /api/v1/courts/:id', () => {
   });
 });
 
+describe('GET /api/v1/courts/:id/matches', () => {
+  it('returns the matches that occupy a court, so the removal guard is court-scoped', async () => {
+    const { tournamentId, matchId } = await scheduledMatch();
+    const court = await api.services.courts.create(tournamentId, { number: 1, name: 'Court 1' });
+    await api.services.scheduling.schedule(matchId, {
+      courtId: court.id,
+      scheduledStartAt: new Date('2026-10-05T10:00:00.000Z'),
+      scheduledEndAt: new Date('2026-10-05T10:30:00.000Z'),
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/api/v1/courts/${court.id}/matches` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: { id: string; courtId: string | null }[] }>().data).toEqual([
+      expect.objectContaining({ id: matchId, courtId: court.id }),
+    ]);
+  });
+
+  it('returns an empty list for a court with no matches', async () => {
+    const tournamentId = await createTournament();
+    const court = await api.services.courts.create(tournamentId, { number: 1, name: 'Court 1' });
+
+    const response = await app.inject({ method: 'GET', url: `/api/v1/courts/${court.id}/matches` });
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ data: unknown[] }>().data).toEqual([]);
+  });
+});
+
 describe('/api/v1 matches/:id/schedule', () => {
   it('schedules a match and returns 200', async () => {
     const { tournamentId, matchId } = await scheduledMatch();

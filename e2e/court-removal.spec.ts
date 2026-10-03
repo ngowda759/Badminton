@@ -114,14 +114,24 @@ test.describe('court removal', () => {
       scheduledEndAt: '2026-10-05T10:30:00.000Z',
     });
 
+    // Add an empty third court so the occupied court is **not** the tournament's
+    // last court: the disabled control below must be driven by occupancy, not by
+    // the last-court guard.
+    await post(`/api/v1/tournaments/${tournament.data.id}/courts`, {
+      number: 3,
+      name: 'Court Three',
+    });
+
     // The API refuses a delete of the now-occupied court.
     const refused = await request.delete(`${API_BASE_URL}/api/v1/courts/${courtOne.data.id}`);
     expect(refused.status()).toBe(409);
 
-    // The UI no longer offers the removal (the control is disabled).
+    // The UI no longer offers the removal (the control is disabled because the
+    // court is occupied, even though another empty court remains).
     await page.reload();
     const occupiedRow = page.getByRole('row', { name: /Court One/ });
     await expect(occupiedRow.getByRole('button', { name: 'Remove' })).toBeDisabled();
+    await expect(page.getByRole('row', { name: /Court Three/ })).toBeVisible();
 
     // The court is still there.
     await expect(page.getByText('Court One')).toBeVisible();

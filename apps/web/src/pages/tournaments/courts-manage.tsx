@@ -145,7 +145,7 @@ function CourtRowActions({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const nextStatus = court.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
   const matchesQuery = useApiQuery<readonly MatchDto[]>(['court-matches', court.id], (signal) =>
-    api.matches.listByStage(court.id, signal),
+    api.matches.listByCourt(court.id, signal),
   );
 
   const hasMatches = matchesQuery.state.status === 'loaded' && matchesQuery.state.data.length > 0;

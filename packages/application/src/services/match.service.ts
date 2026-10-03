@@ -48,6 +48,11 @@ export interface MatchService {
   transitionStatus(id: string, command: TransitionMatchStatusCommand): Promise<Match>;
   getById(id: string): Promise<Match>;
   listByStage(stageId: string): Promise<readonly Match[]>;
+  /**
+   * Lists the matches that occupy a court (any status), so an operator control
+   * can refuse a removal that the `matches.courtId` `Restrict` FK would reject.
+   */
+  listByCourt(courtId: string): Promise<readonly Match[]>;
   addParticipant(matchId: string, command: AddMatchParticipantCommand): Promise<MatchParticipant>;
   listParticipants(matchId: string): Promise<readonly MatchParticipant[]>;
 }
@@ -173,6 +178,10 @@ export function createMatchService(
 
     async listByStage(stageId: string): Promise<readonly Match[]> {
       return client.matches.listByStage(stageId);
+    },
+
+    async listByCourt(courtId: string): Promise<readonly Match[]> {
+      return client.matches.listByCourt(courtId);
     },
 
     async addParticipant(
