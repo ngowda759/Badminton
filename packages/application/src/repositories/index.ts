@@ -96,6 +96,12 @@ export interface CourtRepository {
   listByTournament(tournamentId: string): Promise<readonly Court[]>;
   update(id: string, data: UpdateCourtData): Promise<Court>;
   updateStatus(id: string, status: CourtStatus): Promise<Court>;
+  /**
+   * Deletes a court. The database's `onDelete: Restrict` on `matches.courtId`
+   * is the final boundary: a court that still has a match cannot be removed,
+   * and the adapter translates the referential failure into a `ConflictError`.
+   */
+  remove(id: string): Promise<void>;
 }
 
 export interface TournamentRepository {

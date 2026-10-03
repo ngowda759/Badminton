@@ -145,6 +145,68 @@ describe('/api/v1 courts', () => {
   });
 });
 
+describe('DELETE /api/v1/courts/:id', () => {
+  it('removes a court with no matches and it no longer appears in the list', async () => {
+    const tournamentId = await createTournament();
+    const removable = await api.services.courts.create(tournamentId, {
+      number: 1,
+      name: 'Court 1',
+    });
+    const kept = await api.services.courts.create(tournamentId, { number: 2, name: 'Court 2' });
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/courts/${removable.id}`,
+    });
+    expect(response.statusCode).toBe(204);
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/api/v1/tournaments/${tournamentId}/courts`,
+    });
+    expect(list.statusCode).toBe(200);
+    const body = list.json<{ data: { id: string }[] }>();
+    expect(body.data.map((court) => court.id)).toEqual([kept.id]);
+  });
+
+  it('returns 409 for a court that has a match', async () => {
+    const { tournamentId, matchId } = await scheduledMatch();
+    const court = await api.services.courts.create(tournamentId, { number: 1, name: 'Court 1' });
+    await api.services.scheduling.schedule(matchId, {
+      courtId: court.id,
+      scheduledStartAt: new Date('2026-10-05T10:00:00.000Z'),
+      scheduledEndAt: new Date('2026-10-05T10:30:00.000Z'),
+    });
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/courts/${court.id}`,
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json<ErrorBody>().error.code).toBe('CONFLICT');
+  });
+
+  it("returns 422 for the tournament's last court", async () => {
+    const tournamentId = await createTournament();
+    const court = await api.services.courts.create(tournamentId, { number: 1, name: 'Court 1' });
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/courts/${court.id}`,
+    });
+    expect(response.statusCode).toBe(422);
+    expect(response.json<ErrorBody>().error.code).toBe('BUSINESS_RULE_VIOLATION');
+  });
+
+  it('returns 404 for an unknown id', async () => {
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/courts/11111111-1111-4111-8111-111111111111',
+    });
+    expect(response.statusCode).toBe(404);
+  });
+});
+
 describe('/api/v1 matches/:id/schedule', () => {
   it('schedules a match and returns 200', async () => {
     const { tournamentId, matchId } = await scheduledMatch();

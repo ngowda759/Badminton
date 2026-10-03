@@ -477,6 +477,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
       get: vi.fn(() => Promise.resolve(makeCourt())),
       update: vi.fn(() => Promise.resolve(makeCourt())),
       transition: vi.fn(() => Promise.resolve(makeCourt())),
+      remove: vi.fn(() => Promise.resolve(undefined)),
     },
     dashboard: {
       get: vi.fn(() => Promise.resolve(makeDashboard())),

@@ -667,6 +667,11 @@ function createCourtRepository(db: Db): CourtRepository {
         toCourt(await db.court.update({ where: { id }, data: { status } })),
       );
     },
+    remove(id) {
+      return translatePersistenceErrors(async () => {
+        await db.court.delete({ where: { id } });
+      });
+    },
   };
 }
 

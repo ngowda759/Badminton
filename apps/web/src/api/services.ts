@@ -171,6 +171,8 @@ export interface CourtApi {
   get(id: string, signal?: AbortSignal): Promise<CourtDto>;
   update(id: string, input: UpdateCourtInput, signal?: AbortSignal): Promise<CourtDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<CourtDto>;
+  /** Removes a court that has no matches; the API refuses a court with matches. */
+  remove(id: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface DashboardApi {
@@ -295,6 +297,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       update: (id, input, signal) => client.patch(`/api/v1/courts/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/courts/${id}/transition`, { status }, signal),
+      remove: (id, signal) => client.delete(`/api/v1/courts/${id}`, signal),
     },
     dashboard: {
       get: (tournamentId, signal) =>

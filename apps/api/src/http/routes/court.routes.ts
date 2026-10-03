@@ -60,6 +60,12 @@ export const courtSchedulingRoutes: FastifyPluginCallback<CourtSchedulingRoutesO
     return data(await courts.transitionStatus(id, body));
   });
 
+  app.delete('/courts/:id', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    await courts.remove(id);
+    return reply.status(204).send();
+  });
+
   app.post('/matches/:id/schedule', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     const body = validate(scheduleMatchInputSchema, request.body);

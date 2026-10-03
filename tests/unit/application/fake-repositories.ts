@@ -951,6 +951,15 @@ function buildClient(state: State): RepositoryClient {
       state.courts.set(id, updated);
       return updated;
     },
+    async remove(id: string): Promise<void> {
+      // Mirrors the `matches.courtId` Restrict FK: a court that still has a
+      // match cannot be deleted, and the adapter surfaces that as a conflict.
+      assertUnique(
+        ![...state.matches.values()].some((row) => row.courtId === id),
+        'matches_courtId_fkey',
+      );
+      state.courts.delete(id);
+    },
   };
 
   const realtimeEvents: RealtimeEventRepository = {

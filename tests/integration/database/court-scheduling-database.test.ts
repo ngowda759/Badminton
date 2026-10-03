@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { PrismaClient } from '@badminton/database';
+import { ConflictError } from '@badminton/domain';
+import { createRepositoryClient } from '@badminton/infrastructure';
 
 import {
   createCategory,
@@ -43,9 +45,48 @@ async function rejection(operation: Promise<unknown>): Promise<unknown> {
 const SUITE_NAME = 'Phase 7 court and scheduling database';
 
 function registerDatabaseSuite(prisma: PrismaClient): void {
+  const repositories = createRepositoryClient(prisma);
+
   describe(SUITE_NAME, () => {
     beforeEach(async () => {
       await resetTournamentData(prisma);
+    });
+
+    describe('court removal boundary', () => {
+      it('deletes a court with no matches', async () => {
+        const tournament = await createTournament(prisma);
+        const court = await createCourt(prisma, { tournamentId: tournament.id, number: 1 });
+
+        await repositories.courts.remove(court.id);
+
+        const rows = await prisma.court.findMany({ where: { tournamentId: tournament.id } });
+        expect(rows).toHaveLength(0);
+      });
+
+      it('rejects removing a court that still has a match and translates the FK failure', async () => {
+        const tournament = await createTournament(prisma);
+        const category = await createCategory(prisma, { tournamentId: tournament.id });
+        const stage = await createStage(prisma, { categoryId: category.id });
+        const court = await createCourt(prisma, { tournamentId: tournament.id, number: 1 });
+        await createMatch(prisma, {
+          stageId: stage.id,
+          courtId: court.id,
+          scheduledStartAt: new Date('2026-10-05T10:00:00.000Z'),
+          scheduledEndAt: new Date('2026-10-05T10:30:00.000Z'),
+        });
+
+        const error = await repositories.courts.remove(court.id).then(
+          () => undefined,
+          (caught: unknown) => caught,
+        );
+
+        expect(error).toBeInstanceOf(ConflictError);
+        // The raw driver message (constraint name / SQL) must not leak.
+        expect(String(error)).not.toContain('matches_courtId_fkey');
+
+        const rows = await prisma.court.findMany({ where: { id: court.id } });
+        expect(rows).toHaveLength(1);
+      });
     });
 
     describe('court uniqueness', () => {
