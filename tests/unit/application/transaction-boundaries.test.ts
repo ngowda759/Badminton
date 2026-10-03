@@ -1,4 +1,5 @@
 import {
+  createCourtService,
   createKnockoutBracketService,
   createKnockoutCorrectionService,
   createKnockoutProgressionService,
@@ -19,6 +20,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createFakeRepositories, type FakeRepositories } from './fake-repositories.ts';
 import {
   seedCategory,
+  seedCourt,
   seedKnockoutStage,
   seedMatch,
   seedPlayer,
@@ -88,6 +90,7 @@ function services() {
       createRealtimeEventService(),
     ),
     matches: createMatchService(repos.client, counter.unitOfWork, createRealtimeEventService()),
+    courts: createCourtService(repos.client, counter.unitOfWork, createRealtimeEventService()),
   };
 }
 
@@ -201,6 +204,33 @@ describe('single-write operations do not open an interactive transaction', () =>
     await seedStage(repos.client, categoryId, { sequence: 2 });
 
     expect(await transactionsUsed(() => stages.remove(first))).toBe(0);
+  });
+
+  it('removes a court without a transaction', async () => {
+    const { courts } = services();
+    const tournamentId = await seedTournament(repos.client);
+    const first = await seedCourt(repos.client, tournamentId, { number: 1 });
+    await seedCourt(repos.client, tournamentId, { number: 2 });
+
+    // The `matches.courtId` Restrict FK is the concurrency boundary, so the
+    // guard and the single delete do not need a service transaction.
+    expect(await transactionsUsed(() => courts.remove(first))).toBe(0);
+  });
+
+  it('keeps the court create/update/transition boundaries unchanged', async () => {
+    const { courts } = services();
+    const tournamentId = await seedTournament(repos.client);
+    const courtId = await seedCourt(repos.client, tournamentId);
+
+    // Each court mutation owns a single write plus its outbox event, so each
+    // opens exactly one transaction - unchanged by the removal work.
+    expect(
+      await transactionsUsed(() => courts.create(tournamentId, { number: 2, name: 'Court 2' })),
+    ).toBe(1);
+    expect(await transactionsUsed(() => courts.update(courtId, { name: 'Centre' }))).toBe(1);
+    expect(
+      await transactionsUsed(() => courts.transitionStatus(courtId, { status: 'INACTIVE' })),
+    ).toBe(1);
   });
 });
 

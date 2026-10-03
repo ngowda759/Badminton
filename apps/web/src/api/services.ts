@@ -135,6 +135,8 @@ export interface StageApi {
 
 export interface MatchApi {
   listByStage(stageId: string, signal?: AbortSignal): Promise<readonly MatchDto[]>;
+  /** Lists the matches that occupy a court (any status). */
+  listByCourt(courtId: string, signal?: AbortSignal): Promise<readonly MatchDto[]>;
   create(stageId: string, input: CreateMatchInput, signal?: AbortSignal): Promise<MatchDto>;
   get(id: string, signal?: AbortSignal): Promise<MatchDto>;
   update(id: string, input: UpdateMatchInput, signal?: AbortSignal): Promise<MatchDto>;
@@ -171,6 +173,8 @@ export interface CourtApi {
   get(id: string, signal?: AbortSignal): Promise<CourtDto>;
   update(id: string, input: UpdateCourtInput, signal?: AbortSignal): Promise<CourtDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<CourtDto>;
+  /** Removes a court that has no matches; the API refuses a court with matches. */
+  remove(id: string, signal?: AbortSignal): Promise<void>;
 }
 
 export interface DashboardApi {
@@ -265,6 +269,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),
+      listByCourt: (courtId, signal) => client.get(`/api/v1/courts/${courtId}/matches`, signal),
       create: (stageId, input, signal) =>
         client.post(`/api/v1/stages/${stageId}/matches`, input, signal),
       get: (id, signal) => client.get(`/api/v1/matches/${id}`, signal),
@@ -295,6 +300,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       update: (id, input, signal) => client.patch(`/api/v1/courts/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/courts/${id}/transition`, { status }, signal),
+      remove: (id, signal) => client.delete(`/api/v1/courts/${id}`, signal),
     },
     dashboard: {
       get: (tournamentId, signal) =>

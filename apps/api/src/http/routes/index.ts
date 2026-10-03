@@ -57,6 +57,7 @@ export function createApiV1Routes(
     await instance.register(courtSchedulingRoutes, {
       courts: services.courts,
       scheduling: services.scheduling,
+      matches: services.matches,
     });
     await instance.register(dashboardRoutes, { dashboard: services.dashboard });
     await instance.register(realtimeRoutes, {

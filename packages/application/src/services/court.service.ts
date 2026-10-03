@@ -1,4 +1,5 @@
 import {
+  BusinessRuleViolationError,
   ConflictError,
   InvalidStateTransitionError,
   isAllowedTransition,
@@ -39,6 +40,18 @@ export interface CourtService {
   transitionStatus(id: string, command: TransitionCourtStatusCommand): Promise<Court>;
   getById(id: string): Promise<Court>;
   listByTournament(tournamentId: string): Promise<readonly Court[]>;
+  /**
+   * Removes a court from its tournament.
+   *
+   * Mirrors V1's `removeCourt`: a court that still has **any** match cannot be
+   * removed (a scheduled, in-progress or completed match references it), and
+   * the tournament's **last** court is never removed (a tournament keeps at
+   * least one court, `MIN_COURTS = 1`). The `matches.courtId`
+   * `onDelete: Restrict` constraint remains the final boundary; this pre-check
+   * only produces a friendlier conflict. A deactivated court with no matches is
+   * removable.
+   */
+  remove(id: string): Promise<void>;
 }
 
 export function createCourtService(
@@ -152,6 +165,28 @@ export function createCourtService(
         throw new NotFoundError('Tournament', tournamentId);
       }
       return client.courts.listByTournament(tournamentId);
+    },
+
+    async remove(id: string): Promise<void> {
+      const current = await requireCourt(client, id);
+
+      const [matches, courts] = await Promise.all([
+        client.matches.listByCourt(id),
+        client.courts.listByTournament(current.tournamentId),
+      ]);
+
+      // A scheduled, in-progress or completed match occupies the court; V1
+      // refuses to drop a court that a match still references.
+      if (matches.length > 0) {
+        throw new ConflictError(
+          'A court that still has a match cannot be removed. Unschedule its matches first.',
+        );
+      }
+      if (courts.length <= 1) {
+        throw new BusinessRuleViolationError('The last court of a tournament cannot be removed.');
+      }
+
+      await client.courts.remove(id);
     },
   };
 }

@@ -1,4 +1,4 @@
-import type { CourtService, MatchSchedulingService } from '@badminton/application';
+import type { CourtService, MatchSchedulingService, MatchService } from '@badminton/application';
 import {
   courtTransitionInputSchema,
   createCourtInputSchema,
@@ -15,6 +15,7 @@ import { data } from '../response.ts';
 export interface CourtSchedulingRoutesOptions {
   readonly courts: CourtService;
   readonly scheduling: MatchSchedulingService;
+  readonly matches: MatchService;
 }
 
 /**
@@ -29,7 +30,7 @@ export const courtSchedulingRoutes: FastifyPluginCallback<CourtSchedulingRoutesO
   app,
   options,
 ) => {
-  const { courts, scheduling } = options;
+  const { courts, scheduling, matches } = options;
 
   app.get('/tournaments/:tournamentId/courts', async (request) => {
     const { tournamentId } = validate(tournamentIdParamSchema, request.params);
@@ -48,6 +49,13 @@ export const courtSchedulingRoutes: FastifyPluginCallback<CourtSchedulingRoutesO
     return data(await courts.getById(id));
   });
 
+  // The matches that occupy a court (any status). Read-only, so an operator
+  // control can refuse a removal the `matches.courtId` Restrict FK would reject.
+  app.get('/courts/:id/matches', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    return data(await matches.listByCourt(id));
+  });
+
   app.patch('/courts/:id', async (request) => {
     const { id } = validate(idParamSchema, request.params);
     const body = validate(updateCourtInputSchema, request.body);
@@ -58,6 +66,12 @@ export const courtSchedulingRoutes: FastifyPluginCallback<CourtSchedulingRoutesO
     const { id } = validate(idParamSchema, request.params);
     const body = validate(courtTransitionInputSchema, request.body);
     return data(await courts.transitionStatus(id, body));
+  });
+
+  app.delete('/courts/:id', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    await courts.remove(id);
+    return reply.status(204).send();
   });
 
   app.post('/matches/:id/schedule', async (request) => {

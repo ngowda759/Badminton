@@ -2,7 +2,8 @@ import { useState, type SubmitEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { CourtDto } from '@/api/types.ts';
+import type { CourtDto, MatchDto } from '@/api/types.ts';
+import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { FormField } from '@/components/form-field.tsx';
 import { PageHeader } from '@/components/page-header.tsx';
@@ -106,7 +107,11 @@ export function CourtsManagePage() {
                     <StatusBadge kind="court" status={court.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <CourtRowActions court={court} onChanged={refetch} />
+                    <CourtRowActions
+                      court={court}
+                      canRemove={state.data.length > 1}
+                      onChanged={refetch}
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -118,33 +123,79 @@ export function CourtsManagePage() {
   );
 }
 
+/**
+ * Row actions for one court: toggle availability and remove the court.
+ *
+ * The Remove control is disabled for the tournament's only court (the last
+ * court cannot be removed) and for a court that already has a match (the
+ * backend refuses it with a conflict). The court's matches are read lazily so a
+ * busy court never offers a delete that would be rejected.
+ */
 function CourtRowActions({
   court,
+  canRemove,
   onChanged,
 }: {
   readonly court: CourtDto;
+  readonly canRemove: boolean;
   readonly onChanged: () => void;
 }) {
   const api = useApi();
   const mutation = useMutation<unknown>();
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const nextStatus = court.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+  const matchesQuery = useApiQuery<readonly MatchDto[]>(['court-matches', court.id], (signal) =>
+    api.matches.listByCourt(court.id, signal),
+  );
+
+  const hasMatches = matchesQuery.state.status === 'loaded' && matchesQuery.state.data.length > 0;
+  const removeDisabled = !canRemove || hasMatches || mutation.pending;
 
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={mutation.pending}
-        onClick={() => {
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={mutation.pending}
+          onClick={() => {
+            void mutation.run(async () => {
+              await api.courts.transition(court.id, nextStatus);
+              onChanged();
+            });
+          }}
+        >
+          {court.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={removeDisabled}
+          onClick={() => {
+            setConfirmOpen(true);
+          }}
+        >
+          Remove
+        </Button>
+      </div>
+      {mutation.error ? <ErrorState error={mutation.error} title="Could not update court" /> : null}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Remove court?"
+        description="This removes the court from the tournament. It cannot be undone."
+        confirmLabel="Remove"
+        destructive
+        pending={mutation.pending}
+        onConfirm={() => {
+          setConfirmOpen(false);
           void mutation.run(async () => {
-            await api.courts.transition(court.id, nextStatus);
+            await api.courts.remove(court.id);
             onChanged();
           });
         }}
-      >
-        {court.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-      </Button>
-      {mutation.error ? <ErrorState error={mutation.error} title="Could not update court" /> : null}
+      />
     </div>
   );
 }
