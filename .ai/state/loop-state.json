@@ -12,9 +12,10 @@
   "blockedReason": null,
   "completedTasks": [
     "AI-001",
-    "AI-003"
+    "AI-003",
+    "AI-004"
   ],
-  "updatedAt": "2026-10-03T04:41:37Z",
+  "updatedAt": "2026-10-03T05:31:20Z",
   "history": [
     {
       "at": "2026-09-30T00:00:00Z",
@@ -40,6 +41,11 @@
       "at": "2026-10-03T04:41:37Z",
       "status": "next-task",
       "note": "advancing to next-task generation (AI-004)"
+    },
+    {
+      "at": "2026-10-03T05:31:20Z",
+      "status": "next-task",
+      "note": "AI-004/PR #36 merged; durable bookkeeping repaired (the advance-after-merge completion only ran in the ephemeral CI checkout)"
     }
   ]
 }

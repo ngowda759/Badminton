@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-03T04:41:56Z",
+  "updatedAt": "2026-10-03T05:31:42Z",
   "tasks": [
     {
       "id": "AI-001",
@@ -139,7 +139,7 @@
       "id": "AI-004",
       "title": "Guarded removal of an empty stage (TASK-10, parity gap G11)",
       "phase": "parity (G11 from the TASK-5 audit)",
-      "status": "approved",
+      "status": "done",
       "summary": "The TASK-5 parity audit records gap G11 as a medium-severity operator-workflow gap: V1 lets an operator remove an empty group (removeGroup refuses a non-empty group and the last group) while V2 has no delete route or service for a stage at all, so a mis-created stage is permanent. Add a guarded removal of an empty stage through DELETE /api/v1/stages/:id: a stage with no matches is deleted, a stage that still has matches is refused with a ConflictError (the matches.stageId onDelete: Restrict constraint is the final boundary), and the last stage of a category is refused. The court half of G11 stays out of scope.",
       "acceptanceCriteria": [
         "tests/unit/application/stage-removal.service.test.ts passes over the in-memory ports: remove deletes an empty stage (it is gone from listByCategory); a stage with a match is rejected with ConflictError and is not deleted; the last stage of a category is rejected with BusinessRuleViolationError; an unknown id raises NotFoundError.",
@@ -179,7 +179,58 @@
         "apps/web/src/pages/tournaments/stages.tsx",
         "apps/web/src/pages/tournaments/stage-detail.tsx"
       ],
-      "createdAt": "2026-10-03T04:42:00Z"
+      "createdAt": "2026-10-03T04:42:00Z",
+      "pr": 36,
+      "branch": "automation/ai-004-stage-removal",
+      "headSha": "fa66ae5b8f122a06ef9add9c73ec6571bf067a7f",
+      "completedAt": "2026-10-03T05:31:20Z"
+    },
+    {
+      "id": "AI-005",
+      "title": "Guarded removal of a court (TASK-11, parity gap G11)",
+      "phase": "parity (G11 from the TASK-5 audit)",
+      "status": "approved",
+      "summary": "AI-004 closed the stage half of parity gap G11 (guarded removal of an empty stage). The TASK-5 audit records G11 as 'Cannot remove a group/stage or a court'; the court half is still open. V1's removeCourt refuses an unknown court, refuses to drop the tournament's last court (MIN_COURTS = 1) and refuses a court with a match in progress. V2 has no delete route or service for a court at all: a mis-created court is permanent, and a court can only be deactivated. This task closes the court half of G11 with the smallest coherent change: a guarded removal through DELETE /api/v1/courts/:id. A court may be removed only when no match currently occupies it (no match on the court is SCHEDULED, IN_PROGRESS or COMPLETED, matching V1's 'a match is in progress / a court that no longer exists'), the tournament's last court is never removed, and the matches.courtId onDelete: Restrict constraint is the final boundary. A deactivated court with no matches remains removable, exactly as V1 allows.",
+      "acceptanceCriteria": [
+        "tests/unit/application/court-removal.service.test.ts (new) passes over the in-memory ports: CourtService.remove deletes a court that has no matches (it is gone from listByTournament); a court that has any match is rejected with ConflictError and is not deleted; the tournament's last court is rejected with BusinessRuleViolationError; an unknown id raises NotFoundError; a deactivated court with no matches is removable.",
+        "tests/unit/application/transaction-boundaries.test.ts records that CourtService.remove opens no transaction (the matches.courtId Restrict FK is the concurrency boundary, not a service transaction) and asserts the existing create/update/transition boundaries are unchanged.",
+        "tests/integration/api/court-scheduling.routes.test.ts asserts DELETE /api/v1/courts/:id returns 204 for a court with no matches and the court no longer appears in GET /api/v1/tournaments/:tournamentId/courts; returns 409 for a court that has a match; returns 422 for the tournament's last court; and returns 404 for an unknown id. The existing court cases still pass unchanged.",
+        "tests/integration/database/court-scheduling-database.test.ts (extended) proves against real PostgreSQL that the matches.courtId onDelete: Restrict constraint is the final boundary: a direct delete of a court that still has a match fails and is translated to a domain ConflictError, never a raw SQL error, and the raw driver message (constraint name / SQL) does not leak.",
+        "apps/web/src/pages/tournaments/courts.test.tsx (new) passes: a Remove control is rendered and enabled for a court with no matches; it is disabled for a court that already has a match; and confirming it calls DELETE /api/v1/courts/:id through the typed client and refetches the list. The control is also disabled when it is the tournament's only court.",
+        "e2e/court-removal.spec.ts passes against the real UI/API/PostgreSQL: create a tournament with two courts; remove the empty court and assert it disappears from the courts page and survives a reload; schedule a match on the remaining court and assert its removal control is disabled and DELETE /api/v1/courts/:id is refused with a conflict; the last-court refusal is exercised at the API level.",
+        "No database migration, seed change or workflow change is introduced: the diff adds nothing under prisma/migrations/** and does not touch prisma/seed.ts or .github/workflows/ci.yml. The existing matches.courtId onDelete: Restrict FK is reused, not altered.",
+        "The realtime catalogue is unchanged: tests/unit/domain/realtime.test.ts (its exact-list assertion) passes without edits, and no service publishes a new event type; a removed court emits no event (its COURT aggregate no longer exists, and the removal is surfaced by the client's tournament-scoped refetch).",
+        "npm run lint, npm run typecheck, npm test, npm run build and npm run test:e2e pass."
+      ],
+      "outOfScope": [
+        "Removing a court that still has any match, and cascading deletes of matches, participants or games; the Restrict FK stays authoritative and a non-empty court is always refused.",
+        "Court availability windows / start-end times, the out-of-hours override setting and the rolling scheduler (G7/G8), and the 1-8 court count cap (G12).",
+        "Any change to CourtService.create/update/transitionStatus, COURT_TRANSITIONS, or the existing scheduling endpoints.",
+        "The remaining TASK-5 gaps (G9 export/import/reset, G10 team levels, G12 caps, G13 default, G14 dropdown participant assignment, G15 regenerate flow, G16).",
+        "Any new realtime event type, a second data-fetching framework, or a new GET matches-by-court endpoint.",
+        "Production data, credentials, or a hand merge."
+      ],
+      "humanApproval": false,
+      "dependsOn": [
+        "AI-004"
+      ],
+      "references": [
+        "AGENTS.md",
+        "docs/tasks/task-5-parity-audit.md",
+        "docs/tasks/AI-004-stage-removal.md",
+        "prisma/schema.prisma",
+        "packages/application/src/services/court.service.ts",
+        "packages/application/src/services/stage.service.ts",
+        "packages/application/src/repositories/index.ts",
+        "packages/infrastructure/src/repositories.ts",
+        "packages/infrastructure/src/errors.ts",
+        "apps/api/src/http/routes/court.routes.ts",
+        "apps/web/src/api/services.ts",
+        "apps/web/src/pages/tournaments/courts-manage.tsx",
+        "tests/integration/api/court-scheduling.routes.test.ts",
+        "tests/integration/database/court-scheduling-database.test.ts"
+      ],
+      "createdAt": "2026-10-03T05:32:00Z"
     }
   ]
 }
