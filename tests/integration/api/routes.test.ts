@@ -1989,6 +1989,142 @@ describe('/api/v1 group fixtures', () => {
   });
 });
 
+describe('/api/v1 group fixtures regeneration', () => {
+  async function generatedStage(entryCount = 4) {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const entryIds: string[] = [];
+    for (let index = 0; index < entryCount; index += 1) {
+      const { id } = await registerPlayer(categoryId, `Regen ${String(index + 1)}`);
+      entryIds.push(id);
+    }
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures`,
+      payload: { entryIds },
+    });
+    return { stage, entryIds };
+  }
+
+  it('replaces the fixtures and returns 200 with the new set', async () => {
+    const { stage, entryIds } = await generatedStage(4);
+    const before = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/matches`,
+    });
+    const beforeIds = before.json<{ data: readonly { id: string }[] }>().data.map((m) => m.id);
+
+    const reordered = [...entryIds].reverse();
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures/regenerate`,
+      payload: { entryIds: reordered },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json<{
+      data: {
+        competitorCount: number;
+        matchCount: number;
+        matches: readonly { matchId: string }[];
+      };
+    }>();
+    expect(body.data.competitorCount).toBe(4);
+    expect(body.data.matchCount).toBe(6);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: `/api/v1/stages/${stage.id}/matches`,
+    });
+    const afterIds = after.json<{ data: readonly { id: string }[] }>().data.map((m) => m.id);
+    expect(afterIds).toHaveLength(6);
+    for (const oldId of beforeIds) {
+      expect(afterIds).not.toContain(oldId);
+    }
+    // The returned fixtures are exactly the persisted set.
+    expect(body.data.matches.map((match) => match.matchId).sort()).toEqual([...afterIds].sort());
+  });
+
+  it('returns 409 for a stage that has no fixtures to regenerate', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const stage = await api.services.stages.create(categoryId, {
+      name: 'Group A',
+      type: 'GROUP',
+      sequence: 1,
+    });
+    const { id: entryA } = await registerPlayer(categoryId, 'Regen A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Regen B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures/regenerate`,
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json<ErrorBody>().error.code).toBe('CONFLICT');
+  });
+
+  it('returns 422 for a COMPLETED stage', async () => {
+    const { stage, entryIds } = await generatedStage(3);
+    await api.services.stages.transitionStatus(stage.id, { status: 'ACTIVE' });
+    await api.services.stages.transitionStatus(stage.id, { status: 'COMPLETED' });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures/regenerate`,
+      payload: { entryIds },
+    });
+
+    expect(response.statusCode).toBe(422);
+  });
+
+  it('returns 404 for an unknown stage id', async () => {
+    const tournamentId = await registrationOpenTournament();
+    const categoryId = await openCategory(tournamentId, 'SINGLES', 'MS');
+    const { id: entryA } = await registerPlayer(categoryId, 'Regen A');
+    const { id: entryB } = await registerPlayer(categoryId, 'Regen B');
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/stages/11111111-1111-4111-8111-111111111111/fixtures/regenerate',
+      payload: { entryIds: [entryA, entryB] },
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('returns 400 for an empty entryIds array', async () => {
+    const { stage } = await generatedStage(2);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures/regenerate`,
+      payload: { entryIds: [] },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('returns 400 for a one-element entryIds array', async () => {
+    const { stage, entryIds } = await generatedStage(2);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${stage.id}/fixtures/regenerate`,
+      payload: { entryIds: [entryIds[0] ?? ''] },
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+});
+
 describe('/api/v1 match result correction', () => {
   interface MatchSetup {
     readonly matchId: string;

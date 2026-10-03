@@ -37,30 +37,6 @@ export function GroupFixtureSetup({ stageId, categoryId, onGenerated }: GroupFix
   const [confirming, setConfirming] = useState(false);
   const mutation = useMutation<GroupFixturesDto>();
 
-  const toggle = (entryId: string): void => {
-    setSelected((current) =>
-      current.includes(entryId) ? current.filter((id) => id !== entryId) : [...current, entryId],
-    );
-  };
-
-  const move = (index: number, direction: -1 | 1): void => {
-    setSelected((current) => {
-      const target = index + direction;
-      if (target < 0 || target >= current.length) {
-        return current;
-      }
-      const next = [...current];
-      const a = next[index];
-      const b = next[target];
-      if (a === undefined || b === undefined) {
-        return current;
-      }
-      next[index] = b;
-      next[target] = a;
-      return next;
-    });
-  };
-
   const summary = groupFixtureSummary(selected.length);
   const canGenerate = selected.length >= 2 && !mutation.pending;
 
@@ -86,58 +62,12 @@ export function GroupFixtureSetup({ stageId, categoryId, onGenerated }: GroupFix
             Select active entries and set their order. Every selected entry plays every other
             selected entry exactly once. No seeding or ranking is applied.
           </p>
-          <ul className="space-y-2" data-testid="group-fixture-entry-list">
-            {activeEntries.map((entry: EntryDto) => {
-              const position = selected.indexOf(entry.id);
-              const isSelected = position !== -1;
-              return (
-                <li
-                  key={entry.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2"
-                >
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => {
-                        toggle(entry.id);
-                      }}
-                    />
-                    <span>{nameFor(entry.id)}</span>
-                    {isSelected ? (
-                      <span className="text-muted-foreground text-xs">#{position + 1}</span>
-                    ) : null}
-                  </label>
-                  {isSelected ? (
-                    <span className="flex items-center gap-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={position === 0}
-                        onClick={() => {
-                          move(position, -1);
-                        }}
-                      >
-                        Up
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={position === selected.length - 1}
-                        onClick={() => {
-                          move(position, 1);
-                        }}
-                      >
-                        Down
-                      </Button>
-                    </span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
+          <EntryOrderPicker
+            entries={activeEntries}
+            nameFor={nameFor}
+            selected={selected}
+            onChange={setSelected}
+          />
 
           <p className="text-sm" data-testid="group-fixture-shape">
             {summary}
@@ -172,11 +102,196 @@ export function GroupFixtureSetup({ stageId, categoryId, onGenerated }: GroupFix
       />
 
       <p className="text-muted-foreground text-xs">
-        Fixtures are generated once and cannot be regenerated from here; a stage that already has
-        matches is rejected. Participant ordering is caller-controlled; no seeding algorithm is
-        applied.
+        Participant ordering is caller-controlled; no seeding algorithm is applied. Once fixtures
+        exist the match list is authoritative; a mis-entered ordering can be rebuilt with
+        &ldquo;Regenerate fixtures&rdquo;.
       </p>
     </div>
+  );
+}
+
+export interface GroupFixtureRegenerationProps {
+  readonly stageId: string;
+  readonly categoryId: string;
+  readonly onRegenerated: () => void;
+}
+
+/**
+ * Guarded group-fixture regeneration.
+ *
+ * Rendered once a GROUP stage already has fixtures. It reuses the same
+ * caller-controlled entry ordering as the setup, but its confirmation makes the
+ * destructive consequence explicit: the current matches and any recorded
+ * results are discarded and replaced by a fresh round-robin. Only a
+ * non-`COMPLETED` stage is regenerable (the API refuses a completed stage).
+ */
+export function GroupFixtureRegeneration({
+  stageId,
+  categoryId,
+  onRegenerated,
+}: GroupFixtureRegenerationProps) {
+  const api = useApi();
+  const { nameFor, entries } = useEntryNames(categoryId);
+  const activeEntries = entries.filter(
+    (entry) => entry.status === 'PENDING' || entry.status === 'CONFIRMED',
+  );
+
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<readonly string[]>([]);
+  const mutation = useMutation<GroupFixturesDto>();
+
+  const canRegenerate = selected.length >= 2 && !mutation.pending;
+
+  const regenerate = (): void => {
+    if (!canRegenerate) {
+      return;
+    }
+    void mutation.run(async () => {
+      const fixtures = await api.stages.regenerateFixtures(stageId, { entryIds: selected });
+      setOpen(false);
+      onRegenerated();
+      return fixtures;
+    });
+  };
+
+  return (
+    <div className="space-y-2">
+      <Button
+        type="button"
+        variant="outline"
+        disabled={mutation.pending}
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        Regenerate fixtures
+      </Button>
+      {mutation.error ? (
+        <ErrorState error={mutation.error} title="Could not regenerate fixtures" />
+      ) : null}
+
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Regenerate these fixtures?"
+        description="This discards the current matches and any recorded results for this group and replaces them with a fresh round-robin. This cannot be undone."
+        confirmLabel="Regenerate fixtures"
+        destructive
+        pending={mutation.pending}
+        onConfirm={regenerate}
+      >
+        <div className="space-y-4">
+          <p className="text-muted-foreground text-sm">
+            Select active entries and set their order for the replacement round-robin. Every
+            selected entry plays every other selected entry exactly once.
+          </p>
+          <EntryOrderPicker
+            entries={activeEntries}
+            nameFor={nameFor}
+            selected={selected}
+            onChange={setSelected}
+          />
+          <p className="text-sm" data-testid="group-fixture-regenerate-shape">
+            {groupFixtureSummary(selected.length)}
+          </p>
+          {!canRegenerate ? (
+            <p className="text-muted-foreground text-xs">
+              Select at least two active entries to regenerate.
+            </p>
+          ) : null}
+        </div>
+      </ConfirmDialog>
+    </div>
+  );
+}
+
+interface EntryOrderPickerProps {
+  readonly entries: readonly EntryDto[];
+  readonly nameFor: (entryId: string) => string;
+  readonly selected: readonly string[];
+  readonly onChange: (selected: readonly string[]) => void;
+}
+
+/**
+ * The caller-controlled entry checklist shared by generation and regeneration:
+ * toggling appends to the ordering, and Up/Down moves an entry within it.
+ */
+function EntryOrderPicker({ entries, nameFor, selected, onChange }: EntryOrderPickerProps) {
+  const toggle = (entryId: string): void => {
+    onChange(
+      selected.includes(entryId) ? selected.filter((id) => id !== entryId) : [...selected, entryId],
+    );
+  };
+
+  const move = (index: number, direction: -1 | 1): void => {
+    const target = index + direction;
+    if (target < 0 || target >= selected.length) {
+      return;
+    }
+    const next = [...selected];
+    const a = next[index];
+    const b = next[target];
+    if (a === undefined || b === undefined) {
+      return;
+    }
+    next[index] = b;
+    next[target] = a;
+    onChange(next);
+  };
+
+  return (
+    <ul className="space-y-2" data-testid="group-fixture-entry-list">
+      {entries.map((entry: EntryDto) => {
+        const position = selected.indexOf(entry.id);
+        const isSelected = position !== -1;
+        return (
+          <li
+            key={entry.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2"
+          >
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => {
+                  toggle(entry.id);
+                }}
+              />
+              <span>{nameFor(entry.id)}</span>
+              {isSelected ? (
+                <span className="text-muted-foreground text-xs">#{position + 1}</span>
+              ) : null}
+            </label>
+            {isSelected ? (
+              <span className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={position === 0}
+                  onClick={() => {
+                    move(position, -1);
+                  }}
+                >
+                  Up
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={position === selected.length - 1}
+                  onClick={() => {
+                    move(position, 1);
+                  }}
+                >
+                  Down
+                </Button>
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

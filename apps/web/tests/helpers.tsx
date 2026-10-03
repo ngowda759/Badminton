@@ -456,6 +456,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
       generateBracketFromQualifiers: vi.fn(() => Promise.resolve(makeBracket())),
       qualification: vi.fn(() => Promise.resolve(makeQualification())),
       generateFixtures: vi.fn(() => Promise.resolve(makeGroupFixtures())),
+      regenerateFixtures: vi.fn(() => Promise.resolve(makeGroupFixtures())),
     },
     matches: {
       listByStage: vi.fn(() => Promise.resolve([] as readonly MatchDto[])),

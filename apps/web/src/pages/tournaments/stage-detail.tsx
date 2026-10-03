@@ -16,7 +16,10 @@ import { StatusBadge } from '@/components/status-badge.tsx';
 import { BracketSection } from '@/components/tournaments/knockout-bracket.tsx';
 import { KnockoutRulesEditor } from '@/components/tournaments/knockout-rules-editor.tsx';
 import { QualificationCard } from '@/components/tournaments/qualification-panel.tsx';
-import { GroupFixtureSetup } from '@/components/tournaments/group-fixture-setup.tsx';
+import {
+  GroupFixtureRegeneration,
+  GroupFixtureSetup,
+} from '@/components/tournaments/group-fixture-setup.tsx';
 import { StandingsTable } from '@/components/tournaments/standings-table.tsx';
 import { Button } from '@/components/ui/button.tsx';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card.tsx';
@@ -184,6 +187,18 @@ export function StageDetailPage() {
                   stageId={stage.id}
                   categoryId={category.id}
                   onGenerated={matchQuery.refetch}
+                />
+              ) : null}
+              {/* Once fixtures exist regeneration is offered instead of the
+                  one-shot setup; it replaces the whole fixture set. */}
+              {matchQuery.state.status === 'loaded' && matchQuery.state.data.length > 0 ? (
+                <GroupFixtureRegeneration
+                  stageId={stage.id}
+                  categoryId={category.id}
+                  onRegenerated={() => {
+                    matchQuery.refetch();
+                    standingsQuery.refetch();
+                  }}
                 />
               ) : null}
               <CreateMatchForm stageId={stage.id} onCreated={matchQuery.refetch} />
