@@ -163,8 +163,11 @@ any other failure exits `1` and the loop stops.
 
 ### 7. Next task — automatic
 
-`ai-loop-next-task.yml` fires on two events, both handled by the trusted
-`advance-after-merge.mjs` from the base branch:
+`ai-loop-next-task.yml` fires on three events, all handled by the trusted
+`advance-after-merge.mjs` from the base branch. The merge reconciliation itself
+is a single function in that script, so every trigger reuses the _same_
+task-attribution, idempotency and state-transition rules rather than a second
+implementation:
 
 - **`pull_request: closed`** — the normal path. The workflow itself only applies
   a coarse filter (targets `main`, same repository); the decision is made by
@@ -175,7 +178,7 @@ any other failure exits `1` and the loop stops.
   the architect conversation. `ai-loop-implement.yml` then fires on the
   `task-queue.json` push and dispatches the implementation — no human step sits
   between a merge and the next task.
-- **`push` to `.ai/state/loop-state.json`** — the recovery path. If the state is
+- **`push` to `.ai/state/loop-state.json`** — a recovery check. If the state is
   already a legitimate `next-task` state with **no active task and no pull
   request** (a merge whose architect dispatch never ran, so the loop stalled),
   the script reports `managed=true` and the architect is dispatched. It never
@@ -183,6 +186,24 @@ any other failure exits `1` and the loop stops.
   `loop-state.json` is watched: a `task-queue.json` push is the architect's own
   output and belongs to `ai-loop-implement.yml`, so watching it here would
   dispatch the architect twice.
+- **`workflow_dispatch`** — operator recovery for a loop that stalled with a
+  merge it never reconciled. The `pull_request: closed` delivery that should have
+  advanced the loop may have been missed (or the state on the base branch was
+  never advanced), leaving a merged task still recorded as open. The script
+  **discovers** the already-merged AI pull request that completes a task its own
+  records still show as open and reconciles it through the _same_ merge logic as
+  the normal path — task → `done`, `ready-to-merge → merging → completed →
+next-task` — then dispatches the architect. It never hard-codes a task id,
+  never invents a task, and never attributes an `[AI-INFRA]` or unrelated merge.
+  Running it again over an already-consistent state (or with the next task
+  already queued) reports `managed=false`, so it cannot re-complete a task or
+  generate a duplicate next task.
+
+Discovery is `selectMergedTaskPr` in `.ai/scripts/loop-core.mjs`: it lists the
+recently merged pull requests, keeps only those that are AI-managed, attributes
+each through `classifyMergedLoopPr`, and returns the first whose task is still
+recorded as open (not `done`). A merged task already recorded `done` is skipped,
+which is what makes the recovery idempotent.
 
 An unrelated pull request closing is a no-op. A pull request that is AI-managed
 but closed **without** merging is a hard stop (`merge-conflict`): the loop must
@@ -313,14 +334,14 @@ like any legal one.
 
 ## Workflows
 
-| Workflow                 | Trigger                                                                              | Purpose                                                                           |
-| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| `ci.yml`                 | PR / push to `main`                                                                  | Unchanged product CI                                                              |
-| `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill)            | Validate config, state, schemas and workflow structure                            |
-| `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                                 | Wait for CI, run the review, route the verdict                                    |
-| `ai-loop-merge-gate.yml` | `workflow_run` after the review, or manual                                           | Re-check every gate, then merge (or stop for a human)                             |
-| `ai-loop-next-task.yml`  | PR `closed` (AI-managed PR), push to `.ai/state/loop-state.json`, or manual recovery | Record the merge (or recover a stalled `next-task` state), dispatch the architect |
-| `ai-loop-implement.yml`  | push to `main` touching `.ai/state/task-queue.json`, or manual recovery              | Dispatch the implementation conversation                                          |
+| Workflow                 | Trigger                                                                              | Purpose                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `ci.yml`                 | PR / push to `main`                                                                  | Unchanged product CI                                                  |
+| `ai-loop-validate.yml`   | PR / push to `main` (paths `.ai/**`, `.github/workflows/**`, docs, skill)            | Validate config, state, schemas and workflow structure                |
+| `ai-loop-review.yml`     | `workflow_run` after `CI`, or manual                                                 | Wait for CI, run the review, route the verdict                        |
+| `ai-loop-merge-gate.yml` | `workflow_run` after the review, or manual                                           | Re-check every gate, then merge (or stop for a human)                 |
+| `ai-loop-next-task.yml`  | PR `closed` (AI-managed PR), push to `.ai/state/loop-state.json`, or manual recovery | Reconcile a merge (or recover a stalled loop), dispatch the architect |
+| `ai-loop-implement.yml`  | push to `main` touching `.ai/state/task-queue.json`, or manual recovery              | Dispatch the implementation conversation                              |
 
 The two `workflow_run` workflows are the loop's most privileged and are
 deliberately separated from the pull request's own workflows: they run with the
@@ -366,9 +387,14 @@ node .ai/scripts/loop-state.mjs recover --note "stale state repaired"
 ```
 
 `recover` clears the recorded task and pull request and sets `next-task`; it is
-refused from an active status, and it never creates a task. If the state is still
-stuck, run `ai-loop-next-task.yml` by hand with `workflow_dispatch` (`reason`) —
-the operator recovery path.
+refused from an active status, and it never creates a task. If the loop instead
+stalled with a merge it never reconciled — a task still recorded as `approved`
+while its pull request has already merged — run `ai-loop-next-task.yml` by hand
+with `workflow_dispatch` (`reason`). That path discovers the merged AI task and
+reconciles it through the same merge-transition logic as the normal path (task →
+`done`, `ready-to-merge → merging → completed → next-task`) before dispatching
+the architect, so the architect never receives contradictory context. It never
+hard-codes a task id, and running it again is a no-op.
 
 ## Required GitHub Secrets
 

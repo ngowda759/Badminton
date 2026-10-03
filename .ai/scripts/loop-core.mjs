@@ -155,6 +155,65 @@ export function classifyMergedLoopPr({ pr, state = null, queue = null }) {
   return { kind: 'unattributable', task: null, taskId: null };
 }
 
+/**
+ * Find the already-merged AI pull request that completes a task still recorded
+ * as open in the loop's own records.
+ *
+ * The `pull_request: closed` path is told which pull request closed, so it only
+ * has to attribute that one. A manual `workflow_dispatch` recovery has no such
+ * event: the merge happened earlier (its `closed` delivery may have been missed
+ * or the state on the base branch was never advanced) and it must *discover*
+ * which merge it missed. This function is that discovery, expressed in terms of
+ * the same identity and classification rules the normal path uses — it never
+ * invents a task, never matches an unrelated pull request and never re-completes
+ * a task already recorded `done`.
+ *
+ * A task is a candidate when it is anything other than `done` (an `approved`
+ * task whose PR merged, an `in-review` task whose PR merged while the state was
+ * stale, the state's recorded active task) — those are exactly the records that
+ * a merge should have advanced but did not. A merged pull request is a match
+ * only when it is AI-managed and `classifyMergedLoopPr` attributes it to one of
+ * those tasks; an `[AI-INFRA]` merge and an unrelated merge are therefore never
+ * a match.
+ *
+ * @param {{ mergedPrs: object[], state?: object | null, queue?: object | null, config: object }} input
+ * @returns {{ pr: object, task: object, taskId: string } | null}
+ */
+export function selectMergedTaskPr({ mergedPrs, state = null, queue = null, config }) {
+  const tasks = queue?.tasks ?? [];
+  const targets = new Set(tasks.filter((task) => task?.status !== 'done').map((task) => task.id));
+  if (typeof state?.currentTaskId === 'string' && state.currentTaskId.length > 0) {
+    targets.add(state.currentTaskId);
+  }
+  if (targets.size === 0) return null;
+
+  for (const pr of mergedPrs ?? []) {
+    if (pr === null || typeof pr !== 'object') continue;
+    if (typeof pr.mergedAt !== 'string' || pr.mergedAt.length === 0) continue;
+    if (
+      !isAiManagedPullRequest({
+        pr,
+        state,
+        queue,
+        config,
+        mergeCommitSha: pr.mergeCommit?.oid,
+      })
+    ) {
+      continue;
+    }
+    const classified = classifyMergedLoopPr({ pr, state, queue });
+    if (
+      classified.kind === 'task' &&
+      classified.taskId !== null &&
+      targets.has(classified.taskId) &&
+      classified.task?.status !== 'done'
+    ) {
+      return { pr, task: classified.task, taskId: classified.taskId };
+    }
+  }
+  return null;
+}
+
 // --- task identity and sequencing -----------------------------------------
 
 /**

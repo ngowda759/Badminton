@@ -201,3 +201,9 @@ export function classifyMergedLoopPr(input: {
   task: TaskBrief | null;
   taskId: string | null;
 };
+export function selectMergedTaskPr(input: {
+  mergedPrs: MergeGatePr[];
+  state?: LoopState | null;
+  queue?: TaskQueue | null;
+  config: LoopConfig;
+}): { pr: MergeGatePr; task: TaskBrief; taskId: string } | null;
