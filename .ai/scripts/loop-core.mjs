@@ -97,6 +97,64 @@ export function isAiManagedPullRequest({ pr, state = null, queue = null, config,
   return false;
 }
 
+// --- classifying a merged loop pull request --------------------------------
+
+/**
+ * Classify a merged, AI-managed loop pull request against the loop's own records.
+ *
+ * A merged loop pull request either completes a queued task (the normal path) or
+ * is loop *infrastructure* that is not a task at all: an `[AI-INFRA]` tooling PR
+ * (a reviewer fix, a workflow hardening) that merges while an implementation
+ * task is still open. The task queue is the durable record of tasks and an
+ * `[AI-INFRA]` PR is never in it, so it must never be attributed to a task —
+ * inventing a completion would corrupt the queue and lose legitimate history.
+ * Every other merged loop pull request that cannot be attributed to a queued task
+ * is genuine corruption and must stop for a human.
+ *
+ * Task attribution order (most authoritative first):
+ *   1. the queue task that records this PR number or head branch — the loop's
+ *      explicit record that this pull request is that task's implementation;
+ *   2. loop infrastructure (`[AI-INFRA]`) — checked before the weaker signals so
+ *      an infrastructure PR can never be misattributed to an active task just
+ *      because the title mentions one;
+ *   3. the task id named in the PR title or branch — only to an existing task;
+ *   4. the loop's recorded active task, but only when the queue records no
+ *      PR/branch for it (otherwise the exact match in (1) would have caught it,
+ *      and a mismatch means this is not that task's pull request).
+ *
+ * @param {{ pr: object | null, state?: object | null, queue?: object | null }} input
+ * @returns {{ kind: 'task' | 'infrastructure' | 'unattributable', task: object | null, taskId: string | null }}
+ */
+export function classifyMergedLoopPr({ pr, state = null, queue = null }) {
+  const tasks = queue?.tasks ?? [];
+  const number = pr?.number;
+  const branch = typeof pr?.headRefName === 'string' ? pr.headRefName : '';
+
+  let task =
+    tasks.find(
+      (candidate) =>
+        (number !== undefined && candidate.pr === number) ||
+        (branch.length > 0 && candidate.branch === branch),
+    ) ?? null;
+
+  if (task === null && /\[AI-INFRA\]/i.test(pr?.title ?? '')) {
+    return { kind: 'infrastructure', task: null, taskId: null };
+  }
+
+  if (task === null) {
+    const named = /AI-\d+(?:-T\d+)?/.exec(`${pr?.title ?? ''} ${branch}`);
+    if (named !== null) task = tasks.find((candidate) => candidate.id === named[0]) ?? null;
+  }
+
+  if (task === null && typeof state?.currentTaskId === 'string' && state.currentTaskId.length > 0) {
+    const recorded = tasks.find((candidate) => candidate.id === state.currentTaskId) ?? null;
+    if (recorded !== null && recorded.pr == null && recorded.branch == null) task = recorded;
+  }
+
+  if (task !== null) return { kind: 'task', task, taskId: task.id };
+  return { kind: 'unattributable', task: null, taskId: null };
+}
+
 // --- task identity and sequencing -----------------------------------------
 
 /**
@@ -232,10 +290,34 @@ export function assertSingleActiveTask({ state, queue, openPrs, config }) {
  * a task is a state/queue mismatch, not a recovery — that is a `state-corruption`
  * hard stop for a human, not something the loop should paper over.
  *
+ * The queue is the durable record and is checked too: if it already holds a task
+ * awaiting implementation (`proposed`/`queued`/`approved`) or one in flight
+ * (`in-progress`/`in-review`/`ready-to-merge`), the architect's dispatch already
+ * ran. Re-dispatching it there would generate a duplicate or premature next task
+ * while the real one is still open, so that state is *not* a recovery — the loop
+ * is legitimately waiting on the task in the queue.
+ *
+ * @param {object | null | undefined} state
+ * @param {object | null} [queue] the task queue; when omitted, only the state is checked
  * @returns {boolean}
  */
-export function isRecoverableNextTaskState(state) {
-  return state?.status === 'next-task' && state.currentTaskId === null && state.currentPr === null;
+const RECOVERABLE_PENDING_STATUSES = [
+  'proposed',
+  'queued',
+  'approved',
+  'in-progress',
+  'in-review',
+  'ready-to-merge',
+];
+
+export function isRecoverableNextTaskState(state, queue = null) {
+  if (state?.status !== 'next-task' || state.currentTaskId !== null || state.currentPr !== null) {
+    return false;
+  }
+  const hasPendingTask = (queue?.tasks ?? []).some((task) =>
+    RECOVERABLE_PENDING_STATUSES.includes(task?.status),
+  );
+  return !hasPendingTask;
 }
 
 // --- protected paths -------------------------------------------------------

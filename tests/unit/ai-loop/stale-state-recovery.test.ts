@@ -184,6 +184,38 @@ describe('isRecoverableNextTaskState', () => {
       ),
     ).toBe(false);
   });
+
+  it('accepts next-task only when the queue holds no pending task', () => {
+    // The queue is the durable record. A `next-task` state whose queue already
+    // holds a task awaiting implementation is not a stall — the architect's
+    // dispatch ran and re-dispatching would generate a duplicate next task.
+    const done = queue();
+    expect(isRecoverableNextTaskState(state('next-task'), done)).toBe(true);
+
+    for (const status of [
+      'proposed',
+      'queued',
+      'approved',
+      'in-progress',
+      'in-review',
+      'ready-to-merge',
+    ]) {
+      const pending = queue({
+        tasks: [
+          ...queue().tasks,
+          { ...queue().tasks[0], id: 'AI-002', status, pr: null, branch: null },
+        ],
+      });
+      expect(isRecoverableNextTaskState(state('next-task'), pending), status).toBe(false);
+    }
+  });
+
+  it('still accepts next-task when the only queued task is done', () => {
+    const finished = queue({
+      tasks: [...queue().tasks, { ...queue().tasks[0], id: 'AI-002', status: 'done', pr: 28 }],
+    });
+    expect(isRecoverableNextTaskState(state('next-task'), finished)).toBe(true);
+  });
 });
 
 describe('stale-state recovery (loop-state.mjs recover)', () => {
@@ -358,6 +390,30 @@ describe('push-event recovery (advance-after-merge.mjs)', () => {
 
   it('does nothing for a completed state that still names a task (state/queue mismatch)', () => {
     const result = runPush(state('completed', { currentTaskId: 'AI-002' }));
+    expect(result.managed).toBe(false);
+  });
+
+  it('does not re-dispatch the architect when the queue already holds the next task', () => {
+    // A `next-task` state whose queue already holds an approved/in-flight task
+    // is not a stall: dispatching the architect again would generate a duplicate
+    // next task. This is the post-reconciliation shape on `main` (state
+    // `next-task`, queue holding AI-003 as `approved`).
+    writeFileSync(
+      join(scratch, '.ai/state/task-queue.json'),
+      `${JSON.stringify(
+        queue({
+          tasks: [
+            queue().tasks[0],
+            { ...queue().tasks[0], id: 'AI-002', status: 'done', pr: 28 },
+            { ...queue().tasks[0], id: 'AI-003', status: 'approved', pr: null, branch: null },
+          ],
+        }),
+        null,
+        2,
+      )}\n`,
+    );
+    const result = runPush(state('next-task'));
+    expect(result.status).toBe(0);
     expect(result.managed).toBe(false);
   });
 });

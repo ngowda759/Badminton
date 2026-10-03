@@ -11,6 +11,13 @@
  * event: the loop must not silently generate the next task when its own pull
  * request was abandoned, and it must not merge anything either.
  *
+ * A merged AI-managed pull request that is not a queued task is classified
+ * before it can stop the loop: an `[AI-INFRA]` tooling PR (which is never in the
+ * task queue) reconciles to a no-op so the loop carries on with the task in
+ * flight, while any other unattributable merge is still `state-corruption` and
+ * stops for a human. This is the stale-state reconciliation: an infrastructure
+ * PR that merges while a task is open must not be attributed to that task.
+ *
  * It also runs on a `push` that changes the loop state files (`EVENT_NAME=push`).
  * In that mode it is a recovery check only: when the state is a legitimate
  * `next-task` state with no active task or pull request it reports
@@ -31,6 +38,7 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 import { resolve } from 'node:path';
 
 import {
+  classifyMergedLoopPr,
   isAiManagedPullRequest,
   isRecoverableNextTaskState,
   loadConfig,
@@ -114,7 +122,13 @@ const queuePath = resolve(root, config.paths.queue);
 // creates a task, never touches a pull request and never advances a merge.
 if (process.env.EVENT_NAME === 'push') {
   const state = readJson(statePath, 'loop state');
-  if (isRecoverableNextTaskState(state)) {
+  // The queue is the durable record: a `next-task` state with a task already
+  // awaiting implementation (or in flight) is not a stall — the architect's
+  // dispatch already ran and re-dispatching it would generate a duplicate next
+  // task. Only a `next-task` state whose queue holds no pending task is a
+  // genuine recovery.
+  const pushQueue = readJson(queuePath, 'task queue');
+  if (isRecoverableNextTaskState(state, pushQueue)) {
     emitManaged(true);
     log(
       'the loop is in a recoverable next-task state with no active task or pull request; dispatching the architect.',
@@ -178,43 +192,38 @@ if (typeof pr.mergedAt !== 'string' || pr.mergedAt.length === 0) {
 // `main` before the merge (and the review stage is skipped entirely when no
 // reviewer credential is configured). The queue is the durable record: the
 // implementation records the task's `pr`/`branch` before opening it, so a merge
-// is attributed to the task that owns that PR (or branch). Only when neither the
-// state nor the queue can name the task is it genuine corruption — never invent
-// a task, stop for a human.
-const recordedTaskId = state.currentTaskId;
-let task =
-  typeof recordedTaskId === 'string' && recordedTaskId.length > 0
-    ? (queue.tasks.find((candidate) => candidate.id === recordedTaskId) ?? null)
-    : null;
-if (task === null) {
-  task =
-    queue.tasks.find(
-      (candidate) =>
-        candidate.pr === prNumber ||
-        (typeof candidate.branch === 'string' &&
-          candidate.branch.length > 0 &&
-          candidate.branch === pr.headRefName),
-    ) ?? null;
+// is attributed to the task that owns that PR (or branch).
+//
+// A merged AI-managed pull request that is *not* a queued task is one of two
+// things, and they are not the same event:
+//
+//   * loop infrastructure (`[AI-INFRA]` tooling — a reviewer fix, a workflow
+//     hardening) that merges while a task is still open. It is never in the task
+//     queue, so attributing it to a task would invent a completion and lose
+//     history. It must reconcile to a no-op and let the loop carry on with the
+//     task that is actually in flight.
+//   * a genuinely unattributable loop PR (an AI-managed merge that names no
+//     queued task and is not infrastructure). That is real corruption and must
+//     stop for a human — never invent a task.
+const classified = classifyMergedLoopPr({ pr, state, queue });
+if (classified.kind === 'infrastructure') {
+  // Reconciled: an infrastructure merge does not complete a task. A no-op here
+  // is what stops the state-corruption hard stop and lets the next-task
+  // workflow continue to the implementation the queue already holds.
+  emitManaged(false);
+  log(
+    `PR #${prNumber} is loop infrastructure (not a queued task); no task advances. The loop carries on with the task in flight.`,
+  );
+  process.exit(0);
 }
-if (task === null) {
-  // Last resort: the task id named in the pull request title or branch. This is
-  // the same signal `isAiManagedPullRequest` uses, so a task PR that never got
-  // its `pr`/`branch` recorded still advances — but only to a task that already
-  // exists in the queue, never an invented one.
-  const named = /AI-\d+(?:-T\d+)?/.exec(`${pr.title ?? ''} ${pr.headRefName ?? ''}`);
-  if (named !== null) {
-    task = queue.tasks.find((candidate) => candidate.id === named[0]) ?? null;
-  }
-}
-if (task === null) {
-  // A merged loop pull request that neither the state nor the queue attributes
-  // to a task means the loop lost track. Do not invent a task; stop for a human.
+if (classified.kind === 'unattributable') {
   stop(
     'state-corruption',
     `PR #${prNumber} merged but neither the loop state nor the task queue records it as a task`,
   );
 }
-const taskId = task.id;
+const task = classified.task;
+const taskId = classified.taskId;
 
 // Idempotency: a duplicate `pull_request: closed` delivery (or an operator
 // re-run) must not generate the next task twice. The task's own `status` is the
