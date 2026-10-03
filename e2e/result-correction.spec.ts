@@ -7,15 +7,16 @@ const API_PORT = Number(process.env.API_PORT ?? 3000);
 const API_BASE_URL = `http://127.0.0.1:${API_PORT}`;
 
 /**
- * TASK-8 result correction, against the real UI, API and PostgreSQL.
+ * TASK-8 / TASK-9 result correction, against the real UI, API and PostgreSQL.
  *
  * A completed group match is scored 21-10 over the API, then corrected to 21-19
  * through the match-detail UI: the match stays COMPLETED, the result summary
  * shows the corrected score and the derived standings reflect the corrected
- * points and point difference. A completed knockout match is shown read-only
- * with no correction control, because correcting it would require re-deriving
- * the bracket. Nothing is mocked: every step goes through the running Fastify
- * API and the database.
+ * points and point difference. A completed knockout bracket (four entries, both
+ * semifinals and the final played) is corrected through the UI: the corrected
+ * semifinal stays COMPLETED with the new winner, the final's slot 1 is re-filled
+ * with that winner and the final's stale result is reset. Nothing is mocked:
+ * every step goes through the running Fastify API and the database.
  *
  * Requires PostgreSQL and migrations (`docker compose up -d postgres` and
  * `npm run db:migrate`), which the Playwright `webServer` block depends on for
@@ -105,11 +106,25 @@ async function setupGroupMatch(
   };
 }
 
-/** Creates an open tournament, category, two entries and a completed knockout final. */
-async function setupCompletedKnockout(
+/**
+ * Creates an open tournament, category, four entries and a completed 4-entry
+ * knockout bracket (both semifinals and the final played).
+ *
+ * Returns the semifinal 1 match (whose correction re-derives the bracket), the
+ * final match and the competitor names/entries so the test can assert the final
+ * slot 1 was re-filled and the final was reset.
+ */
+async function setupCompletedKnockoutBracket(
   request: APIRequestContext,
   unique: number,
-): Promise<{ matchId: string; tournamentId: string; categoryId: string }> {
+): Promise<{
+  tournamentId: string;
+  categoryId: string;
+  semi1Id: string;
+  finalId: string;
+  names: readonly [string, string, string, string];
+  entryIds: readonly [string, string, string, string];
+}> {
   const tournament = await post<Entity>(request, '/api/v1/tournaments', {
     name: `E2E KO Correction ${unique}`,
     startDate: '2026-10-01',
@@ -126,8 +141,14 @@ async function setupCompletedKnockout(
   });
   await post(request, `/api/v1/categories/${category.id}/transition`, { status: 'OPEN' });
 
+  const names = [
+    `E2E KO A ${unique}`,
+    `E2E KO B ${unique}`,
+    `E2E KO C ${unique}`,
+    `E2E KO D ${unique}`,
+  ] as const;
   const entryIds: string[] = [];
-  for (const name of [`E2E KO Alice ${unique}`, `E2E KO Bob ${unique}`]) {
+  for (const name of names) {
     const player = await post<Entity>(request, '/api/v1/players', { name });
     const entry = await post<Entity>(request, `/api/v1/categories/${category.id}/entries`, {
       playerId: player.id,
@@ -140,27 +161,45 @@ async function setupCompletedKnockout(
     type: 'KNOCKOUT',
     sequence: 1,
   });
-  await post(request, `/api/v1/stages/${stage.id}/bracket`, {
-    entryIds: [entryIds[0], entryIds[1]],
-  });
+  await post(request, `/api/v1/stages/${stage.id}/bracket`, { entryIds });
   await post(request, `/api/v1/stages/${stage.id}/transition`, { status: 'ACTIVE' });
 
   const bracket = await request.get(`${API_BASE_URL}/api/v1/stages/${stage.id}/bracket`);
   const bracketBody = (await bracket.json()) as {
-    data: { rounds: readonly { matches: readonly { matchId: string }[] }[] };
+    data: {
+      rounds: readonly { roundNumber: number; matches: readonly { matchId: string }[] }[];
+    };
   };
-  const matchId = bracketBody.data.rounds[0]?.matches[0]?.matchId ?? '';
-  expect(matchId.length).toBeGreaterThan(0);
+  const round1 = bracketBody.data.rounds.find((round) => round.roundNumber === 1);
+  const round2 = bracketBody.data.rounds.find((round) => round.roundNumber === 2);
+  const semi1Id = round1?.matches[0]?.matchId ?? '';
+  const semi2Id = round1?.matches[1]?.matchId ?? '';
+  const finalId = round2?.matches[0]?.matchId ?? '';
+  expect(semi1Id.length).toBeGreaterThan(0);
+  expect(finalId.length).toBeGreaterThan(0);
 
-  await post(request, `/api/v1/matches/${matchId}/transition`, { status: 'IN_PROGRESS' });
-  await post(request, `/api/v1/matches/${matchId}/result`, {
-    games: [
-      { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
-      { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+  const twoZero = [
+    { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+    { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+  ];
+  for (const matchId of [semi1Id, semi2Id, finalId]) {
+    await post(request, `/api/v1/matches/${matchId}/transition`, { status: 'IN_PROGRESS' });
+    await post(request, `/api/v1/matches/${matchId}/result`, { games: twoZero });
+  }
+
+  return {
+    tournamentId: tournament.id,
+    categoryId: category.id,
+    semi1Id,
+    finalId,
+    names,
+    entryIds: [
+      entryIds[0] as string,
+      entryIds[1] as string,
+      entryIds[2] as string,
+      entryIds[3] as string,
     ],
-  });
-
-  return { matchId, tournamentId: tournament.id, categoryId: category.id };
+  };
 }
 
 /** Opens the match-detail page for a match within its category. */
@@ -233,18 +272,70 @@ test.describe('result correction', () => {
     });
   });
 
-  test('a completed knockout match exposes no correction control', async ({ page, request }) => {
+  test('corrects a completed knockout semifinal, re-fills the final and resets it', async ({
+    page,
+    request,
+  }) => {
     const unique = Date.now();
-    const { matchId, tournamentId, categoryId } = await setupCompletedKnockout(request, unique);
+    const { tournamentId, categoryId, semi1Id, finalId, names, entryIds } =
+      await setupCompletedKnockoutBracket(request, unique);
 
-    await openMatch(page, tournamentId, categoryId, matchId);
+    // Which competitors are in semifinal 1, and which slot won (slot 1).
+    const participantsResponse = await request.get(
+      `${API_BASE_URL}/api/v1/matches/${semi1Id}/participants`,
+    );
+    const participants = (
+      (await participantsResponse.json()) as {
+        data: readonly { slot: number; entryId: string }[];
+      }
+    ).data;
+    const slot1Entry = participants.find((row) => row.slot === 1)?.entryId ?? '';
+    const slot2Entry = participants.find((row) => row.slot === 2)?.entryId ?? '';
+    const nameFor = (entryId: string): string => names[entryIds.indexOf(entryId)] ?? '';
+    const slot1Name = nameFor(slot1Entry);
+    const slot2Name = nameFor(slot2Entry);
 
-    // The result is shown read-only: no correction control for a knockout match.
+    // The final's slot 1 holds the semifinal 1 winner (slot 1).
+    const finalBefore = await request.get(`${API_BASE_URL}/api/v1/matches/${finalId}/participants`);
+    expect(
+      (
+        (await finalBefore.json()) as { data: readonly { slot: number; entryId: string }[] }
+      ).data.find((row) => row.slot === 1)?.entryId,
+    ).toBe(slot1Entry);
+
+    await openMatch(page, tournamentId, categoryId, semi1Id);
+
+    // The semifinal is COMPLETED with a correction control.
     await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('match-result-summary')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Correct result' })).toHaveCount(0);
-    await expect(
-      page.getByText('The winner has advanced to the next knockout round.'),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Correct result' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Correct result' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Correct result' }).click();
+
+    // Correct so the other competitor wins: slot 2 takes both games.
+    const game1Slot1 = page.getByLabel(`Game 1 — ${slot1Name} points`);
+    const game1Slot2 = page.getByLabel(`Game 1 — ${slot2Name} points`);
+    await game1Slot1.fill('15');
+    await game1Slot2.fill('21');
+    await page.getByLabel(`Game 2 — ${slot1Name} points`).fill('18');
+    await page.getByLabel(`Game 2 — ${slot2Name} points`).fill('21');
+    await page.getByRole('button', { name: 'Save correction' }).click();
+
+    // The semifinal stays COMPLETED with the new winner.
+    await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('match-result-winner')).toContainText(slot2Name);
+
+    // The final's slot 1 now holds the new winner...
+    const finalAfter = await request.get(`${API_BASE_URL}/api/v1/matches/${finalId}/participants`);
+    expect(
+      (
+        (await finalAfter.json()) as { data: readonly { slot: number; entryId: string }[] }
+      ).data.find((row) => row.slot === 1)?.entryId,
+    ).toBe(slot2Entry);
+
+    // ...and the final's stale result was reset.
+    const finalResult = await request.get(`${API_BASE_URL}/api/v1/matches/${finalId}/result`);
+    expect(((await finalResult.json()) as { data: unknown }).data).toBeNull();
   });
 });

@@ -1,5 +1,7 @@
 import {
   createKnockoutBracketService,
+  createKnockoutCorrectionService,
+  createKnockoutProgressionService,
   createMatchResultService,
   createMatchService,
   createPlayerService,
@@ -312,6 +314,58 @@ describe('atomic operations open exactly one transaction', () => {
     const correctedGames = [{ gameNumber: 1, participant1Points: 18, participant2Points: 21 }];
     expect(
       await transactionsUsed(() => results.correctResult(matchId, { games: correctedGames })),
+    ).toBe(1);
+  });
+
+  it('wraps a knockout correction (with bracket re-derivation) in exactly one transaction', async () => {
+    const events = createRealtimeEventService();
+    const results = createMatchResultService(
+      repos.client,
+      counter.unitOfWork,
+      events,
+      createKnockoutProgressionService(),
+      createKnockoutCorrectionService(events),
+    );
+    const knockout = createKnockoutBracketService(repos.client, counter.unitOfWork);
+    const matches = createMatchService(repos.client, counter.unitOfWork, events);
+
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const stageId = await seedKnockoutStage(repos.client, categoryId);
+    const entryIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const playerId = await seedPlayer(repos.client, `Player ${String(index + 1)}`);
+      const entry = await repos.client.entries.create({
+        categoryId,
+        playerId,
+        teamId: null,
+        seed: null,
+        status: 'CONFIRMED',
+      });
+      entryIds.push(entry.id);
+    }
+    const bracket = await knockout.generateBracket(stageId, { entryIds });
+    await repos.client.stages.updateStatus(stageId, 'ACTIVE');
+    const semi1 = bracket.rounds[0]?.matches[0]?.matchId ?? '';
+    await matches.transitionStatus(semi1, { status: 'IN_PROGRESS' });
+    await results.recordResult(semi1, {
+      games: [
+        { gameNumber: 1, participant1Points: 21, participant2Points: 15 },
+        { gameNumber: 2, participant1Points: 21, participant2Points: 18 },
+      ],
+    });
+
+    // A knockout correction re-derives the bracket, but still opens exactly one
+    // transaction (the reference `recordResult` is unchanged).
+    expect(
+      await transactionsUsed(() =>
+        results.correctResult(semi1, {
+          games: [
+            { gameNumber: 1, participant1Points: 15, participant2Points: 21 },
+            { gameNumber: 2, participant1Points: 18, participant2Points: 21 },
+          ],
+        }),
+      ),
     ).toBe(1);
   });
 });

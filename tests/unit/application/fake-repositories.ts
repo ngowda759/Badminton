@@ -877,6 +877,15 @@ function buildClient(state: State): RepositoryClient {
       state.matchParticipants.set(created.id, created);
       return created;
     },
+    async clearSlot(matchId, slot) {
+      // Empties a slot, mirroring the adapter's `deleteMany`: a no-op when the
+      // slot is already empty, so re-derivation is idempotent.
+      for (const [id, row] of state.matchParticipants) {
+        if (row.matchId === matchId && row.slot === slot) {
+          state.matchParticipants.delete(id);
+        }
+      }
+    },
   };
 
   const courts: CourtRepository = {

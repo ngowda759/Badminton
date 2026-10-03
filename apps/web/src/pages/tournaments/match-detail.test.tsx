@@ -27,10 +27,10 @@ const CATEGORY = makeCategory({ id: CATEGORY_ID, tournamentId: TOURNAMENT_ID });
 /**
  * Match-detail result correction.
  *
- * The "Correct result" control must appear for a completed group match and be
- * absent for a completed knockout match. Submitting the correction form must
- * call the correction endpoint (never the record endpoint), and the form must
- * be pre-filled from the stored result.
+ * The "Correct result" control must appear for a completed match - group or
+ * knockout. Submitting the correction form must call the correction endpoint
+ * (never the record endpoint), and the form must be pre-filled from the stored
+ * result.
  */
 function renderPage(api = createStubApi()) {
   render(
@@ -126,12 +126,45 @@ describe('MatchDetailPage result correction', () => {
     expect(api.matches.recordResult).not.toHaveBeenCalled();
   });
 
-  it('does not offer a correction control for a completed knockout match', async () => {
+  it('offers a Correct result control for a completed knockout match and submits the correction', async () => {
+    const user = userEvent.setup();
     const api = completedKnockoutApi();
     renderPage(api);
 
     expect(await screen.findByRole('heading', { name: 'Match 1' })).toBeInTheDocument();
     expect(await screen.findByTestId('match-result-summary')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Correct result' })).not.toBeInTheDocument();
+
+    const correctButton = await screen.findByRole('button', { name: 'Correct result' });
+    await user.click(correctButton);
+
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Correct result' }));
+
+    // The knockout correction form is revealed (best of three); submitting it
+    // calls the correction endpoint, never the record endpoint.
+    const game1Slot1 = await screen.findByLabelText('Game 1 — Slot 1 points');
+    const game1Slot2 = screen.getByLabelText('Game 1 — Slot 2 points');
+    await user.clear(game1Slot1);
+    await user.type(game1Slot1, '15');
+    await user.clear(game1Slot2);
+    await user.type(game1Slot2, '21');
+    const game2Slot1 = screen.getByLabelText('Game 2 — Slot 1 points');
+    const game2Slot2 = screen.getByLabelText('Game 2 — Slot 2 points');
+    await user.clear(game2Slot1);
+    await user.type(game2Slot1, '18');
+    await user.clear(game2Slot2);
+    await user.type(game2Slot2, '21');
+
+    await user.click(screen.getByRole('button', { name: 'Save correction' }));
+
+    await waitFor(() => {
+      expect(api.matches.correctResult).toHaveBeenCalledWith(MATCH_ID, {
+        games: [
+          { gameNumber: 1, participant1Points: 15, participant2Points: 21 },
+          { gameNumber: 2, participant1Points: 18, participant2Points: 21 },
+        ],
+      });
+    });
+    expect(api.matches.recordResult).not.toHaveBeenCalled();
   });
 });

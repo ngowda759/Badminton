@@ -35,10 +35,15 @@ progression (TASK-4: a GROUP stage's configured `qualifiersPerGroup` feeds
 `GET /api/v1/stages/:id/qualification` and
 `POST /api/v1/stages/:id/bracket/generate`, which seeds the qualifiers — cross-seed
 for two groups, rank-interleave + snake-fold for three or more — spreads byes and
-writes the bracket from the derived qualifiers, never a hand-written order).
-**Automatic group creation, ranking/Elo systems, authentication, authorization,
-result-correction workflows and Phase 8.6 multi-device hardening are not
-implemented.**
+writes the bracket from the derived qualifiers, never a hand-written order), and
+match-result correction (TASK-8/AI-002 for a completed **group** match, TASK-9/AI-003
+for a completed **knockout** match: `POST /api/v1/matches/:id/result/correction`
+re-scores the match and, for a knockout match, re-derives the bracket in the same
+transaction — the next-round slot is re-filled with the new winner, already-decided
+downstream matches are reset and a `COMPLETED` stage whose final is invalidated
+reopens to `ACTIVE`).
+**Automatic group creation, ranking/Elo systems, authentication, authorization
+and Phase 8.6 multi-device hardening are not implemented.**
 Do not add those unless the task explicitly asks for a later phase. The
 authoritative design is `docs/phase-2-domain-design.md`; the Phase 2.2
 architecture is `docs/phase-2-2-architecture.md`; the REST API reference is
