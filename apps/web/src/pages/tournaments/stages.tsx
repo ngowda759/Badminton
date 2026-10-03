@@ -2,8 +2,9 @@ import { useState, type SubmitEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { StageDto, StageType } from '@/api/types.ts';
+import type { MatchDto, StageDto, StageType } from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
+import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { EmptyState, LoadingState } from '@/components/states.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
@@ -105,13 +106,20 @@ export function StagesPage() {
                     <StatusBadge kind="stage" status={stage.status} />
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button asChild variant="outline" size="sm">
-                      <Link
-                        to={`/tournaments/${tournament.id}/categories/${category.id}/stages/${stage.id}`}
-                      >
-                        Open
-                      </Link>
-                    </Button>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button asChild variant="outline" size="sm">
+                        <Link
+                          to={`/tournaments/${tournament.id}/categories/${category.id}/stages/${stage.id}`}
+                        >
+                          Open
+                        </Link>
+                      </Button>
+                      <RemoveStageButton
+                        stage={stage}
+                        canRemove={state.data.length > 1}
+                        onRemoved={refetch}
+                      />
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -284,5 +292,68 @@ function CreateStageCard({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Removes an empty stage.
+ *
+ * The control is disabled for the category's only stage (the last stage cannot
+ * be removed) and for a stage that already has matches (the backend refuses it
+ * with a conflict). The stage's matches are read lazily so a populated stage
+ * never offers a delete that would be rejected.
+ */
+function RemoveStageButton({
+  stage,
+  canRemove,
+  onRemoved,
+}: {
+  readonly stage: StageDto;
+  readonly canRemove: boolean;
+  readonly onRemoved: () => void;
+}) {
+  const api = useApi();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const mutation = useMutation<unknown>();
+  const matchQuery = useApiQuery<readonly MatchDto[]>(['stage-matches', stage.id], (signal) =>
+    api.matches.listByStage(stage.id, signal),
+  );
+
+  const hasMatches = matchQuery.state.status === 'loaded' && matchQuery.state.data.length > 0;
+  const disabled = !canRemove || hasMatches || mutation.pending;
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        onClick={() => {
+          setConfirmOpen(true);
+        }}
+      >
+        Remove
+      </Button>
+      {mutation.error ? (
+        <p className="text-destructive text-xs">Could not remove this stage.</p>
+      ) : null}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Remove stage?"
+        description="This removes the empty stage from the category. It cannot be undone."
+        confirmLabel="Remove"
+        destructive
+        pending={mutation.pending}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void mutation.run(async () => {
+            await api.stages.remove(stage.id);
+            onRemoved();
+          });
+        }}
+      />
+    </>
   );
 }

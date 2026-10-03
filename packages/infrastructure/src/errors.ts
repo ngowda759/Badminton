@@ -63,9 +63,7 @@ export function toApplicationError(error: unknown): Error {
       return new ConflictError(message);
     }
     if (error.code === 'P2003' || error.code === 'P2014') {
-      return new ConflictError(
-        'This operation would leave a referenced record in an invalid state.',
-      );
+      return new ConflictError('This record still has dependent records and cannot be removed.');
     }
     return new PersistenceError();
   }

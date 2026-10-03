@@ -192,6 +192,16 @@ describe('single-write operations do not open an interactive transaction', () =>
 
     expect(await transactionsUsed(() => entries.update(entry.id, { seed: 3 }))).toBe(0);
   });
+
+  it('removes an empty stage without a transaction', async () => {
+    const { stages } = services();
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const first = await seedStage(repos.client, categoryId, { sequence: 1 });
+    await seedStage(repos.client, categoryId, { sequence: 2 });
+
+    expect(await transactionsUsed(() => stages.remove(first))).toBe(0);
+  });
 });
 
 describe('atomic operations open exactly one transaction', () => {

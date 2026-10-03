@@ -46,6 +46,16 @@ export interface TournamentStageService {
   transitionStatus(id: string, command: TransitionStageStatusCommand): Promise<TournamentStage>;
   getById(id: string): Promise<TournamentStage>;
   listByCategory(categoryId: string): Promise<readonly TournamentStage[]>;
+  /**
+   * Removes an empty stage from its category.
+   *
+   * Mirrors V1's `removeGroup`: only a stage that still has **no** matches can
+   * be removed, and the **last** stage of a category is never removed (a
+   * category always keeps at least one stage). The `matches.stageId`
+   * `onDelete: Restrict` constraint remains the final boundary; this pre-check
+   * only produces a friendlier conflict.
+   */
+  remove(id: string): Promise<void>;
 }
 
 export function createTournamentStageService(
@@ -186,6 +196,26 @@ export function createTournamentStageService(
 
     async listByCategory(categoryId: string): Promise<readonly TournamentStage[]> {
       return client.stages.listByCategory(categoryId);
+    },
+
+    async remove(id: string): Promise<void> {
+      const current = await requireStage(client, id);
+
+      const [matches, stages] = await Promise.all([
+        client.matches.listByStage(id),
+        client.stages.listByCategory(current.categoryId),
+      ]);
+
+      if (matches.length > 0) {
+        throw new ConflictError(
+          'A stage that still has matches cannot be removed. Remove its matches first.',
+        );
+      }
+      if (stages.length <= 1) {
+        throw new BusinessRuleViolationError('The last stage of a category cannot be removed.');
+      }
+
+      await client.stages.remove(id);
     },
   };
 }

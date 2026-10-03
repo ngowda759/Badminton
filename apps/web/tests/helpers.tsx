@@ -449,6 +449,7 @@ export function createStubApi(): Mocked<BadmintonApi> {
       get: vi.fn(() => Promise.resolve(makeStage())),
       update: vi.fn(() => Promise.resolve(makeStage())),
       transition: vi.fn(() => Promise.resolve(makeStage())),
+      remove: vi.fn(() => Promise.resolve(undefined)),
       standings: vi.fn(() => Promise.resolve([] as readonly StandingRowDto[])),
       getBracket: vi.fn(() => Promise.resolve(makeBracket())),
       generateBracket: vi.fn(() => Promise.resolve(makeBracket())),
