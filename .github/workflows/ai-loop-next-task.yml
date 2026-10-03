@@ -12,7 +12,7 @@ name: AI loop next task
 #     loop for a human instead of silently starting the next task. An unrelated
 #     pull request closing is a no-op.
 #
-#   * `push` to `.ai/state/loop-state.json` — the recovery path. If the state is
+#   * `push` to `.ai/state/loop-state.json` — a recovery path. If the state is
 #     already a legitimate `next-task` state with no active task or pull request
 #     (a merge whose architect dispatch never ran, so the loop stalled), the
 #     script reports `managed=true` and the architect is dispatched. It never
@@ -21,17 +21,25 @@ name: AI loop next task
 #     architect's own output and is owned by `ai-loop-implement.yml`, so watching
 #     it here would dispatch the architect twice.
 #
-# There is no manual `workflow_dispatch` on the normal path. The dispatch trigger
-# exists purely as an operator recovery mechanism for a loop that stopped for a
-# human and was then resolved by hand.
+#   * `workflow_dispatch` — operator recovery. The `pull_request: closed`
+#     delivery that should have advanced the loop may have been missed, or the
+#     state on the base branch was never advanced, leaving a merged task still
+#     recorded as open. The script *discovers* that already-merged AI pull
+#     request and reconciles it through the same merge-transition logic as the
+#     normal path (task -> `done`, `ready-to-merge -> merging -> completed ->
+#     next-task`), then dispatches the architect. It never invents a task, and
+#     running it again over an already-consistent state is a no-op.
+#
+# All three triggers run the same `advance-after-merge.mjs`, which reports
+# `managed=true|false`; the dispatch steps gate on that output, so the identity
+# and state-transition rules live in one reviewed place rather than in a GitHub
+# expression. No PR number is required for the recovery paths.
 #
 # SECURITY MODEL: the checkout is pinned to the default branch, and the architect
 # conversation is given the repository (not the pull request's code) to inspect.
 # No PR-controlled file is executed. `advance-after-merge.mjs` runs from the
-# trusted base branch and reports `managed=true|false`; the dispatch steps gate on
-# that output, so the identity rules live in one reviewed place rather than in a
-# GitHub expression. No PR number is required for the recovery path, and the
-# pull-request advance path never runs for a push event.
+# trusted base branch; it reads pull requests as data through `gh` and never
+# checks out or executes their code.
 
 on:
   pull_request:
@@ -61,10 +69,11 @@ jobs:
   next-task:
     name: Generate and dispatch the next task
     # Coarse automatic filter only. Whether the closed pull request is actually
-    # AI-managed — and whether a push is a recoverable stalled state — is decided
-    # by `advance-after-merge.mjs` from the loop's own records (state, label,
-    # review marker, queued task id) — never from the branch name alone, because
-    # an AI task may live on `feat/*` or `fix/*` just as legitimately as on
+    # AI-managed, whether a push is a recoverable stalled state, and whether a
+    # manual recovery has a merged task to reconcile are all decided by
+    # `advance-after-merge.mjs` from the loop's own records (state, label, review
+    # marker, queued task id) — never from the branch name alone, because an AI
+    # task may live on `feat/*` or `fix/*` just as legitimately as on
     # `automation/*`. A closed-without-merge pull request reaches the script too,
     # so it can record the hard stop.
     if: >-
@@ -89,9 +98,15 @@ jobs:
       - name: Validate the loop state before advancing
         run: node .ai/scripts/validate-loop-config.mjs
 
-      - name: Advance the loop when the closed pull request is AI-managed
+      # One reconciliation implementation for every trigger. On `pull_request:
+      # closed` it advances the pull request that closed; on `push` it is a
+      # between-tasks recovery check; on `workflow_dispatch` it discovers and
+      # reconciles an already-merged AI task the loop missed, then falls back to
+      # the same between-tasks check. It writes `managed=true|false`, and the
+      # dispatch steps gate on it — so a recovery run over an already-consistent
+      # state is a no-op rather than a duplicate dispatch.
+      - name: Reconcile a merged AI task / recover a stalled loop
         id: identity
-        if: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -102,18 +117,14 @@ jobs:
         run: node .ai/scripts/advance-after-merge.mjs
 
       - name: Enforce exactly one active task
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          steps.identity.outputs.managed == 'true'
+        if: ${{ steps.identity.outputs.managed == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node .ai/scripts/loop-tasks.mjs enforce-single
 
       - name: Dispatch the next-task (architect) conversation
-        if: >-
-          github.event_name == 'workflow_dispatch' ||
-          steps.identity.outputs.managed == 'true'
+        if: ${{ steps.identity.outputs.managed == 'true' }}
         env:
           OPENHANDS_HOST: ${{ vars.OPENHANDS_HOST }}
           OPENHANDS_API_KEY: ${{ secrets.OPENHANDS_API_KEY }}
