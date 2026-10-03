@@ -78,6 +78,15 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
     return data(await stages.transitionStatus(id, body));
   });
 
+  // Removing a stage is a guarded, single-row delete: the service refuses a
+  // stage that still has matches (409) and the last stage of a category (422).
+  // The `matches.stageId` Restrict FK stays the final boundary.
+  app.delete('/stages/:id', async (request, reply) => {
+    const { id } = validate(idParamSchema, request.params);
+    await stages.remove(id);
+    return reply.status(204).send();
+  });
+
   app.get('/stages/:stageId/matches', async (request) => {
     const { stageId } = validate(stageIdParamSchema, request.params);
     return data(await matches.listByStage(stageId));

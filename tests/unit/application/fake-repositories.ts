@@ -584,6 +584,15 @@ function buildClient(state: State): RepositoryClient {
       state.stages.set(id, updated);
       return updated;
     },
+    async remove(id: string): Promise<void> {
+      // Mirrors the `matches.stageId` Restrict FK: a stage that still has a
+      // match cannot be deleted, and the adapter surfaces that as a conflict.
+      assertUnique(
+        ![...state.matches.values()].some((row) => row.stageId === id),
+        'matches_stageId_fkey',
+      );
+      state.stages.delete(id);
+    },
   };
 
   const matches: MatchRepository = {

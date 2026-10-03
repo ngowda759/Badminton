@@ -463,6 +463,11 @@ function createStageRepository(db: Db): TournamentStageRepository {
         toTournamentStage(await db.tournamentStage.update({ where: { id }, data: { status } })),
       );
     },
+    remove(id) {
+      return translatePersistenceErrors(async () => {
+        await db.tournamentStage.delete({ where: { id } });
+      });
+    },
   };
 }
 

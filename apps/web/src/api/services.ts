@@ -110,6 +110,8 @@ export interface StageApi {
   get(id: string, signal?: AbortSignal): Promise<StageDto>;
   update(id: string, input: UpdateStageInput, signal?: AbortSignal): Promise<StageDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<StageDto>;
+  /** Removes an empty stage; the API refuses a stage that still has matches. */
+  remove(id: string, signal?: AbortSignal): Promise<void>;
   standings(id: string, signal?: AbortSignal): Promise<readonly StandingRowDto[]>;
   /** Reads the knockout bracket for a KNOCKOUT stage. */
   getBracket(id: string, signal?: AbortSignal): Promise<BracketDto>;
@@ -250,6 +252,7 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       update: (id, input, signal) => client.patch(`/api/v1/stages/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/stages/${id}/transition`, { status }, signal),
+      remove: (id, signal) => client.delete(`/api/v1/stages/${id}`, signal),
       standings: (id, signal) => client.get(`/api/v1/stages/${id}/standings`, signal),
       getBracket: (id, signal) => client.get(`/api/v1/stages/${id}/bracket`, signal),
       generateBracket: (id, input, signal) =>

@@ -695,6 +695,76 @@ describe('/api/v1 stages and matches', () => {
     expect(transition.statusCode).toBe(200);
   });
 
+  it('removes an empty stage and drops it from the category listing', async () => {
+    const categoryId = await setupOpenCategory();
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Group', type: 'GROUP', sequence: 1 },
+    });
+    const firstId = first.json<{ data: { id: string } }>().data.id;
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Knockout', type: 'KNOCKOUT', sequence: 2 },
+    });
+    const secondId = second.json<{ data: { id: string } }>().data.id;
+
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/stages/${firstId}` });
+    expect(removed.statusCode).toBe(204);
+
+    const list = await app.inject({
+      method: 'GET',
+      url: `/api/v1/categories/${categoryId}/stages`,
+    });
+    const ids = list.json<{ data: { id: string }[] }>().data.map((stage) => stage.id);
+    expect(ids).toEqual([secondId]);
+  });
+
+  it('refuses to remove a stage that still has a match with 409', async () => {
+    const categoryId = await setupOpenCategory();
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Group', type: 'GROUP', sequence: 1 },
+    });
+    const firstId = first.json<{ data: { id: string } }>().data.id;
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Knockout', type: 'KNOCKOUT', sequence: 2 },
+    });
+    await app.inject({
+      method: 'POST',
+      url: `/api/v1/stages/${firstId}/matches`,
+      payload: { sequence: 1 },
+    });
+
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/stages/${firstId}` });
+    expect(removed.statusCode).toBe(409);
+  });
+
+  it('refuses to remove the last stage of a category with 422', async () => {
+    const categoryId = await setupOpenCategory();
+    const only = await app.inject({
+      method: 'POST',
+      url: `/api/v1/categories/${categoryId}/stages`,
+      payload: { name: 'Group', type: 'GROUP', sequence: 1 },
+    });
+    const onlyId = only.json<{ data: { id: string } }>().data.id;
+
+    const removed = await app.inject({ method: 'DELETE', url: `/api/v1/stages/${onlyId}` });
+    expect(removed.statusCode).toBe(422);
+  });
+
+  it('returns 404 when removing an unknown stage', async () => {
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: '/api/v1/stages/11111111-1111-4111-8111-111111111111',
+    });
+    expect(removed.statusCode).toBe(404);
+  });
+
   it('creates a knockout stage with a per-round scoring catalogue', async () => {
     const categoryId = await setupOpenCategory();
 

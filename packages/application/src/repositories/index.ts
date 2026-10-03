@@ -178,6 +178,12 @@ export interface TournamentStageRepository {
   listByTournament(tournamentId: string): Promise<readonly TournamentStage[]>;
   update(id: string, data: UpdateStageData): Promise<TournamentStage>;
   updateStatus(id: string, status: StageStatus): Promise<TournamentStage>;
+  /**
+   * Deletes a stage. The database's `onDelete: Restrict` on `matches.stageId`
+   * is the final boundary: a stage that still has a match cannot be removed,
+   * and the adapter translates the referential failure into a `ConflictError`.
+   */
+  remove(id: string): Promise<void>;
 }
 
 export interface MatchRepository {
