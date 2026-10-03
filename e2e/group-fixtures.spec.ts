@@ -92,7 +92,9 @@ test.describe('group fixtures', () => {
     // Four competitors produce six matches, shown in the match list.
     const matchLinks = page.locator('a[href*="/matches/"]');
     await expect(matchLinks).toHaveCount(6, { timeout: 15_000 });
-    await expect(page.getByRole('button', { name: 'Generate fixtures' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Generate fixtures', exact: true })).toHaveCount(
+      0,
+    );
 
     // The fixtures are persisted and returned by the API.
     const fixturesResponse = await page.request.get(
@@ -122,7 +124,9 @@ test.describe('group fixtures', () => {
     // A page refresh reloads the same fixtures from the API.
     await page.reload();
     await expect(page.locator('a[href*="/matches/"]')).toHaveCount(6, { timeout: 15_000 });
-    await expect(page.getByRole('button', { name: 'Generate fixtures' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Generate fixtures', exact: true })).toHaveCount(
+      0,
+    );
 
     // Regeneration is rejected: the fixtures are not duplicated.
     const entriesResponse = await page.request.get(

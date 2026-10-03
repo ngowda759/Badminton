@@ -1,5 +1,6 @@
 import {
   createCourtService,
+  createGroupFixtureService,
   createKnockoutBracketService,
   createKnockoutCorrectionService,
   createKnockoutProgressionService,
@@ -288,6 +289,26 @@ describe('atomic operations open exactly one transaction', () => {
         matches.addParticipant(doublesMatch, { entryId: doublesEntry.id, slot: 1 }),
       ),
     ).toBe(1);
+  });
+
+  it('wraps group-fixture generation and regeneration in exactly one transaction', async () => {
+    const { entries } = services();
+    const fixtures = createGroupFixtureService(counter.unitOfWork);
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const stageId = await seedStage(repos.client, categoryId);
+    const entryIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const playerId = await seedPlayer(repos.client, `Player ${String(index + 1)}`);
+      const entry = await entries.register({ categoryId, playerId });
+      entryIds.push(entry.id);
+    }
+
+    expect(await transactionsUsed(() => fixtures.generate(stageId, { entryIds }))).toBe(1);
+
+    // Regeneration replaces the whole fixture set and opens exactly one
+    // transaction; the reference generation boundary is unchanged.
+    expect(await transactionsUsed(() => fixtures.regenerate(stageId, { entryIds }))).toBe(1);
   });
 
   it('wraps knockout bracket generation in a single transaction', async () => {

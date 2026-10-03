@@ -8,6 +8,7 @@ import {
   type Match,
   type MatchParticipant,
   type TournamentEntry,
+  type TournamentStage,
 } from '@badminton/domain';
 
 import type { RepositoryClient } from '../repositories/index.ts';
@@ -33,59 +34,69 @@ import type { GroupFixtureMatch, GroupFixtures } from './group-fixtures.ts';
 export interface GroupFixtureService {
   /** Creates every round-robin match and fills both slots. Transactional. */
   generate(stageId: string, command: GenerateGroupFixturesCommand): Promise<GroupFixtures>;
+  /**
+   * Replaces a GROUP stage's whole fixture set with a freshly generated
+   * round-robin. Transactional.
+   *
+   * Regeneration is the guarded operator action V1 exposed
+   * (`regeneratePlan`/`regenerateFixtures`): a group whose membership or
+   * ordering was mis-entered can be rebuilt without deleting the stage. It is
+   * allowed only for a non-`COMPLETED` GROUP stage that already has fixtures -
+   * a completed stage's results are the group's outcome and `STAGE_TRANSITIONS`
+   * makes `COMPLETED` terminal, and regeneration replaces rather than creates.
+   * The recorded results are discarded (the whole fixture set is replaced),
+   * matching V1's simpler rebuild and the existing `generate` semantics.
+   */
+  regenerate(stageId: string, command: GenerateGroupFixturesCommand): Promise<GroupFixtures>;
 }
 
 export function createGroupFixtureService(unitOfWork: UnitOfWork): GroupFixtureService {
   return {
     async generate(stageId, command): Promise<GroupFixtures> {
-      const entryIds = command.entryIds;
-
       // Generation reads several records and writes many rows, so the whole
       // operation runs in one unit of work: a partial fixture set is never left
       // behind. The stage-unique index on `sequence` is the database's final
       // guard against a concurrent duplicate generation.
       return unitOfWork.runInTransaction(async (tx) => {
-        const stage = await tx.stages.findById(stageId);
-        if (!stage) {
-          throw new NotFoundError('Stage', stageId);
-        }
-        if (stage.type !== 'GROUP') {
-          throw new BusinessRuleViolationError('Fixtures can only be generated for a GROUP stage.');
-        }
-        if (stage.status === 'COMPLETED') {
-          throw new BusinessRuleViolationError('A completed stage cannot accept new fixtures.');
-        }
+        const stage = await requireGroupStage(tx, stageId);
 
         const existing = await tx.matches.listByStage(stageId);
         if (existing.length > 0) {
           throw new ConflictError('This stage already has fixtures.');
         }
 
-        const categoryEntries = await tx.entries.listByCategory(stage.categoryId);
-        const byId = new Map(categoryEntries.map((entry) => [entry.id, entry]));
+        const validated = await validateStageEntries(tx, stage, command.entryIds);
+        await writeRoundRobin(tx, stageId, validated);
 
-        const validated = validateEntries(entryIds, byId, stage.categoryId);
-        const rounds = roundRobinRounds(validated);
+        return buildGroupFixtures(await loadStageMatches(tx, stageId), {
+          stageId,
+          stageName: stage.name,
+          status: stage.status,
+          competitorCount: validated.length,
+        });
+      });
+    },
 
-        // Create the matches in generation order, so `sequence` is a stable,
-        // contiguous 1..M ordering and the round-robin round is preserved for a
-        // round-based presentation. Both slots are always filled - a bye is
-        // never emitted as a match.
-        let sequence = 0;
-        for (const round of rounds) {
-          for (const [first, second] of round.pairings) {
-            sequence += 1;
-            const match = await tx.matches.create({
-              stageId,
-              sequence,
-              roundNumber: round.roundNumber,
-              matchNumber: sequence,
-              status: 'SCHEDULED',
-            });
-            await tx.matchParticipants.create({ matchId: match.id, entryId: first, slot: 1 });
-            await tx.matchParticipants.create({ matchId: match.id, entryId: second, slot: 2 });
-          }
+    async regenerate(stageId, command): Promise<GroupFixtures> {
+      // The replace and the fresh insert must be atomic: a failure after the
+      // delete leaves the original fixtures (and their results) intact rather
+      // than a half-emptied group.
+      return unitOfWork.runInTransaction(async (tx) => {
+        const stage = await requireGroupStage(tx, stageId);
+
+        const existing = await tx.matches.listByStage(stageId);
+        if (existing.length === 0) {
+          throw new ConflictError('This stage has no fixtures to regenerate.');
         }
+
+        const validated = await validateStageEntries(tx, stage, command.entryIds);
+
+        // The `match_participants`/`match_games` onDelete: Cascade removes each
+        // old match's participants and recorded games with its row.
+        for (const match of existing) {
+          await tx.matches.remove(match.id);
+        }
+        await writeRoundRobin(tx, stageId, validated);
 
         return buildGroupFixtures(await loadStageMatches(tx, stageId), {
           stageId,
@@ -96,6 +107,66 @@ export function createGroupFixtureService(unitOfWork: UnitOfWork): GroupFixtureS
       });
     },
   };
+}
+
+/** Loads a stage, rejecting a missing stage or one that cannot hold fixtures. */
+async function requireGroupStage(
+  client: RepositoryClient,
+  stageId: string,
+): Promise<TournamentStage> {
+  const stage = await client.stages.findById(stageId);
+  if (!stage) {
+    throw new NotFoundError('Stage', stageId);
+  }
+  if (stage.type !== 'GROUP') {
+    throw new BusinessRuleViolationError('Fixtures can only be generated for a GROUP stage.');
+  }
+  if (stage.status === 'COMPLETED') {
+    throw new BusinessRuleViolationError('A completed stage cannot accept new fixtures.');
+  }
+  return stage;
+}
+
+/** Loads the stage's category entries and validates the caller's ordering. */
+async function validateStageEntries(
+  client: RepositoryClient,
+  stage: TournamentStage,
+  entryIds: readonly string[],
+): Promise<readonly string[]> {
+  const categoryEntries = await client.entries.listByCategory(stage.categoryId);
+  const byId = new Map(categoryEntries.map((entry) => [entry.id, entry]));
+  return validateEntries(entryIds, byId, stage.categoryId);
+}
+
+/**
+ * Writes the fresh round-robin for `validated`, filling both slots of every
+ * match. Ordering is caller-controlled; a bye is never emitted as a match.
+ */
+async function writeRoundRobin(
+  client: RepositoryClient,
+  stageId: string,
+  validated: readonly string[],
+): Promise<void> {
+  const rounds = roundRobinRounds(validated);
+
+  // Create the matches in generation order, so `sequence` is a stable,
+  // contiguous 1..M ordering and the round-robin round is preserved for a
+  // round-based presentation. Both slots are always filled.
+  let sequence = 0;
+  for (const round of rounds) {
+    for (const [first, second] of round.pairings) {
+      sequence += 1;
+      const match = await client.matches.create({
+        stageId,
+        sequence,
+        roundNumber: round.roundNumber,
+        matchNumber: sequence,
+        status: 'SCHEDULED',
+      });
+      await client.matchParticipants.create({ matchId: match.id, entryId: first, slot: 1 });
+      await client.matchParticipants.create({ matchId: match.id, entryId: second, slot: 2 });
+    }
+  }
 }
 
 interface StageFixtureInfo {

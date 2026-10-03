@@ -131,6 +131,15 @@ export interface StageApi {
     input: GenerateGroupFixturesInput,
     signal?: AbortSignal,
   ): Promise<GroupFixturesDto>;
+  /**
+   * Replaces the whole fixture set of a GROUP stage that already has fixtures.
+   * The API refuses a stage with no fixtures (409) and a completed stage (422).
+   */
+  regenerateFixtures(
+    id: string,
+    input: GenerateGroupFixturesInput,
+    signal?: AbortSignal,
+  ): Promise<GroupFixturesDto>;
 }
 
 export interface MatchApi {
@@ -266,6 +275,8 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       qualification: (id, signal) => client.get(`/api/v1/stages/${id}/qualification`, signal),
       generateFixtures: (id, input, signal) =>
         client.post(`/api/v1/stages/${id}/fixtures`, input, signal),
+      regenerateFixtures: (id, input, signal) =>
+        client.post(`/api/v1/stages/${id}/fixtures/regenerate`, input, signal),
     },
     matches: {
       listByStage: (stageId, signal) => client.get(`/api/v1/stages/${stageId}/matches`, signal),

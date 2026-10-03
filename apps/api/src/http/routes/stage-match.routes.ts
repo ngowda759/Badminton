@@ -170,6 +170,17 @@ export const stageMatchRoutes: FastifyPluginCallback<StageMatchRoutesOptions> = 
     return reply.status(201).send(data(fixtures));
   });
 
+  // Guarded fixture regeneration. The service replaces the whole fixture set of
+  // a non-completed GROUP stage that already has fixtures; it replaces, it does
+  // not create (409) and it refuses a COMPLETED stage (422). The route only
+  // validates the request shape and serialises the result.
+  app.post('/stages/:id/fixtures/regenerate', async (request) => {
+    const { id } = validate(idParamSchema, request.params);
+    const body = validate(generateGroupFixturesInputSchema, request.body);
+    const fixtures = await groupFixtures.regenerate(id, body);
+    return data(fixtures);
+  });
+
   // Knockout bracket. Generation is a single transactional application call;
   // the route only validates the request shape and serialises the result.
   app.post('/stages/:id/bracket', async (request, reply) => {
