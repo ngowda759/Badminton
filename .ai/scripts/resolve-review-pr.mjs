@@ -113,6 +113,51 @@ for (const number of candidates.filter((value) => Number.isInteger(value) && val
   }
 }
 
+// Discovery path (merge gate): a `workflow_run` trigger does not carry the pull
+// request, and its `head_branch` is the *triggering workflow's* branch — which
+// for the merge gate is `main`, because the review workflow runs on the default
+// branch. There is therefore nothing in the event to resolve. The merge gate
+// re-derives every condition itself and only merges an AI-managed pull request
+// that carries an approval for its head, so finding the single open AI-managed
+// pull request is safe: an unrelated or ambiguous set resolves to none and the
+// gate denies rather than merging the wrong thing.
+if (process.argv.includes('--discover')) {
+  const open = ghJson([
+    'pr',
+    'list',
+    '--repo',
+    repo,
+    '--state',
+    'open',
+    '--json',
+    'number,headRefName,baseRefName,isCrossRepository,labels,title,state',
+    '--limit',
+    '100',
+  ]);
+  const loopPrs = (Array.isArray(open) ? open : []).filter(
+    (pr) => pr.state === 'OPEN' && isLoopPullRequest(pr),
+  );
+  const recordedNumber = loopState?.currentPr?.number;
+  const recorded =
+    typeof recordedNumber === 'number'
+      ? loopPrs.find((pr) => pr.number === recordedNumber)
+      : undefined;
+  if (recorded !== undefined) {
+    emit(recorded.number);
+    process.exit(0);
+  }
+  if (loopPrs.length === 1) {
+    emit(loopPrs[0].number);
+    process.exit(0);
+  }
+  if (loopPrs.length > 1) {
+    console.log(
+      `review target: (none) — ${loopPrs.length} open AI-managed pull requests and no recorded active one`,
+    );
+    process.exit(0);
+  }
+}
+
 // Nothing to review: an unrelated CI run, a closed PR, or a fork. Not an error.
 emit('');
 process.exit(0);

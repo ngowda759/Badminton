@@ -56,12 +56,16 @@ import {
   coerceVerdict,
   decisionFor,
   extractOutputText,
+  hasReviewFailureForHead,
+  isRetryableReviewFailure,
   normalizeModelReport,
   parseModelJson,
   planReview,
   resolveApiKey,
   resolveReviewModel,
+  reviewAttemptBudget,
   reviewEndpoint,
+  reviewFailureMarker,
   validateReport,
 } from './review-core.mjs';
 import { validateAgainstSchema } from './loop-schema.mjs';
@@ -325,10 +329,24 @@ function setLoopState({ status, round, pr, taskId, verdict, ciStatus }) {
     `review round ${round}: ${status}`,
   ];
   const result = spawnSync('node', args, { cwd: root, encoding: 'utf8' });
-  if (result.status !== 0) {
-    console.error(result.stderr.trim());
-    fail(`failed to record loop state ${status}`);
+  if (result.status === 0) return;
+
+  // The review runs from the trusted base branch, so the state file it edits is
+  // only as current as the last commit to `main`. The implementation records its
+  // PR on the task branch, and a between-tasks state can legitimately be
+  // `next-task` when the review starts. A transition the state machine refuses
+  // is therefore stale bookkeeping, not a reason to fail the whole review after
+  // the comment has already been posted: record the transition with `--force`,
+  // which is logged in the state history exactly like any legal step.
+  const forced = spawnSync('node', [...args, '--force'], { cwd: root, encoding: 'utf8' });
+  if (forced.status === 0) {
+    log(
+      `note: the base-branch loop state was stale; recorded the ${status} transition with --force.`,
+    );
+    return;
   }
+  console.error(forced.stderr.trim());
+  fail(`failed to record loop state ${status}`);
 }
 
 function applyLabels({ pr, add, remove }) {
@@ -370,6 +388,188 @@ function dispatchFix({ report, pr, contextFile }) {
 
   const result = spawnSync('node', command, { cwd: root, encoding: 'utf8', stdio: 'inherit' });
   if (result.status !== 0) fail('the fix dispatch failed; see the log above');
+}
+
+/** A short, safe excerpt of the model's response for a diagnostic comment. */
+function safeExcerpt(text, max = 280) {
+  if (typeof text !== 'string') return '';
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= max) return collapsed;
+  return `${collapsed.slice(0, max)}…`;
+}
+
+/**
+ * Normalise one canned entry into a Responses-shaped payload.
+ *
+ * Accepts a bare review report, a model response object, or a full API envelope
+ * — whichever the caller has to hand. The raw file text is preserved as
+ * `output_text` when it is not itself a JSON object, so a canned refusal or
+ * malformed body reaches the same parser a live response would.
+ */
+function toCannedPayload(entry) {
+  if (typeof entry === 'string') return { output_text: entry };
+  if (entry !== null && typeof entry === 'object' && typeof entry.verdict === 'string') {
+    return { output_text: JSON.stringify(entry) };
+  }
+  return entry;
+}
+
+/**
+ * Load one or more canned reviewer payloads from a file.
+ *
+ * A JSON array is treated as one payload per attempt (so a retry can be
+ * exercised deterministically); anything else is a single payload. A raw
+ * non-JSON file is kept verbatim so a refusal or malformed body can be simulated.
+ */
+function loadCannedPayloads(file) {
+  if (!existsSync(file)) fail(`--response-file not found: ${file}`, 2);
+  const raw = readFileSync(file, 'utf8');
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [{ output_text: raw }];
+  }
+  if (Array.isArray(parsed)) return parsed.map(toCannedPayload);
+  return [toCannedPayload(parsed)];
+}
+
+/**
+ * Record a review round that produced no usable verdict.
+ *
+ * This is the loop's safe failure path: it never writes an approval marker, it
+ * never marks the pull request ready and it never lets the merge gate proceed.
+ * It records a distinct failure marker so a repeated failure does not spam the
+ * pull request, records the hard stop in the loop state, and exits non-zero so
+ * the GitHub Actions job is visibly red.
+ */
+function recordReviewFailure({ pr, prNumber, repoArgs, plan, failure, text, taskId }) {
+  const kind = failure.code ?? 'invalid-json';
+  const attempts = failure.attempts ?? 1;
+  log(
+    `the reviewer returned no usable review after ${attempts} attempt(s) (${kind}): ${failure.message}`,
+  );
+
+  const marker = reviewFailureMarker(plan.round, pr.headRefOid, attempts, kind);
+  const alreadyRecorded = hasReviewFailureForHead(pr.comments ?? [], pr.headRefOid);
+  if (!alreadyRecorded) {
+    const excerpt = safeExcerpt(text);
+    const comment = [
+      marker,
+      '',
+      `## AI review — round ${plan.round} — no verdict (${kind})`,
+      '',
+      `- **Task:** ${taskId}`,
+      `- **Head SHA:** \`${pr.headRefOid}\``,
+      `- **Attempts:** ${attempts}`,
+      `- **Reason:** ${failure.message}`,
+      '',
+      excerpt.length > 0
+        ? `The provider returned content that is not a review report (first ${Math.min(excerpt.length, 280)} characters shown):`
+        : 'The provider returned no content.',
+      '',
+      excerpt.length > 0 ? `> ${excerpt}` : '',
+      '',
+      'The loop did **not** record a verdict, did **not** approve the pull request and did **not**',
+      'mark it ready to merge. The merge gate cannot proceed without an `approved` review. A later',
+      'review run will retry this head.',
+      '',
+      '---',
+      '',
+      'This review was produced by an AI agent (an external reviewer model, orchestrated by GitHub Actions) on behalf of the user.',
+    ].join('\n');
+    const commentFile = resolve(root, '.ai/state/.review-failure.md');
+    writeFileSync(commentFile, `${comment}\n`);
+    const posted = tryGh([
+      'pr',
+      'comment',
+      String(prNumber),
+      ...repoArgs,
+      '--body-file',
+      commentFile,
+    ]);
+    if (!posted.ok) log(`note: could not post the failure comment: ${posted.stderr.trim()}`);
+    else log(`posted the round ${plan.round} failure notice to PR #${prNumber}`);
+  } else {
+    log('a failure notice for this head is already recorded; not posting a duplicate.');
+  }
+
+  const stop = spawnSync(
+    'node',
+    [
+      resolve(root, '.ai/scripts/loop-state.mjs'),
+      'stop',
+      '--event',
+      'reviewer-invalid-response',
+      '--status',
+      'blocked',
+      '--note',
+      `review round ${plan.round} on PR #${prNumber}: ${kind}`,
+    ],
+    { cwd: root, encoding: 'utf8' },
+  );
+  if (stop.status !== 0) log(`note: could not record the stop: ${stop.stderr.trim()}`);
+
+  applyLabels({
+    pr,
+    add: [config.automation.blockedLabel],
+    remove: [config.automation.readyLabel],
+  });
+
+  fail(
+    `the reviewer produced no usable verdict (${kind}); the loop is blocked and no approval was recorded.`,
+  );
+}
+
+/**
+ * Ask the reviewer for a report, retrying a malformed or refused response.
+ *
+ * Returns `{ report, attempts }` on success and `{ failure, attempts, text }`
+ * when every attempt failed. Only a response that arrived but was not a usable
+ * review is retried; an HTTP/quota failure throws from `callReviewer` and is not
+ * retried (the free router has a daily budget and its own explicit stop).
+ */
+async function requestModelReport({ fetchPayload, extract, budget }) {
+  const maxAttempts = Number.isInteger(budget) && budget > 0 ? budget : 1;
+  let failure = { code: 'invalid-json', message: 'no attempt was made' };
+  let lastText = '';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (attempt > 1)
+      log(`retrying the review (attempt ${attempt}/${maxAttempts}) after ${failure.code}`);
+    // An HTTP/quota failure throws here and is not retried: it has its own stop.
+    const modelPayload = await fetchPayload();
+
+    let text = '';
+    try {
+      text = extract(modelPayload);
+    } catch (error) {
+      failure = {
+        code: error.code ?? 'invalid-json',
+        message: error.message,
+        attempts: attempt,
+      };
+      if (!isRetryableReviewFailure(failure.code)) {
+        return { failure, attempts: attempt, text };
+      }
+      continue;
+    }
+    lastText = text;
+    try {
+      return { report: parseModelJson(text), attempts: attempt, text };
+    } catch (error) {
+      failure = {
+        code: error.code ?? 'invalid-json',
+        message: error.message,
+        attempts: attempt,
+      };
+      if (!isRetryableReviewFailure(failure.code)) {
+        return { failure, attempts: attempt, text };
+      }
+    }
+  }
+
+  return { failure: { ...failure, attempts: maxAttempts }, attempts: maxAttempts, text: lastText };
 }
 
 async function main() {
@@ -522,24 +722,16 @@ async function main() {
     schema,
   });
 
-  let modelPayload;
-  if (typeof args['response-file'] === 'string') {
-    if (!existsSync(args['response-file']))
-      fail(`--response-file not found: ${args['response-file']}`, 2);
-    const raw = readFileSync(args['response-file'], 'utf8');
-    const parsed = JSON.parse(raw);
-    // Accept a bare review report, a model response object, or a full API
-    // envelope — whichever the caller has to hand.
-    modelPayload =
-      typeof parsed?.verdict === 'string' ? { output_text: JSON.stringify(parsed) } : parsed;
-    log(`using the canned reviewer response from ${args['response-file']}`);
-  } else {
-    const { apiKey, envVar } = resolveApiKey(config.review);
+  const useCanned = typeof args['response-file'] === 'string';
+  let apiKey = '';
+  if (!useCanned) {
+    const resolved = resolveApiKey(config.review);
+    apiKey = resolved.apiKey;
     if (apiKey.length === 0) {
       fail(
-        `${envVar} is not configured; refusing to run the review stage.\n` +
+        `${resolved.envVar} is not configured; refusing to run the review stage.\n` +
           `The reviewer provider is "${config.review.provider}" and reads its credential from ` +
-          `${envVar}. Configure the secret (Settings -> Secrets and variables -> Actions) and re-run.`,
+          `${resolved.envVar}. Configure the secret (Settings -> Secrets and variables -> Actions) and re-run.`,
       );
     }
     if (dryRun) {
@@ -562,16 +754,57 @@ async function main() {
       `requesting a review from ${config.review.provider} (${model}) at ` +
         `${reviewEndpoint(config.review)} (round ${plan.round})`,
     );
-    modelPayload = await callReviewer({
+  }
+
+  // A canned response file may hold one payload (a single attempt) or an array
+  // of payloads consumed one per attempt, so a retry can be exercised without a
+  // network round trip.
+  const canned = useCanned ? loadCannedPayloads(args['response-file']) : [];
+  let cannedIndex = 0;
+
+  const fetchPayload = async () => {
+    if (useCanned) {
+      const entry = canned[Math.min(cannedIndex, canned.length - 1)];
+      cannedIndex += 1;
+      return entry;
+    }
+    return await callReviewer({
       apiKey,
       body,
       endpoint: reviewEndpoint(config.review),
       provider: config.review.provider,
     });
+  };
+
+  if (useCanned) {
+    log(
+      `using the canned reviewer response from ${args['response-file']}` +
+        (canned.length > 1 ? ` (${canned.length} attempts)` : ''),
+    );
   }
 
-  const modelText = extractOutputText(modelPayload);
-  const rawReport = parseModelJson(modelText);
+  // A malformed or refused response is retried within this round, bounded by the
+  // configured round policy. Every attempt that still fails ends in a recorded,
+  // non-approving failure rather than a crash with no review.
+  const outcome = await requestModelReport({
+    fetchPayload,
+    extract: extractOutputText,
+    budget: reviewAttemptBudget(config.maxReviewRounds),
+  });
+
+  if (outcome.report === undefined) {
+    recordReviewFailure({
+      pr,
+      prNumber,
+      repoArgs,
+      plan,
+      failure: outcome.failure,
+      text: outcome.text,
+      taskId,
+    });
+  }
+
+  const rawReport = outcome.report;
 
   const report = normalizeModelReport(rawReport, {
     taskId,

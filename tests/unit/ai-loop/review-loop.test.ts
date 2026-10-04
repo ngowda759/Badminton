@@ -1,4 +1,12 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,14 +21,20 @@ import {
   ciFindings,
   coerceVerdict,
   decisionFor,
+  detectRefusal,
   extractOutputText,
+  hasReviewFailureForHead,
+  isRetryableReviewFailure,
   normalizeModelReport,
   parseModelJson,
+  parseReviewFailureMarkers,
   planReview,
   resolveApiKey,
   resolveReviewModel,
   reviewApiKeyEnvVar,
+  reviewAttemptBudget,
   reviewEndpoint,
+  reviewFailureMarker,
   reviewMarker,
   reviewModelEnvVar,
   reviewedHeads,
@@ -434,6 +448,102 @@ describe('review request and response handling', () => {
   });
 });
 
+describe('malformed and refusal responses are rejected, never approved', () => {
+  /** The exact shape the loop crashed on: an OpenRouter safety notice. */
+  const REFUSAL = 'User Safety: this request violates the usage policy.';
+
+  it('classifies a provider safety notice as a refusal, not a review', () => {
+    expect(() => parseModelJson(REFUSAL)).toThrow(/refusal/);
+    // The message must not be JSON-parsed; the failure is explicit.
+    let caught: unknown;
+    try {
+      parseModelJson(REFUSAL);
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as { code?: string }).code).toBe('refusal');
+  });
+
+  it('detects the leading safety phrases a gateway returns', () => {
+    expect(detectRefusal(REFUSAL)).toContain('User Safety');
+    expect(detectRefusal("I'm sorry, but I cannot help with that.")).not.toBeNull();
+    expect(detectRefusal('I cannot review this pull request.')).not.toBeNull();
+    expect(detectRefusal('As an AI, I am not able to help.')).not.toBeNull();
+    // A real JSON report is never mistaken for a refusal.
+    expect(detectRefusal('{"verdict":"approved","summary":"ok"}')).toBeNull();
+  });
+
+  it('rejects an empty body deterministically', () => {
+    expect(() => parseModelJson('')).toThrow(/empty body/);
+    expect(() => parseModelJson('   \n ')).toThrow(/empty body/);
+  });
+
+  it('rejects malformed JSON with a coded error', () => {
+    let caught: unknown;
+    try {
+      parseModelJson('{ not json');
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as { code?: string }).code).toBe('invalid-json');
+  });
+
+  it('parses a fenced JSON block safely, including with surrounding prose', () => {
+    expect(parseModelJson('```json\n{"verdict":"approved"}\n```')).toEqual({ verdict: 'approved' });
+    expect(
+      parseModelJson('Here is my review.\n\n```json\n{"verdict":"changes-requested"}\n```\nDone.'),
+    ).toEqual({ verdict: 'changes-requested' });
+    // A fence that is not JSON is still a failure, never a partial parse.
+    expect(() => parseModelJson('```\nnot json at all\n```')).toThrow(/invalid JSON/);
+  });
+
+  it('classifies a non-object payload as not-object', () => {
+    let caught: unknown;
+    try {
+      parseModelJson('["approved"]');
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as { code?: string }).code).toBe('not-object');
+  });
+
+  it('never yields an approval from a refusal', () => {
+    // The security invariant: a refusal cannot be read as any verdict.
+    expect(() => parseModelJson(REFUSAL)).toThrow();
+    expect(detectRefusal(REFUSAL)).not.toBeNull();
+  });
+
+  it('does not treat a recorded failure marker as a review verdict', () => {
+    const failure = reviewFailureMarker(1, 'a'.repeat(40), 2, 'refusal');
+    expect(parseReviewFailureMarkers(failure)).toEqual([
+      { round: 1, headSha: 'a'.repeat(40), attempts: 2, kind: 'refusal' },
+    ]);
+    // `parseReviewMarkers` reads verdict markers only; the failure marker is not one.
+    expect(reviewedHeads([{ body: failure }]).size).toBe(0);
+    expect(hasReviewFailureForHead([{ body: failure }], 'a'.repeat(40))).toBe(true);
+    expect(hasReviewFailureForHead([{ body: failure }], 'b'.repeat(40))).toBe(false);
+  });
+});
+
+describe('bounded review attempts', () => {
+  it('bounds attempts by the configured review-round policy', () => {
+    expect(reviewAttemptBudget(3)).toBe(3);
+    expect(reviewAttemptBudget(1)).toBe(1);
+    // A missing/invalid budget falls back to a single attempt, never zero.
+    expect(reviewAttemptBudget(0)).toBe(1);
+    expect(reviewAttemptBudget(undefined as unknown as number)).toBe(1);
+  });
+
+  it('retries only responses that arrived but were not a review', () => {
+    for (const code of ['refusal', 'invalid-json', 'not-object', 'empty-response']) {
+      expect(isRetryableReviewFailure(code), code).toBe(true);
+    }
+    // HTTP/quota failures have their own stop and are never retried in a loop.
+    expect(isRetryableReviewFailure('http-429')).toBe(false);
+    expect(isRetryableReviewFailure('unknown')).toBe(false);
+  });
+});
+
 describe('provider-neutral reviewer configuration', () => {
   const openRouterReview = {
     provider: 'openrouter',
@@ -658,8 +768,10 @@ describe('review CLI', () => {
     const script = [
       '#!/usr/bin/env bash',
       'set -euo pipefail',
+      'if [ -n "${AI_LOOP_STUB_GH_LOG:-}" ]; then printf "%s\\n" "$*" >> "$AI_LOOP_STUB_GH_LOG"; fi',
       'case "$1 $2" in',
       '  "pr view") cat "$AI_LOOP_STUB_PR" ;;',
+      '  "pr list") printf \'%s\' "${AI_LOOP_STUB_PR_LIST:-[]}" ;;',
       '  "pr checks") printf \'%s\' "${AI_LOOP_STUB_CHECKS:-[]}" ;;',
       '  "pr diff") printf \'%s\' "${AI_LOOP_STUB_DIFF:-}" ;;',
       "  *) printf '%s' '' ;;",
@@ -669,6 +781,19 @@ describe('review CLI', () => {
     const gh = join(bin, 'gh');
     writeFileSync(gh, script, { mode: 0o755 });
     return bin;
+  }
+
+  /** The `gh` sub-commands a run invoked, so a test can prove no approval was posted. */
+  function ghLog(): string {
+    const path = join(scratch, 'gh.log');
+    return existsSync(path) ? readFileSync(path, 'utf8') : '';
+  }
+
+  /** Write a raw reviewer response file (used to simulate refusal/malformed bodies). */
+  function rawResponse(name: string, contents: string): string {
+    const file = join(scratch, `canned-${name}.json`);
+    writeFileSync(file, contents);
+    return file;
   }
 
   // A minimal but schema-valid review report, so the CLI's own validation path
@@ -731,6 +856,7 @@ describe('review CLI', () => {
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         AI_LOOP_ROOT: scratch,
         AI_LOOP_STUB_PR: join(scratch, 'pr.json'),
+        AI_LOOP_STUB_GH_LOG: join(scratch, 'gh.log'),
         OPENROUTER_API_KEY: '',
         OPENAI_API_KEY: '',
         ...env,
@@ -821,6 +947,219 @@ describe('review CLI', () => {
     expect(out).toContain('verdict: changes-requested');
     expect(out).not.toContain('verdict: approved');
     expect(out).toContain('fix dispatch: --stage fix --pr 19');
+  });
+
+  it('retries a malformed response and accepts a valid one on a later attempt', () => {
+    const responses = rawResponse(
+      'retry-sequence',
+      JSON.stringify(['{ not json', { verdict: 'approved' }]),
+    );
+    const result = runReview(['--pr', '19', '--response-file', responses, '--dry-run'], {
+      OPENROUTER_API_KEY: 'test-key',
+      AI_LOOP_STUB_CHECKS: JSON.stringify([
+        { name: 'Lint, typecheck, test, build', state: 'SUCCESS', bucket: 'pass', link: '' },
+      ]),
+    });
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('retrying the review (attempt 2/3) after invalid-json');
+    expect(out).toContain('verdict: approved');
+  });
+
+  it('does not exceed the configured review-round attempt budget', () => {
+    // The default budget is maxReviewRounds (3): three malformed responses end
+    // in a deterministic failure, never a fourth attempt and never an approval.
+    const responses = rawResponse(
+      'all-malformed',
+      JSON.stringify(['{ not json', '{ not json', '{ not json', '{ not json']),
+    );
+    const result = runReview(['--pr', '19', '--response-file', responses], {
+      OPENROUTER_API_KEY: 'test-key',
+    });
+    expect(result.status).toBe(1);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('attempt 2/3');
+    expect(out).toContain('attempt 3/3');
+    expect(out).not.toContain('attempt 4/');
+    expect(out).toContain('no usable verdict');
+    expect(out).not.toContain('verdict: approved');
+  });
+
+  it('records a deterministic failure for a provider safety notice and never approves', () => {
+    const refusal = rawResponse(
+      'user-safety',
+      'User Safety: this request violates the usage policy. Please try a different prompt.',
+    );
+    const result = runReview(['--pr', '19', '--response-file', refusal], {
+      OPENROUTER_API_KEY: 'test-key',
+      AI_LOOP_STUB_CHECKS: JSON.stringify([
+        { name: 'Lint, typecheck, test, build', state: 'SUCCESS', bucket: 'pass', link: '' },
+      ]),
+    });
+    expect(result.status).toBe(1);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('no usable verdict');
+    expect(out).toContain('refusal');
+    expect(out).not.toContain('verdict: approved');
+    // The failure path posts a failure notice and a blocked label, never ready.
+    const log = ghLog();
+    expect(log).toContain('pr comment');
+    expect(log).toContain('--add-label ai-blocked');
+    expect(log).not.toContain('--add-label ai-ready');
+  });
+
+  it('posts a failure marker that is not a review verdict', () => {
+    const refusal = rawResponse('safety-marker', 'User Safety: blocked.');
+    runReview(['--pr', '19', '--response-file', refusal], { OPENROUTER_API_KEY: 'test-key' });
+    // The recorded failure marker is distinct from the verdict marker and is not
+    // a verdict the merge gate can read.
+    const markers = parseReviewFailureMarkers(
+      readFileSync(join(scratch, '.ai/state/.review-failure.md'), 'utf8'),
+    );
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toMatchObject({ kind: 'refusal' });
+    expect(markers[0]?.headSha).toBe('a'.repeat(40));
+  });
+
+  it('does not post a duplicate failure notice for the same head', () => {
+    const refusal = rawResponse('safety-dedupe', 'User Safety: blocked.');
+    const comments = [{ body: reviewFailureMarker(1, 'a'.repeat(40), 1, 'refusal') }];
+    const result = runReview(
+      ['--pr', '19', '--response-file', refusal],
+      { OPENROUTER_API_KEY: 'test-key' },
+      {
+        number: 19,
+        title: 'stub',
+        body: '',
+        headRefName: 'automation/ai-development-loop',
+        headRefOid: 'a'.repeat(40),
+        baseRefName: 'main',
+        headRepositoryOwner: { login: 'ngowda759' },
+        comments,
+        labels: [],
+        isCrossRepository: false,
+      },
+    );
+    expect(result.status).toBe(1);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('already recorded');
+    expect(ghLog()).not.toContain('pr comment');
+  });
+
+  describe('review-target resolution (merge gate discovery)', () => {
+    function runResolve(
+      args: string[],
+      env: Record<string, string> = {},
+    ): { status: number | null; stdout: string; stderr: string } {
+      const bin = stubGh({});
+      const outputFile = join(scratch, 'github-output.txt');
+      writeFileSync(outputFile, '');
+      const baseEnv: NodeJS.ProcessEnv = { ...process.env };
+      delete baseEnv.HEAD_BRANCH;
+      delete baseEnv.EVENT_PR;
+      delete baseEnv.INPUT_PR;
+      const result = spawnSync(
+        'node',
+        [resolve(root, '.ai/scripts/resolve-review-pr.mjs'), ...args],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          env: {
+            ...baseEnv,
+            PATH: `${bin}:${process.env.PATH ?? ''}`,
+            AI_LOOP_ROOT: scratch,
+            AI_LOOP_STUB_PR: join(scratch, 'pr.json'),
+            GITHUB_REPOSITORY: 'ngowda759/Badminton',
+            GITHUB_OUTPUT: outputFile,
+            GH_TOKEN: 'stub',
+            ...env,
+          },
+        },
+      );
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    }
+
+    const openAiPr = {
+      number: 40,
+      title: 'feat: guarded regeneration',
+      headRefName: 'automation/ai-006-group-fixture-regeneration',
+      baseRefName: 'main',
+      headRefOid: 'a'.repeat(40),
+      isCrossRepository: false,
+      labels: [],
+      state: 'OPEN',
+    };
+
+    it('discovers the single open AI-managed pull request when the event carries none', () => {
+      const result = runResolve(['--discover'], {
+        AI_LOOP_STUB_PR_LIST: JSON.stringify([openAiPr]),
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('review target: PR #40');
+    });
+
+    it('resolves to none when more than one AI-managed pull request is open', () => {
+      const result = runResolve(['--discover'], {
+        AI_LOOP_STUB_PR_LIST: JSON.stringify([
+          openAiPr,
+          { ...openAiPr, number: 41, headRefName: 'automation/ai-007-next' },
+        ]),
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('review target: (none)');
+    });
+
+    it('ignores an unrelated open pull request', () => {
+      const result = runResolve(['--discover'], {
+        AI_LOOP_STUB_PR_LIST: JSON.stringify([
+          { ...openAiPr, number: 99, headRefName: 'dependabot/npm/foo', labels: [] },
+        ]),
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('review target: (none)');
+    });
+  });
+
+  it('tolerates a stale base-branch state when recording a verdict', () => {
+    // The review runs from `main`; a between-tasks state there can be `next-task`
+    // when the review starts, which cannot legally move straight to
+    // `ready-to-merge`. The state write must not fail the review.
+    writeFileSync(
+      join(scratch, '.ai/state/loop-state.json'),
+      `${JSON.stringify(
+        {
+          version: 1,
+          loopId: 'AI-001',
+          status: 'next-task',
+          round: 0,
+          maxReviewRounds: 3,
+          currentTaskId: null,
+          currentPr: null,
+          lastVerdict: null,
+          lastCiStatus: null,
+          reviewedHeadSha: null,
+          blockedReason: null,
+          completedTasks: ['AI-001'],
+          updatedAt: '2026-01-01T00:00:00Z',
+          history: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const result = runReview(['--pr', '19', '--response-file', canned('approved')], {
+      OPENROUTER_API_KEY: 'test-key',
+      AI_LOOP_STUB_CHECKS: JSON.stringify([
+        { name: 'Lint, typecheck, test, build', state: 'SUCCESS', bucket: 'pass', link: '' },
+      ]),
+    });
+    expect(result.status).toBe(0);
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out).toContain('recorded the ready-to-merge transition with --force');
+    const state = JSON.parse(readFileSync(join(scratch, '.ai/state/loop-state.json'), 'utf8')) as {
+      status: string;
+    };
+    expect(state.status).toBe('ready-to-merge');
   });
 
   it('stops for a human at the round limit instead of dispatching another fix', () => {
