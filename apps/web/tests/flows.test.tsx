@@ -403,7 +403,7 @@ describe('tournament setup flows', () => {
     });
   });
 
-  it('assigns a match participant to slot 1', async () => {
+  it('assigns a match participant to slot 1 by choosing a competitor', async () => {
     const user = userEvent.setup();
     const api = createStubApi();
     const match = makeMatch({ id: 'm1', stageId: 's1' });
@@ -412,14 +412,18 @@ describe('tournament setup flows', () => {
     api.matches.get.mockResolvedValue(match);
     api.matches.listParticipants.mockResolvedValue([]);
     api.matches.addParticipant.mockResolvedValue(makeParticipant());
-    api.entries.listByCategory.mockResolvedValue([]);
+    api.entries.listByCategory.mockResolvedValue([
+      makeEntry({ id: 'e1', playerId: 'p1', status: 'CONFIRMED' }),
+    ]);
+    api.players.get.mockResolvedValue(makePlayer({ id: 'p1', name: 'Player A' }));
 
     renderWithProviders(<AppRoutes />, {
       api,
       route: '/tournaments/t1/categories/c1/matches/m1',
     });
 
-    await user.type(await screen.findByLabelText(/^Slot 1 entry ID/), 'e1');
+    await user.click(await screen.findByLabelText('Slot 1 participant'));
+    await user.click(await screen.findByRole('option', { name: 'Player A' }));
     await user.click(screen.getAllByRole('button', { name: 'Assign' })[0] as HTMLElement);
 
     await waitFor(() => {
