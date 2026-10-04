@@ -228,6 +228,13 @@ export interface MatchRepository {
    */
   clearResult(id: string): Promise<Match>;
   /**
+   * Clears a match's result and its schedule together and returns it to
+   * `SCHEDULED` in one update, so a tournament reset can wipe every match
+   * without a round trip per field. The stored games are removed separately by
+   * `MatchGameRepository.deleteByMatch`, in the same transaction.
+   */
+  reset(id: string): Promise<Match>;
+  /**
    * Atomically writes the whole scheduling slice of a match (court and both
    * times). Persisting all three together keeps the match from ever holding a
    * partial schedule; the database exclusion constraint is the final guard.

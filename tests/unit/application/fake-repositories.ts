@@ -710,6 +710,23 @@ function buildClient(state: State): RepositoryClient {
       state.matches.set(id, updated);
       return updated;
     },
+    async reset(id: string) {
+      const current = state.matches.get(id);
+      if (!current) {
+        throw new Error('record not found');
+      }
+      const updated: Match = {
+        ...current,
+        status: 'SCHEDULED',
+        winnerEntryId: null,
+        courtId: null,
+        scheduledStartAt: null,
+        scheduledEndAt: null,
+        updatedAt: now(),
+      };
+      state.matches.set(id, updated);
+      return updated;
+    },
     async schedule(id: string, data: MatchScheduleData) {
       const current = state.matches.get(id);
       if (!current) {

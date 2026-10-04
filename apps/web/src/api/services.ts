@@ -30,8 +30,10 @@ import type {
   TeamDto,
   TeamListItemDto,
   TeamMemberDto,
+  TournamentBackupDto,
   TournamentDashboardDto,
   TournamentDto,
+  TournamentResetSummaryDto,
   UpdateCategoryInput,
   UpdateCourtInput,
   UpdateEntryInput,
@@ -57,6 +59,14 @@ export interface TournamentApi {
   list(params?: ListQueryParams, signal?: AbortSignal): Promise<ListResponseDto<TournamentDto>>;
   update(id: string, input: UpdateTournamentInput, signal?: AbortSignal): Promise<TournamentDto>;
   transition(id: string, status: string, signal?: AbortSignal): Promise<TournamentDto>;
+  /** Reads the whole-tournament JSON backup (a pure read). */
+  export(id: string, signal?: AbortSignal): Promise<TournamentBackupDto>;
+  /**
+   * Resets the tournament: clears every match result and schedule and reopens
+   * every active/completed stage. The API refuses a completed/cancelled
+   * tournament (409).
+   */
+  reset(id: string, signal?: AbortSignal): Promise<TournamentResetSummaryDto>;
 }
 
 export interface CategoryApi {
@@ -214,6 +224,8 @@ export function createBadmintonApi(client: ApiClient): BadmintonApi {
       update: (id, input, signal) => client.patch(`/api/v1/tournaments/${id}`, input, signal),
       transition: (id, status, signal) =>
         client.post(`/api/v1/tournaments/${id}/transition`, { status }, signal),
+      export: (id, signal) => client.get(`/api/v1/tournaments/${id}/export`, signal),
+      reset: (id, signal) => client.post(`/api/v1/tournaments/${id}/reset`, undefined, signal),
     },
     categories: {
       listByTournament: (tournamentId, signal) =>

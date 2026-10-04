@@ -9,9 +9,11 @@ import type {
   QualificationService,
   StandingsService,
   TeamService,
+  TournamentBackupService,
   TournamentCategoryService,
   TournamentDashboardService,
   TournamentEntryService,
+  TournamentResetService,
   TournamentService,
   TournamentStageService,
 } from '@badminton/application';
@@ -26,6 +28,8 @@ import type {
  */
 export interface ApiServices {
   readonly tournaments: TournamentService;
+  readonly backup: TournamentBackupService;
+  readonly reset: TournamentResetService;
   readonly categories: TournamentCategoryService;
   readonly players: PlayerService;
   readonly teams: TeamService;

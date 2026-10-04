@@ -26,6 +26,7 @@ import type {
   TeamDto,
   TeamListItemDto,
   TeamMemberDto,
+  TournamentBackupDto,
   TournamentDashboardDto,
   TournamentDto,
 } from '@/api/types.ts';
@@ -379,6 +380,31 @@ export function makeGroupFixtures(overrides: Partial<GroupFixturesDto> = {}): Gr
   };
 }
 
+/** A whole-tournament backup with one category, stage, court, entry and match. */
+export function makeTournamentBackup(
+  overrides: Partial<TournamentBackupDto> = {},
+): TournamentBackupDto {
+  const tournament = makeTournament();
+  const category = makeCategory({ tournamentId: tournament.id });
+  const stage = makeStage({ categoryId: category.id });
+  const match = makeMatch({ stageId: stage.id });
+  const entry = makeEntry({ categoryId: category.id });
+  return {
+    tournament,
+    categories: [category],
+    stages: [stage],
+    courts: [makeCourt({ tournamentId: tournament.id })],
+    entries: [entry],
+    matches: [match],
+    participants: [
+      makeParticipant({ matchId: match.id, entryId: entry.id, slot: 1 }),
+      makeParticipant({ matchId: match.id, entryId: entry.id, slot: 2 }),
+    ],
+    games: [],
+    ...overrides,
+  };
+}
+
 /**
  * Builds a fully-typed stub API.
  *
@@ -407,6 +433,10 @@ export function createStubApi(): Mocked<BadmintonApi> {
       ),
       update: vi.fn(() => Promise.resolve(makeTournament())),
       transition: vi.fn(() => Promise.resolve(makeTournament())),
+      export: vi.fn(() => Promise.resolve(makeTournamentBackup())),
+      reset: vi.fn(() =>
+        Promise.resolve({ tournamentId: makeTournament().id, matchesReset: 0, stagesReopened: 0 }),
+      ),
     },
     categories: {
       listByTournament: vi.fn(() => Promise.resolve([] as readonly CategoryDto[])),

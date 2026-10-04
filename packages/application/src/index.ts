@@ -100,6 +100,15 @@ export type {
 
 export { createTournamentService, type TournamentService } from './services/tournament.service.ts';
 export {
+  createTournamentBackupService,
+  type TournamentBackupService,
+} from './services/tournament-backup.service.ts';
+export type { TournamentBackup, TournamentResetSummary } from './services/tournament-backup.ts';
+export {
+  createTournamentResetService,
+  type TournamentResetService,
+} from './services/tournament-reset.service.ts';
+export {
   createTournamentCategoryService,
   type TournamentCategoryService,
 } from './services/category.service.ts';

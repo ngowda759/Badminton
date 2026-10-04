@@ -12,9 +12,11 @@ import {
   createRealtimeEventService,
   createStandingsService,
   createTeamService,
+  createTournamentBackupService,
   createTournamentCategoryService,
   createTournamentDashboardService,
   createTournamentEntryService,
+  createTournamentResetService,
   createTournamentService,
   createTournamentStageService,
   type RepositoryClient,
@@ -45,6 +47,8 @@ export function createApiServices(client: RepositoryClient, unitOfWork: UnitOfWo
   const qualification = createQualificationService(client);
   return {
     tournaments: createTournamentService(client, unitOfWork, events),
+    backup: createTournamentBackupService(client),
+    reset: createTournamentResetService(unitOfWork, events),
     categories: createTournamentCategoryService(client, unitOfWork, events),
     players: createPlayerService(client),
     teams: createTeamService(client, unitOfWork),
