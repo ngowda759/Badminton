@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-04T17:37:07Z",
+  "updatedAt": "2026-10-04T18:28:49Z",
   "tasks": [
     {
       "id": "AI-001",
@@ -295,7 +295,7 @@
       "id": "AI-007",
       "title": "Tournament backup export and reset (TASK-13, parity gap G9)",
       "phase": "parity (G9 from the TASK-5 audit)",
-      "status": "approved",
+      "status": "done",
       "summary": "The TASK-5 parity audit records gap G9 as a high-severity operator-workflow gap: V1 exports the whole tournament as a JSON backup and can reset it (exportJSON/importJSON/resetTournament, index.html:1826-1845, 2147-2170; the Settings Backup and Danger-zone cards), whereas V2 has no export, import or reset at all. V2 is server-backed, so a whole-database import that re-creates rows under operator-supplied UUIDs is neither safe nor faithful to the server-owned identity model, and the public API deliberately exposes no list-all endpoints (entries and stages are read per category), so a lossless import would need new read surface for every aggregate. This task delivers the two halves of G9 that are safe, high-value and migration-free - the JSON backup export and the guarded reset - through two tournament-scoped endpoints, and deliberately defers the import to its own task. Export is a pure read assembled from the existing per-tournament repository reads (tournament, categories, stages, courts, entries, matches, participants and games) in one derived response, so a mis-created or abandoned tournament can be backed up before a destructive change. Reset is a guarded destructive operation on a non-terminal tournament: in one UnitOfWork.runInTransaction it clears every match's result and schedule (deleting the stored games, clearing the winner, returning the match to SCHEDULED and nulling the court and times) and reopens every ACTIVE or COMPLETED stage to PENDING, so a tournament can be re-played without deleting it. A COMPLETED or CANCELLED tournament is refused. Reset reuses the existing MatchRepository/MatchGameRepository/TournamentStageRepository operations (adding only a single-row MatchRepository.reset), the existing STAGE_TRANSITIONS model and the existing realtime catalogue; no new table, no migration and no new event type is introduced. Both endpoints are tournament-scoped and permission-free, matching every other endpoint in this phase.",
       "acceptanceCriteria": [
         "tests/unit/application/tournament-backup.service.test.ts (new) passes over the in-memory ports: TournamentBackupService.export returns the tournament together with its categories, stages, courts, entries, matches, match participants and match games, each read once for the whole tournament (no per-match fan-out); an unknown tournament id raises NotFoundError; export opens no transaction and records no realtime event.",
@@ -340,7 +340,55 @@
         "apps/web/src/pages/tournaments/tournament-details.tsx",
         "apps/web/src/components/confirm-dialog.tsx"
       ],
-      "createdAt": "2026-10-04T17:20:00Z"
+      "createdAt": "2026-10-04T17:20:00Z",
+      "pr": 42,
+      "branch": "automation/ai-007-tournament-backup-reset",
+      "headSha": "8a98eb5dd19ecb3704d7b2f2ce04e98642143ded",
+      "mergedAt": "2026-10-04T18:11:54Z",
+      "completedAt": "2026-10-04T18:26:39.621Z"
+    },
+    {
+      "id": "AI-008",
+      "title": "Named participant selection on match detail (TASK-14, parity gap G14)",
+      "phase": "parity (G14 from the TASK-5 audit)",
+      "status": "approved",
+      "summary": "The TASK-5 parity audit records gap G14 as a low-severity but genuine operator-workflow divergence: V1 assigns a match's participants by choosing them from a list (it exposes no raw ids), whereas V2's match detail asks the operator to paste a raw entry UUID into each slot (audit §14; match-detail.tsx 'Slot 1 entry ID' / 'Entry UUID' inputs). The typed UUID is error-prone and leaks the internal identity model into the UI. This task replaces both slot inputs with a server-backed dropdown over the match's category entries, labelled by competitor name: the operator picks an entry instead of typing its UUID, the entry already occupying the other slot and any non-eligible (withdrawn or disqualified) entry are not offered, and the chosen id is still submitted through the existing POST /api/v1/matches/:matchId/participants endpoint. It is a pure web change: no API, service, repository, domain or database change, and the server's eligibility rules (same category, active entry, one entry per match, one occupant per slot) stay authoritative. Reuses the existing per-category entries read (useEntryNames) and the existing Select primitive, so no new endpoint and no new data-fetching framework are introduced.",
+      "acceptanceCriteria": [
+        "apps/web/src/components/tournaments/match-participant-select.test.tsx (new) passes: given a category's entries, the control renders exactly one option per eligible entry, labelled by the resolved competitor name and never by a UUID; a withdrawn or disqualified entry is not offered; an entry listed in the excluded set (the one already occupying the other slot) is not offered; choosing an option and confirming calls the supplied onAssign handler with that entry id and slot; the control is disabled when the slot is already filled, when a request is pending, or when the match is read-only.",
+        "apps/web/src/pages/tournaments/match-detail.test.tsx (extended) passes for a GROUP match: each slot renders a labelled participant dropdown over the category's eligible entries; the raw-UUID text inputs and their 'Entry UUID' placeholders are gone; selecting an entry in slot 1 and confirming calls api.matches.addParticipant through the typed client with { entryId: <the selected id>, slot: 1 } and then refetches; the entry assigned to slot 1 is no longer an option in slot 2; a withdrawn entry never appears in either dropdown.",
+        "The participant dropdown is keyboard-operable and each slot is reachable by an accessible label ('Slot 1 participant' / 'Slot 2 participant'); a filled slot's control is disabled and shows the assigned competitor's name.",
+        "e2e/participant-selection.spec.ts (new) passes against the real UI/API/PostgreSQL: create a tournament, a singles category and two players, register both as active entries, create a GROUP stage and a match; assign slot 1 and slot 2 by selecting each competitor by name from the dropdown (no UUID is typed anywhere); the two competitor names appear in the slot summaries; the match then transitions to IN_PROGRESS.",
+        "No backend change is introduced: the diff adds nothing under apps/api/**, packages/** or prisma/migrations/**, and does not touch prisma/seed.ts or .github/workflows/ci.yml. The existing POST /api/v1/matches/:matchId/participants contract is unchanged (201 on success; 404 unknown match/entry; 409 slot occupied or duplicate entry; 422 ineligible or cross-category entry) and the existing participant integration cases still pass unedited.",
+        "A KNOCKOUT match remains read-only: its participant slots stay bracket-controlled and expose no assignment control, exactly as before this task.",
+        "npm run lint, npm run typecheck, npm test, npm run build and npm run test:e2e pass."
+      ],
+      "outOfScope": [
+        "Any API, application-service, repository, domain or database change; the server's participant eligibility and uniqueness rules remain authoritative and unchanged.",
+        "Assigning or editing participants on a KNOCKOUT match (bracket-controlled; stays read-only).",
+        "Editing, replacing or clearing an existing participant slot (the server rejects a duplicate entry and an occupied slot); this task only improves how a new slot is chosen.",
+        "A new entry-listing or collection endpoint; the dropdown reuses the existing per-category entries read.",
+        "The scheduler gaps G7/G8, team levels G10, count caps G12, the qualification default G13, independent group rename/membership editing G16, and the deferred backup import.",
+        "Production data, credentials, or a hand merge."
+      ],
+      "humanApproval": false,
+      "dependsOn": [
+        "AI-007"
+      ],
+      "references": [
+        "AGENTS.md",
+        "docs/tasks/task-5-parity-audit.md",
+        "docs/tasks/AI-007-tournament-backup-reset.md",
+        "apps/web/src/pages/tournaments/match-detail.tsx",
+        "apps/web/src/components/tournaments/group-fixture-setup.tsx",
+        "apps/web/src/hooks/use-entry-names.ts",
+        "apps/web/src/components/ui/select.tsx",
+        "apps/web/src/components/collection-select.tsx",
+        "apps/web/src/api/services.ts",
+        "apps/web/src/api/types.ts",
+        "apps/web/tests/helpers.tsx",
+        "e2e/group-scoring.spec.ts"
+      ],
+      "createdAt": "2026-10-04T18:30:00Z"
     }
   ]
 }
