@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-03T07:26:37Z",
+  "updatedAt": "2026-10-04T17:37:07Z",
   "tasks": [
     {
       "id": "AI-001",
@@ -241,7 +241,7 @@
       "id": "AI-006",
       "title": "Guarded group-fixture regeneration (TASK-12, parity gap G15)",
       "phase": "parity (G15 from the TASK-5 audit)",
-      "status": "approved",
+      "status": "done",
       "summary": "The TASK-5 parity audit records gap G15 as a medium-severity operator-workflow gap: V1 lets an operator regenerate a group's fixtures from the current membership with a confirmation that shows the before/after plan (regeneratePlan/regenerateFixtures, index.html:3440-3452), whereas V2 generates fixtures once and then answers any second attempt with a hard 409. A group whose membership or ordering was mis-entered is therefore permanent short of deleting the whole stage. This task closes G15 with the smallest coherent change: a guarded regeneration of a GROUP stage's round-robin through POST /api/v1/stages/:id/fixtures/regenerate. Regeneration is allowed only for a GROUP stage that is not COMPLETED and already has fixtures; it replaces the whole fixture set (all existing matches of the stage and, by the database cascade, their participants and games) with a freshly generated round-robin in one transaction, so a partially regenerated group is never left behind. A COMPLETED stage is refused (its results are the group's outcome and STAGE_TRANSITIONS makes COMPLETED terminal); a stage with no fixtures to replace is refused (regeneration is not a synonym for generation). V1's richer before/after plan preservation (keeping results for pairings that still exist) is explicitly out of scope: this task adopts the simpler, safe discard-and-regenerate reading, matching the existing generate semantics, and the operator confirmation warns that recorded results will be discarded.",
       "acceptanceCriteria": [
         "tests/unit/application/group-fixture-regeneration.service.test.ts (new) passes over the in-memory ports: GroupFixtureService.regenerate replaces the stage's fixtures - the old match ids are gone and the stage now holds exactly n(n-1)/2 matches with both slots filled for the new ordering; regenerating a stage with no fixtures is rejected with ConflictError; a COMPLETED stage is rejected with BusinessRuleViolationError; a non-GROUP stage is rejected with BusinessRuleViolationError; an unknown stage raises NotFoundError; fewer than two entries, a duplicated entry, a withdrawn entry and a foreign-category entry are rejected exactly as generate rejects them; the whole replace runs inside one runInTransaction.",
@@ -284,7 +284,63 @@
         "tests/unit/application/group-fixture.service.test.ts",
         "e2e/group-fixtures.spec.ts"
       ],
-      "createdAt": "2026-10-03T07:24:00Z"
+      "createdAt": "2026-10-03T07:24:00Z",
+      "pr": 40,
+      "branch": "automation/ai-006-group-fixture-regeneration",
+      "headSha": "d95fc50acbb726483f54c8558c5cfcd5310a250a",
+      "mergedAt": "2026-10-04T17:03:46Z",
+      "completedAt": "2026-10-04T17:11:25.945Z"
+    },
+    {
+      "id": "AI-007",
+      "title": "Tournament backup export and reset (TASK-13, parity gap G9)",
+      "phase": "parity (G9 from the TASK-5 audit)",
+      "status": "approved",
+      "summary": "The TASK-5 parity audit records gap G9 as a high-severity operator-workflow gap: V1 exports the whole tournament as a JSON backup and can reset it (exportJSON/importJSON/resetTournament, index.html:1826-1845, 2147-2170; the Settings Backup and Danger-zone cards), whereas V2 has no export, import or reset at all. V2 is server-backed, so a whole-database import that re-creates rows under operator-supplied UUIDs is neither safe nor faithful to the server-owned identity model, and the public API deliberately exposes no list-all endpoints (entries and stages are read per category), so a lossless import would need new read surface for every aggregate. This task delivers the two halves of G9 that are safe, high-value and migration-free - the JSON backup export and the guarded reset - through two tournament-scoped endpoints, and deliberately defers the import to its own task. Export is a pure read assembled from the existing per-tournament repository reads (tournament, categories, stages, courts, entries, matches, participants and games) in one derived response, so a mis-created or abandoned tournament can be backed up before a destructive change. Reset is a guarded destructive operation on a non-terminal tournament: in one UnitOfWork.runInTransaction it clears every match's result and schedule (deleting the stored games, clearing the winner, returning the match to SCHEDULED and nulling the court and times) and reopens every ACTIVE or COMPLETED stage to PENDING, so a tournament can be re-played without deleting it. A COMPLETED or CANCELLED tournament is refused. Reset reuses the existing MatchRepository/MatchGameRepository/TournamentStageRepository operations (adding only a single-row MatchRepository.reset), the existing STAGE_TRANSITIONS model and the existing realtime catalogue; no new table, no migration and no new event type is introduced. Both endpoints are tournament-scoped and permission-free, matching every other endpoint in this phase.",
+      "acceptanceCriteria": [
+        "tests/unit/application/tournament-backup.service.test.ts (new) passes over the in-memory ports: TournamentBackupService.export returns the tournament together with its categories, stages, courts, entries, matches, match participants and match games, each read once for the whole tournament (no per-match fan-out); an unknown tournament id raises NotFoundError; export opens no transaction and records no realtime event.",
+        "tests/unit/application/tournament-reset.service.test.ts (new) passes over the in-memory ports: TournamentResetService.reset clears every match's result and schedule in one pass - each match's games are deleted, its winner is cleared, its status returns to SCHEDULED and its court/start/end are null - and reopens every ACTIVE or COMPLETED stage to PENDING; entries, categories and courts are left untouched; a COMPLETED or CANCELLED tournament is rejected with ConflictError; an unknown id raises NotFoundError; the whole reset runs inside exactly one runInTransaction; a second reset is idempotent (no match changes and no stage reopens).",
+        "tests/unit/application/transaction-boundaries.test.ts records zero runInTransaction calls for export and exactly one for reset, and asserts the existing create/update/transition boundaries are unchanged.",
+        "tests/integration/api/tournament-backup.routes.test.ts (new) asserts GET /api/v1/tournaments/:id/export returns 200 with a data envelope carrying the tournament, its categories, stages, courts, entries, matches, participants and games, and returns 404 for an unknown id; POST /api/v1/tournaments/:id/reset returns 200 with the reset summary, and a subsequent GET of the stage's matches shows every match SCHEDULED with no winner; POST /reset returns 409 for a COMPLETED tournament and 404 for an unknown id.",
+        "apps/web/src/pages/tournaments/tournament-details.test.tsx (new) passes: an Export backup control calls GET /api/v1/tournaments/:id/export through the typed client and triggers a JSON download; a Reset tournament control opens a ConfirmDialog and, on confirm, calls POST /api/v1/tournaments/:id/reset through the typed client and refetches the tournament.",
+        "e2e/tournament-reset.spec.ts passes against the real UI/API/PostgreSQL: create a tournament, category, GROUP stage and a 2-entry round-robin; record a result so the standings show points; export the backup and assert the downloaded JSON carries the tournament and its matches; reset the tournament and assert the match list shows no completed match, the standings are back to zero played and the stage is PENDING after a reload.",
+        "No database migration, seed change or workflow change is introduced: the diff adds nothing under prisma/migrations/** and does not touch prisma/seed.ts or .github/workflows/ci.yml. Reset reuses the existing MatchRepository/MatchGameRepository/MatchParticipantRepository/TournamentStageRepository operations, adding only a single-row MatchRepository.reset that clears a match's result and schedule in one update.",
+        "The realtime catalogue is unchanged: tests/unit/domain/realtime.test.ts (its exact-list assertion) passes without edits; export publishes no event and reset publishes only existing events (MATCH_UNSCHEDULED for each match whose schedule is cleared and STAGE_STATUS_CHANGED for each stage reopened to PENDING), all recorded on the transaction client.",
+        "npm run lint, npm run typecheck, npm test, npm run build and npm run test:e2e pass."
+      ],
+      "outOfScope": [
+        "Importing a backup: reconstructing a tournament from a JSON file under operator-supplied ids is a separate task; this task delivers export and reset only.",
+        "A per-match or per-stage clear-results endpoint; reset is tournament-scoped.",
+        "Deleting the tournament, its courts, categories, stages or entries; reset keeps the setup and clears only results, schedules and stage status.",
+        "Restoring V1's default example configuration (10 pairs, 2 groups, 3 courts) on reset; a server-owned tournament has no client default.",
+        "Changing the tournament lifecycle status on reset, and any change to TOURNAMENT_TRANSITIONS, CATEGORY_TRANSITIONS, STAGE_TRANSITIONS, MATCH_TRANSITIONS or MatchService.transitionStatus.",
+        "A new realtime event type, a second data-fetching framework, or a new list-all endpoint for entries/stages (the backup reuses the existing per-tournament reads).",
+        "The remaining TASK-5 gaps (G7/G8 scheduler, G10 team levels, G12 caps, G13 qualification default, G14 dropdown participant assignment, G16) and the court availability/scheduler work.",
+        "Production data, credentials, or a hand merge."
+      ],
+      "humanApproval": false,
+      "dependsOn": [
+        "AI-006"
+      ],
+      "references": [
+        "AGENTS.md",
+        "docs/tasks/task-5-parity-audit.md",
+        "docs/tasks/AI-006-group-fixture-regeneration.md",
+        "prisma/schema.prisma",
+        "packages/application/src/repositories/index.ts",
+        "packages/application/src/repositories/data.ts",
+        "packages/infrastructure/src/repositories.ts",
+        "packages/application/src/services/tournament.service.ts",
+        "packages/application/src/services/stage.service.ts",
+        "packages/application/src/services/match-result.service.ts",
+        "apps/api/src/http/routes/tournament.routes.ts",
+        "apps/api/src/http/dto.ts",
+        "apps/api/src/composition/api-services.ts",
+        "apps/web/src/api/services.ts",
+        "apps/web/src/pages/tournaments/tournament-details.tsx",
+        "apps/web/src/components/confirm-dialog.tsx"
+      ],
+      "createdAt": "2026-10-04T17:20:00Z"
     }
   ]
 }
