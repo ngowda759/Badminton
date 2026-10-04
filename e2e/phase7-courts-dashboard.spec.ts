@@ -76,15 +76,11 @@ test.describe('court scheduling and dashboard', () => {
     const categoryUrl = page.url();
 
     // Create two players and register them.
-    const playerIds: string[] = [];
     for (const name of [playerOne, playerTwo]) {
       await page.goto('/players');
       await page.getByLabel(/^Name/).fill(name);
       await page.getByRole('button', { name: 'Create player' }).click();
-      const link = page.getByRole('link', { name });
-      await expect(link).toBeVisible();
-      const href = await link.getAttribute('href');
-      playerIds.push(href?.split('/').pop() ?? '');
+      await expect(page.getByRole('link', { name })).toBeVisible();
     }
 
     await page.goto(`${categoryUrl}/entries`);
@@ -97,19 +93,6 @@ test.describe('court scheduling and dashboard', () => {
         timeout: 15_000,
       });
     }
-
-    // Resolve entry ids from the API (the registration UI does not show them).
-    const categoryId = categoryUrl.split('/').pop() ?? '';
-    const entriesResponse = await page.request.get(
-      `${API_BASE_URL}/api/v1/categories/${categoryId}/entries`,
-    );
-    const entriesBody = (await entriesResponse.json()) as {
-      data: { id: string; playerId: string | null }[];
-    };
-    const entryIds = playerIds.map(
-      (playerId) => entriesBody.data.find((entry) => entry.playerId === playerId)?.id ?? '',
-    );
-    expect(entryIds.every((id) => id.length > 0)).toBe(true);
 
     // Create a GROUP stage and a match.
     await page.goto(`${categoryUrl}/stages`);
@@ -126,12 +109,15 @@ test.describe('court scheduling and dashboard', () => {
     await expect(page).toHaveURL(/\/matches\//);
     const matchUrl = page.url();
 
-    // Assign both players to their slots.
-    await page.getByLabel(/^Slot 1 entry ID/).fill(entryIds[0] as string);
+    // Assign each competitor to a slot by choosing them from the dropdown.
+    await page.getByLabel('Slot 1 participant').click();
+    await page.getByRole('option', { name: playerOne }).click();
     await page.getByRole('button', { name: 'Assign' }).first().click();
-    await page.getByLabel(/^Slot 2 entry ID/).fill(entryIds[1] as string);
-    await page.getByRole('button', { name: 'Assign' }).nth(1).click();
     await expect(page.getByText(playerOne).first()).toBeVisible({ timeout: 15_000 });
+    await page.getByLabel('Slot 2 participant').click();
+    await page.getByRole('option', { name: playerTwo }).click();
+    await page.getByRole('button', { name: 'Assign' }).first().click();
+    await expect(page.getByText(playerTwo).first()).toBeVisible({ timeout: 15_000 });
 
     // Schedule the match on the court for a fixed future window.
     await page.getByLabel('Court').click();

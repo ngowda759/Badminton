@@ -2,7 +2,13 @@ import { useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { useApi } from '@/api/context.tsx';
-import type { MatchDto, MatchParticipantDto, MatchResultDto, StageDto } from '@/api/types.ts';
+import type {
+  EntryDto,
+  MatchDto,
+  MatchParticipantDto,
+  MatchResultDto,
+  StageDto,
+} from '@/api/types.ts';
 import { PageHeader } from '@/components/page-header.tsx';
 import { ErrorState } from '@/components/error-state.tsx';
 import { LoadingState } from '@/components/states.tsx';
@@ -14,6 +20,7 @@ import { Input } from '@/components/ui/input.tsx';
 import { useCategory } from '@/components/tournaments/context.tsx';
 import { ConfirmDialog } from '@/components/confirm-dialog.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
+import { MatchParticipantSelect } from '@/components/tournaments/match-participant-select.tsx';
 import { MatchResultSummary } from '@/components/tournaments/match-result-summary.tsx';
 import { MatchSchedulePanel } from '@/components/tournaments/match-schedule-panel.tsx';
 import { MatchScoring, type InitialGameScore } from '@/components/tournaments/match-scoring.tsx';
@@ -67,7 +74,7 @@ export function MatchDetailPage() {
   };
   useTournamentRefresh(refreshMatch);
 
-  const { nameFor } = useEntryNames(category.id);
+  const { nameFor, entries } = useEntryNames(category.id);
 
   // A knockout match's participants are filled by bracket generation and
   // progression, so they are read-only here; a group match stays manually
@@ -209,6 +216,7 @@ export function MatchDetailPage() {
             <ParticipantSlots
               match={match}
               participants={participantQuery.state.data}
+              entries={entries}
               nameFor={nameFor}
               onChanged={participantQuery.refetch}
               readOnly={isKnockout}
@@ -480,40 +488,30 @@ function EditMatchForm({
 function ParticipantSlots({
   match,
   participants,
+  entries,
   nameFor,
   onChanged,
   readOnly = false,
 }: {
   readonly match: MatchDto;
   readonly participants: readonly MatchParticipantDto[];
+  readonly entries: readonly EntryDto[];
   readonly nameFor: (entryId: string) => string;
   readonly onChanged: () => void;
   /** Knockout participants are bracket-controlled and cannot be assigned here. */
   readonly readOnly?: boolean;
 }) {
   const api = useApi();
-  const [slot1Entry, setSlot1Entry] = useState('');
-  const [slot2Entry, setSlot2Entry] = useState('');
   const mutation = useMutation<unknown>();
 
   const slot1 = participants.find((participant) => participant.slot === 1);
   const slot2 = participants.find((participant) => participant.slot === 2);
 
-  const assign = (slot: 1 | 2, entryId: string): void => {
-    const value = entryId.trim();
-    if (value.length === 0) {
-      return;
-    }
-    void mutation.run(async () => {
-      await api.matches.addParticipant(match.id, { entryId: value, slot });
-      if (slot === 1) {
-        setSlot1Entry('');
-      } else {
-        setSlot2Entry('');
-      }
+  const assign = (entryId: string, slot: 1 | 2): Promise<void> =>
+    mutation.run(async () => {
+      await api.matches.addParticipant(match.id, { entryId, slot });
       onChanged();
-    });
-  };
+    }) as Promise<void>;
 
   return (
     <div className="space-y-4">
@@ -547,55 +545,24 @@ function ParticipantSlots({
       ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                assign(1, slot1Entry);
-              }}
-            >
-              <FormField label="Slot 1 entry ID" htmlFor="slot-1-entry" className="flex-1">
-                {({ id }) => (
-                  <Input
-                    id={id}
-                    value={slot1Entry}
-                    disabled={Boolean(slot1)}
-                    placeholder={slot1 ? 'Slot filled' : 'Entry UUID'}
-                    onChange={(event) => {
-                      setSlot1Entry(event.target.value);
-                    }}
-                  />
-                )}
-              </FormField>
-              <Button type="submit" disabled={mutation.pending || Boolean(slot1)}>
-                Assign
-              </Button>
-            </form>
-
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                assign(2, slot2Entry);
-              }}
-            >
-              <FormField label="Slot 2 entry ID" htmlFor="slot-2-entry" className="flex-1">
-                {({ id }) => (
-                  <Input
-                    id={id}
-                    value={slot2Entry}
-                    disabled={Boolean(slot2)}
-                    placeholder={slot2 ? 'Slot filled' : 'Entry UUID'}
-                    onChange={(event) => {
-                      setSlot2Entry(event.target.value);
-                    }}
-                  />
-                )}
-              </FormField>
-              <Button type="submit" disabled={mutation.pending || Boolean(slot2)}>
-                Assign
-              </Button>
-            </form>
+            <MatchParticipantSelect
+              slot={1}
+              entries={entries}
+              nameFor={nameFor}
+              assignedEntryId={slot1?.entryId ?? null}
+              excludedEntryIds={slot2 ? [slot2.entryId] : []}
+              pending={mutation.pending}
+              onAssign={assign}
+            />
+            <MatchParticipantSelect
+              slot={2}
+              entries={entries}
+              nameFor={nameFor}
+              assignedEntryId={slot2?.entryId ?? null}
+              excludedEntryIds={slot1 ? [slot1.entryId] : []}
+              pending={mutation.pending}
+              onAssign={assign}
+            />
           </div>
 
           <p className="text-muted-foreground text-xs">

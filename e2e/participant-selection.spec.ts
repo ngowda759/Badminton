@@ -1,25 +1,24 @@
 import { expect, test } from '@playwright/test';
 
 /**
- * Phase 5 group-stage scoring flow, against the real UI, API and PostgreSQL.
+ * Named participant selection (parity gap G14), against the real UI/API/PostgreSQL.
  *
- * Registers two players, creates a GROUP stage and a match, assigns both slots,
- * starts the match, records a single-game group result and confirms the match is
- * COMPLETED with the derived winner reflected in the group standings. Nothing
- * is mocked: every step goes through the running Fastify API and the database.
+ * A GROUP match's slots are filled by choosing each competitor from a dropdown
+ * over the category's eligible entries - never by typing a raw entry UUID. The
+ * two competitor names appear in the slot summaries and the match then starts.
  *
  * Requires PostgreSQL and migrations (`docker compose up -d postgres` and
  * `npm run db:migrate`), which the Playwright `webServer` block depends on for
  * the API health check.
  */
-test.describe('group-stage scoring', () => {
-  test('score a group match and see it in the standings', async ({ page }) => {
+test.describe('participant selection', () => {
+  test('assign both slots by choosing competitors by name', async ({ page }) => {
     const unique = Date.now();
-    const tournamentName = `E2E Scoring ${unique}`;
-    const categoryName = `E2E Group ${unique}`;
-    const categoryCode = `S${String(unique).slice(-4)}`;
-    const playerOne = `E2E Alice ${unique}`;
-    const playerTwo = `E2E Bob ${unique}`;
+    const tournamentName = `E2E Selection ${unique}`;
+    const categoryName = `E2E Selection Group ${unique}`;
+    const categoryCode = `P${String(unique).slice(-4)}`;
+    const playerOne = `E2E Priya ${unique}`;
+    const playerTwo = `E2E Rahul ${unique}`;
 
     // Create the tournament and open registration.
     await page.goto('/tournaments/new');
@@ -41,7 +40,6 @@ test.describe('group-stage scoring', () => {
     await expect(page.getByRole('heading', { name: categoryName })).toBeVisible();
     await page.getByRole('button', { name: 'Open', exact: true }).click();
     await expect(page.getByText('Open', { exact: true }).first()).toBeVisible();
-
     const categoryUrl = page.url();
 
     // Create two players.
@@ -52,73 +50,52 @@ test.describe('group-stage scoring', () => {
       await expect(page.getByRole('link', { name })).toBeVisible();
     }
 
-    // Register both players, choosing each from the server-backed list and
-    // waiting for its row before the next submission.
+    // Register both players as active entries.
     await page.goto(`${categoryUrl}/entries`);
-    const names = [playerOne, playerTwo];
-    for (const name of names) {
+    for (const name of [playerOne, playerTwo]) {
       await page.getByLabel('Player').click();
       await page.getByRole('option', { name }).click();
       await page.getByRole('button', { name: 'Register' }).click();
-      await expect(page.getByRole('cell', { name })).toBeVisible({
-        timeout: 15_000,
-      });
+      await expect(page.getByRole('cell', { name })).toBeVisible({ timeout: 15_000 });
     }
 
-    // Create a GROUP stage.
+    // Create a GROUP stage and a match.
     await page.goto(`${categoryUrl}/stages`);
     await page.getByLabel(/^Name/).fill('Group A');
     await page.getByRole('button', { name: 'Create stage' }).click();
-
     const stageLink = page.locator('a[href*="/stages/"]');
     await expect(stageLink).toBeVisible();
     await stageLink.click();
-    const stageUrl = page.url();
 
-    // Create a match and open it via its own link.
     await page.getByRole('button', { name: 'Create match' }).click();
     const matchLink = page.locator('a[href*="/matches/"]');
     await expect(matchLink).toBeVisible();
     await matchLink.click();
-
     await expect(page).toHaveURL(/\/matches\//);
-    // Assign each competitor to a slot by choosing them from the dropdown.
+
+    // No raw-UUID input is present: the slot is a labelled dropdown.
+    await expect(page.getByLabel('Slot 1 participant')).toBeVisible();
+    await expect(page.getByLabel('Slot 2 participant')).toBeVisible();
+    await expect(page.getByPlaceholder('Entry UUID')).toHaveCount(0);
+
+    // Choose each competitor by name; no id is ever typed.
     await page.getByLabel('Slot 1 participant').click();
     await page.getByRole('option', { name: playerOne }).click();
     await page.getByRole('button', { name: 'Assign' }).first().click();
     await expect(page.getByText(playerOne).first()).toBeVisible({ timeout: 15_000 });
+
     await page.getByLabel('Slot 2 participant').click();
     await page.getByRole('option', { name: playerTwo }).click();
     await page.getByRole('button', { name: 'Assign' }).first().click();
     await expect(page.getByText(playerTwo).first()).toBeVisible({ timeout: 15_000 });
 
-    // Start the match (existing SCHEDULED → IN_PROGRESS transition).
+    // Both competitor names appear in the slot summaries.
+    const summaries = page.locator('dl');
+    await expect(summaries.getByText(playerOne)).toBeVisible();
+    await expect(summaries.getByText(playerTwo)).toBeVisible();
+
+    // The match then transitions to IN_PROGRESS.
     await page.getByRole('button', { name: 'In Progress' }).click();
     await expect(page.getByText('In progress').first()).toBeVisible();
-
-    // A group game is capped at 30: 31-29 is illegal and cannot be submitted.
-    await page.getByLabel(`Game — ${playerOne} points`).fill('31');
-    await page.getByLabel(`Game — ${playerTwo} points`).fill('29');
-    await expect(page.getByTestId('match-score-error')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Save & complete result' })).toBeDisabled();
-
-    // Enter a valid single-game group result: 21-18.
-    await page.getByLabel(`Game — ${playerOne} points`).fill('21');
-    await page.getByLabel(`Game — ${playerTwo} points`).fill('18');
-
-    await expect(page.getByTestId('match-winner')).toContainText(playerOne);
-
-    await page.getByRole('button', { name: 'Save & complete result' }).click();
-
-    // The match is completed and the result is shown read-only.
-    await expect(page.getByText('Completed').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByTestId('match-result-winner')).toContainText(playerOne);
-
-    // Standings reflect the completed result: the winner leads on 2 points.
-    await page.goto(stageUrl);
-    await expect(page.getByRole('heading', { name: 'Standings' })).toBeVisible();
-    const standings = page.getByRole('table').filter({ hasText: 'Competitor' });
-    const leaderRow = standings.getByRole('row', { name: new RegExp(playerOne) });
-    await expect(leaderRow).toContainText('2');
   });
 });
