@@ -9,6 +9,7 @@ import { ErrorState } from '@/components/error-state.tsx';
 import { StatusBadge } from '@/components/status-badge.tsx';
 import { useTournament } from '@/components/tournaments/context.tsx';
 import { LifecycleActions } from '@/components/tournaments/lifecycle-actions.tsx';
+import { TournamentBackupCard } from '@/components/tournaments/tournament-backup.tsx';
 import { useMutation } from '@/hooks/use-mutation.ts';
 import { tournamentNextStatuses } from '@/lib/lifecycle.ts';
 import { formatCalendarDate, orDash } from '@/lib/format.ts';
@@ -104,6 +105,8 @@ export function TournamentDetailsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <TournamentBackupCard />
     </div>
   );
 }

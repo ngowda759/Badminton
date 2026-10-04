@@ -1,4 +1,4 @@
-import type { ListPage, TeamSummary } from '@badminton/application';
+import type { ListPage, TeamSummary, TournamentBackup } from '@badminton/application';
 import type { Player, Tournament } from '@badminton/domain';
 
 /**
@@ -92,4 +92,36 @@ export function toTeamListItem(summary: TeamSummary): TeamListItemDto {
 /** Maps a repository page onto the response envelope in one pass. */
 export function toListResponse<T, U>(page: ListPage<T>, map: (item: T) => U): ListResponse<U> {
   return { items: page.items.map(map), nextCursor: page.nextCursor };
+}
+
+/**
+ * The whole-tournament backup envelope.
+ *
+ * The backup is already a JSON-serialisable aggregate assembled by the service;
+ * the DTO documents the exact shape the export endpoint returns and gives one
+ * place to evolve it. Dates stay `Date` values and Fastify serialises them to
+ * ISO-8601, matching every other endpoint.
+ */
+export interface TournamentBackupDto {
+  readonly tournament: Tournament;
+  readonly categories: TournamentBackup['categories'];
+  readonly stages: TournamentBackup['stages'];
+  readonly courts: TournamentBackup['courts'];
+  readonly entries: TournamentBackup['entries'];
+  readonly matches: TournamentBackup['matches'];
+  readonly participants: TournamentBackup['participants'];
+  readonly games: TournamentBackup['games'];
+}
+
+export function toTournamentBackupDto(backup: TournamentBackup): TournamentBackupDto {
+  return {
+    tournament: backup.tournament,
+    categories: backup.categories,
+    stages: backup.stages,
+    courts: backup.courts,
+    entries: backup.entries,
+    matches: backup.matches,
+    participants: backup.participants,
+    games: backup.games,
+  };
 }

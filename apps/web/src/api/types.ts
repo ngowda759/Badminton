@@ -541,3 +541,33 @@ export interface ScheduleMatchInput {
   readonly scheduledStartAt: string;
   readonly scheduledEndAt: string;
 }
+
+/** One stored game of a match in a backup, tagged with its owning match. */
+export interface BackupGameDto extends MatchGameDto {
+  readonly matchId: string;
+}
+
+/**
+ * A whole-tournament JSON backup returned by `GET /tournaments/:id/export`.
+ *
+ * It carries the tournament's domain rows - the setup and every match - so an
+ * operator can snapshot a tournament before a destructive change. Dates arrive
+ * as ISO-8601 strings, like every other endpoint.
+ */
+export interface TournamentBackupDto {
+  readonly tournament: TournamentDto;
+  readonly categories: readonly CategoryDto[];
+  readonly stages: readonly StageDto[];
+  readonly courts: readonly CourtDto[];
+  readonly entries: readonly EntryDto[];
+  readonly matches: readonly MatchDto[];
+  readonly participants: readonly MatchParticipantDto[];
+  readonly games: readonly BackupGameDto[];
+}
+
+/** The result of `POST /tournaments/:id/reset`. */
+export interface TournamentResetSummaryDto {
+  readonly tournamentId: string;
+  readonly matchesReset: number;
+  readonly stagesReopened: number;
+}

@@ -39,6 +39,8 @@ export function createApiV1Routes(
   return async (instance) => {
     await instance.register(tournamentRoutes, {
       tournaments: services.tournaments,
+      backup: services.backup,
+      reset: services.reset,
       categories: services.categories,
     });
     await instance.register(categoryRoutes, { categories: services.categories });

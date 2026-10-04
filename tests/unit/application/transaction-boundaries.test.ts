@@ -9,8 +9,10 @@ import {
   createPlayerService,
   createRealtimeEventService,
   createTeamService,
+  createTournamentBackupService,
   createTournamentCategoryService,
   createTournamentEntryService,
+  createTournamentResetService,
   createTournamentService,
   createTournamentStageService,
   type RepositoryClient,
@@ -428,5 +430,28 @@ describe('atomic operations open exactly one transaction', () => {
         }),
       ),
     ).toBe(1);
+  });
+
+  it('opens zero transactions for a backup export and exactly one for a reset', async () => {
+    const { entries, matches } = services();
+    const backup = createTournamentBackupService(repos.client);
+    const reset = createTournamentResetService(counter.unitOfWork, createRealtimeEventService());
+
+    const tournamentId = await seedTournament(repos.client);
+    const categoryId = await seedCategory(repos.client, { tournamentId });
+    const stageId = await seedStage(repos.client, categoryId, { status: 'ACTIVE' });
+    const matchId = await seedMatch(repos.client, stageId);
+    const playerA = await seedPlayer(repos.client, 'A');
+    const playerB = await seedPlayer(repos.client, 'B');
+    const entryA = await entries.register({ categoryId, playerId: playerA });
+    const entryB = await entries.register({ categoryId, playerId: playerB });
+    await matches.addParticipant(matchId, { entryId: entryA.id, slot: 1 });
+    await matches.addParticipant(matchId, { entryId: entryB.id, slot: 2 });
+
+    // Export is a pure read: it opens no transaction.
+    expect(await transactionsUsed(() => backup.export(tournamentId))).toBe(0);
+
+    // Reset is a multi-row atomic operation: exactly one transaction.
+    expect(await transactionsUsed(() => reset.reset(tournamentId))).toBe(1);
   });
 });

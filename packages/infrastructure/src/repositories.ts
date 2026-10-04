@@ -583,6 +583,25 @@ function createMatchRepository(db: Db): MatchRepository {
         ),
       );
     },
+    reset(id: string) {
+      // Clears the whole result-and-schedule slice in one update: the winner,
+      // the schedule (court and both times) and the terminal status. The caller
+      // removes the stored games in the same transaction.
+      return translatePersistenceErrors(async () =>
+        toMatch(
+          await db.match.update({
+            where: { id },
+            data: {
+              status: 'SCHEDULED',
+              winnerEntryId: null,
+              courtId: null,
+              scheduledStartAt: null,
+              scheduledEndAt: null,
+            },
+          }),
+        ),
+      );
+    },
     schedule(id: string, data: MatchScheduleData) {
       // Writes court and both times in one update; the CHECK constraints and the
       // GiST exclusion constraint reject a partial or overlapping schedule.
