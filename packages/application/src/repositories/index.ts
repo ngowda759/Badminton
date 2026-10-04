@@ -206,6 +206,13 @@ export interface MatchRepository {
   /** Completed matches only, scoped to one stage (drives group standings). */
   listCompletedByStage(stageId: string): Promise<readonly Match[]>;
   /**
+   * Deletes a match row. The `match_participants`/`match_games` `onDelete:
+   * Cascade` removes its participants and recorded games in the same statement,
+   * so a group-fixture regeneration replaces the whole fixture set by deleting
+   * the old matches and inserting the new round-robin in one transaction.
+   */
+  remove(id: string): Promise<void>;
+  /**
    * Every match of a stage together with its participants, in one batched read
    * (no N+1). Drives knockout bracket retrieval.
    */

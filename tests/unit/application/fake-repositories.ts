@@ -638,6 +638,21 @@ function buildClient(state: State): RepositoryClient {
         (row) => row.status === 'COMPLETED' && row.stageId === stageId,
       );
     },
+    async remove(id: string): Promise<void> {
+      // Mirrors the `match_participants`/`match_games` onDelete: Cascade: the
+      // match's participants and recorded games go with the row.
+      state.matches.delete(id);
+      for (const [participantId, row] of state.matchParticipants) {
+        if (row.matchId === id) {
+          state.matchParticipants.delete(participantId);
+        }
+      }
+      for (const [gameId, row] of state.matchGames) {
+        if (row.matchId === id) {
+          state.matchGames.delete(gameId);
+        }
+      }
+    },
     async listByStageWithParticipants(stageId) {
       return [...state.matches.values()]
         .filter((row) => row.stageId === stageId)

@@ -118,6 +118,7 @@ buildApp()  →  app.listen()  →  SIGINT/SIGTERM  →  app.close() → prisma.
 | `GET`    | `/api/v1/stages/:stageId/matches`              | matches       |
 | `POST`   | `/api/v1/stages/:stageId/matches`              | matches       |
 | `POST`   | `/api/v1/stages/:id/fixtures`                  | groupFixtures |
+| `POST`   | `/api/v1/stages/:id/fixtures/regenerate`       | groupFixtures |
 | `GET`    | `/api/v1/stages/:id/standings`                 | standings     |
 | `POST`   | `/api/v1/stages/:id/bracket`                   | knockout      |
 | `POST`   | `/api/v1/stages/:id/bracket/generate`          | knockout      |

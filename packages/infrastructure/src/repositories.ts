@@ -527,6 +527,14 @@ function createMatchRepository(db: Db): MatchRepository {
         return rows.map(toMatch);
       });
     },
+    remove(id: string) {
+      // The `match_participants`/`match_games` `onDelete: Cascade` removes the
+      // match's participants and recorded games with the row, so regeneration
+      // replaces the whole fixture set in one delete plus the fresh insert.
+      return translatePersistenceErrors(async () => {
+        await db.match.delete({ where: { id } });
+      });
+    },
     async listByStageWithParticipants(stageId: string) {
       return translatePersistenceErrors(async () => {
         // One query with an include: participants arrive nested, so a bracket
