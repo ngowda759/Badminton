@@ -8,6 +8,7 @@
  */
 
 export const REVIEW_MARKER_NAME: string;
+export const REVIEW_FAILURE_MARKER_NAME: string;
 export const VERDICTS: readonly string[];
 export const SEVERITIES: readonly string[];
 export const BLOCKING_SEVERITIES: ReadonlySet<string>;
@@ -20,6 +21,13 @@ export interface ReviewMarker {
   round: number;
   headSha: string;
   verdict: string | null;
+}
+
+export interface ReviewFailureMarker {
+  round: number;
+  headSha: string;
+  attempts: number;
+  kind: string;
 }
 
 export interface ReviewedHead {
@@ -121,13 +129,23 @@ export interface ReviewRequestBody {
 }
 
 export function reviewMarker(round: number, headSha: string, verdict?: string): string;
+export function reviewFailureMarker(
+  round: number,
+  headSha: string,
+  attempts: number,
+  kind: string,
+): string;
 export function parseReviewMarkers(text: string): ReviewMarker[];
+export function parseReviewFailureMarkers(text: string): ReviewFailureMarker[];
+export function hasReviewFailureForHead(comments: PrComment[], headSha: string): boolean;
 export function reviewedHeads(comments: PrComment[]): Map<string, ReviewedHead>;
 export function planReview(input: {
   comments: PrComment[];
   headSha: string;
   maxReviewRounds: number;
 }): ReviewPlan;
+export function reviewAttemptBudget(maxReviewRounds: number): number;
+export function isRetryableReviewFailure(code: string): boolean;
 export function classifyCi(checks: RawCiCheck[], requiredChecks: string[]): CiSummary;
 export function ciFindings(ci: CiSummary): Finding[];
 export function coerceVerdict(input: {
@@ -159,6 +177,7 @@ export function buildReviewRequestBody(input: {
   name?: string;
 }): ReviewRequestBody;
 export function extractOutputText(payload: unknown): string;
+export function detectRefusal(text: string): string | null;
 export function parseModelJson(text: string): Record<string, unknown>;
 export function decisionFor(input: {
   verdict: string;

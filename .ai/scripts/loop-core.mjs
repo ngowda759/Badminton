@@ -633,6 +633,8 @@ export const HARD_STOPS = {
   'max-rounds-exceeded':
     'The maximum number of review rounds was reached with findings still open.',
   'reviewer-blocked': 'The reviewer explicitly blocked the pull request.',
+  'reviewer-invalid-response':
+    'The reviewer produced no usable verdict (a refusal or a malformed response) after every attempt.',
   'protected-path': 'A protected path was modified.',
   'migration-change': 'A database migration was modified.',
   'credential-change': 'A credential or environment file was modified.',

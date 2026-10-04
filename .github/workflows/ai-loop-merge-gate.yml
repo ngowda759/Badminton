@@ -62,7 +62,12 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           EVENT_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
           INPUT_PR: ${{ inputs.pr_number }}
-        run: node .ai/scripts/resolve-review-pr.mjs
+        # `--discover` lets the gate find the loop's single open AI-managed pull
+        # request when the event carries none: a `workflow_run` trigger reports the
+        # *review* workflow's branch (`main`), not the pull request's, so the gate
+        # has nothing to resolve from the event. The gate re-derives every condition
+        # itself, so this cannot merge the wrong pull request.
+        run: node .ai/scripts/resolve-review-pr.mjs --discover
 
       - name: Evaluate the merge gate
         if: ${{ steps.pr.outputs.number != '' }}

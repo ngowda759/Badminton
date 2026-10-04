@@ -24,6 +24,21 @@ export const REVIEW_MARKER_NAME = 'ai-loop-review';
 const MARKER_PATTERN =
   /<!--\s*ai-loop-review\s+round=(\d+)\s+head=([0-9a-f]{7,40})(?:\s+verdict=([a-z-]+))?\s*-->/g;
 
+/** Name used in the machine-readable marker for a *failed* review attempt. */
+export const REVIEW_FAILURE_MARKER_NAME = 'ai-loop-review-failed';
+
+/**
+ * The failure marker. It is deliberately a different comment name from the
+ * verdict marker so it can never be mistaken for one: `parseReviewMarkers`
+ * requires `ai-loop-review` followed by a space, so `ai-loop-review-failed`
+ * does not match it, and the merge gate therefore never reads a verdict from a
+ * failed attempt. It records the head SHA so a repeated failure does not spam
+ * the pull request with duplicate comments, while still leaving the head
+ * un-reviewed for a later retry.
+ */
+const FAILURE_MARKER_PATTERN =
+  /<!--\s*ai-loop-review-failed\s+round=(\d+)\s+head=([0-9a-f]{7,40})\s+attempts=(\d+)\s+kind=([a-z-]+)\s*-->/g;
+
 /** GitHub check buckets that mean the check did not pass. */
 const FAIL_BUCKETS = new Set(['fail', 'cancel']);
 const PASS_BUCKETS = new Set(['pass', 'skipping']);
@@ -54,6 +69,54 @@ export const BLOCKING_SEVERITIES = new Set(['blocker', 'major']);
 export function reviewMarker(round, headSha, verdict) {
   const suffix = typeof verdict === 'string' && verdict.length > 0 ? ` verdict=${verdict}` : '';
   return `<!-- ${REVIEW_MARKER_NAME} round=${round} head=${headSha}${suffix} -->`;
+}
+
+/**
+ * The marker for a review attempt that produced no usable verdict.
+ *
+ * `kind` is a short machine-readable reason (`refusal`, `invalid-json`,
+ * `empty-response`, `not-object`); it is never a verdict, so a failed review can
+ * never be read as an approval.
+ */
+export function reviewFailureMarker(round, headSha, attempts, kind) {
+  return `<!-- ${REVIEW_FAILURE_MARKER_NAME} round=${round} head=${headSha} attempts=${attempts} kind=${kind} -->`;
+}
+
+/**
+ * Extract every review-failure marker from a block of text.
+ *
+ * @returns {{ round: number, headSha: string, attempts: number, kind: string }[]}
+ */
+export function parseReviewFailureMarkers(text) {
+  if (typeof text !== 'string' || text.length === 0) return [];
+  const found = [];
+  const pattern = new RegExp(FAILURE_MARKER_PATTERN.source, 'g');
+  let match = pattern.exec(text);
+  while (match !== null) {
+    found.push({
+      round: Number.parseInt(match[1], 10),
+      headSha: match[2],
+      attempts: Number.parseInt(match[3], 10),
+      kind: match[4],
+    });
+    match = pattern.exec(text);
+  }
+  return found;
+}
+
+/**
+ * Whether a failed review attempt is already recorded for this head.
+ *
+ * Used to avoid posting a duplicate failure comment for the same head SHA when a
+ * later run hits the same malformed response.
+ */
+export function hasReviewFailureForHead(comments, headSha) {
+  for (const comment of comments ?? []) {
+    for (const marker of parseReviewFailureMarkers(comment?.body ?? '')) {
+      if (marker.headSha === headSha) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -136,6 +199,34 @@ export function planReview({ comments, headSha, maxReviewRounds }) {
   }
 
   return { action: 'review', round, reason: `reviewing round ${round}` };
+}
+
+/**
+ * How many provider attempts one review round may make.
+ *
+ * A provider safety notice or a malformed body is often transient (the free
+ * router picks a different model per request), so a bounded retry inside the
+ * existing round is what stops one bad response from stalling the loop forever.
+ * The bound is the configured `maxReviewRounds`, so the retry policy is the
+ * loop's existing policy rather than a second, hidden constant: a review round
+ * never makes more provider calls than the loop is willing to spend rounds on,
+ * and it never invents a verdict when every attempt fails.
+ */
+export function reviewAttemptBudget(maxReviewRounds) {
+  const rounds = Number.isInteger(maxReviewRounds) && maxReviewRounds > 0 ? maxReviewRounds : 1;
+  return rounds;
+}
+
+/**
+ * Whether a failed review response is worth retrying within the same round.
+ *
+ * Only a response that arrived but was not a usable review (a refusal or a
+ * malformed/empty body) is retried. An HTTP/transport failure is not: a 429 or a
+ * quota failure is an infrastructure stop with its own explicit message, and
+ * retrying it in a loop would burn the free router's daily budget.
+ */
+export function isRetryableReviewFailure(code) {
+  return ['refusal', 'invalid-json', 'not-object', 'empty-response'].includes(code);
 }
 
 /**
@@ -457,7 +548,9 @@ export function buildReviewRequestBody({
  *
  * Handles the Responses shape (`output[].content[].text`) that both OpenAI and
  * OpenRouter return, a convenience `output_text` field some gateways add, and
- * the Chat Completions fallback. Throws when the payload carries no text at all.
+ * the Chat Completions fallback. Throws a coded error when the payload carries
+ * no text at all or an explicit refusal, so the caller can record a deterministic
+ * failure instead of parsing prose as a verdict.
  */
 export function extractOutputText(payload) {
   if (typeof payload?.output_text === 'string' && payload.output_text.length > 0) {
@@ -468,12 +561,12 @@ export function extractOutputText(payload) {
   const reasoningParts = [];
   for (const item of Array.isArray(payload?.output) ? payload.output : []) {
     if (item?.type === 'refusal' && typeof item.refusal === 'string') {
-      throw new Error(`the reviewer refused to answer: ${item.refusal}`);
+      throw modelError('refusal', `the reviewer refused to answer: ${item.refusal}`);
     }
     const isReasoning = item?.type === 'reasoning';
     for (const content of Array.isArray(item?.content) ? item.content : []) {
       if (content?.type === 'refusal' && typeof content.refusal === 'string') {
-        throw new Error(`the reviewer refused to answer: ${content.refusal}`);
+        throw modelError('refusal', `the reviewer refused to answer: ${content.refusal}`);
       }
       if (typeof content?.text !== 'string' || content.text.length === 0) continue;
       // A reasoning item is the model thinking out loud, not the answer. It is
@@ -489,7 +582,7 @@ export function extractOutputText(payload) {
     return choice.message.content;
   }
 
-  throw new Error('the reviewer returned no text content');
+  throw modelError('empty-response', 'the reviewer returned no text content');
 }
 
 /**
@@ -528,32 +621,123 @@ function extractJsonObject(text) {
   return null;
 }
 
+/** The text inside a fenced code block, or `null` when there is no fence. */
+function extractFencedBlock(text) {
+  const match = /```[ \t]*(?:json)?[ \t]*\r?\n([\s\S]*?)```/.exec(text);
+  return match === null ? null : match[1].trim();
+}
+
+/**
+ * Provider safety/refusal responses that are prose, not a review.
+ *
+ * OpenRouter (and other gateways) can answer a request with a moderation or
+ * safety notice instead of the schema-constrained report. The notice is not JSON
+ * and must be rejected explicitly, never handed to `JSON.parse` as if it might
+ * contain a verdict. These patterns are deliberately anchored to the start of
+ * the (trimmed) response so they cannot misfire on a JSON report whose summary
+ * happens to contain a phrase like "I cannot".
+ */
+const REFUSAL_PATTERNS = [
+  /^user safety\b/i,
+  /^safety:/i,
+  /^i(?:'m| am) sorry\b/i,
+  /^sorry\b/i,
+  /^i can(?:'|no|')?t\b/i,
+  /^i cannot\b/i,
+  /^i (?:am )?unable to\b/i,
+  /^i (?:won't|will not)\b/i,
+  /^as an ai\b/i,
+  /^this (?:request|content|prompt)\b[^.]*\b(?:violat|safety|policy|guideline)/i,
+];
+
+/**
+ * The refusal notice a provider returned, or `null`.
+ *
+ * Only the first line is returned so a diagnostic never carries an entire
+ * document, and the caller can show a bounded reason.
+ */
+export function detectRefusal(text) {
+  if (typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  const firstLine = (trimmed.split(/\r?\n/, 1)[0] ?? '').trim();
+  for (const pattern of REFUSAL_PATTERNS) {
+    if (pattern.test(trimmed)) {
+      return firstLine.length > 0 ? firstLine : trimmed.slice(0, 120);
+    }
+  }
+  return null;
+}
+
+/** Build a parse error carrying a machine-readable `code` for the caller. */
+function modelError(code, message, options) {
+  const error = new Error(message, options);
+  error.code = code;
+  return error;
+}
+
 /**
  * Parse the reviewer's JSON, rejecting anything that is not a JSON object.
  *
  * A malformed response is a hard failure: publishing a half-parsed review would
- * hand OpenHands instructions nobody wrote.
+ * hand OpenHands instructions nobody wrote. Every failure carries a `code`
+ * (`empty-response`, `refusal`, `invalid-json`, `not-object`) so the caller can
+ * record a deterministic outcome and retry a transient malformed response
+ * without ever inventing a verdict.
+ *
+ * A fenced code block is unwrapped only when its contents parse as a JSON
+ * object; prose that merely contains a balanced object is still rejected.
  */
 export function parseModelJson(text) {
   if (typeof text !== 'string' || text.trim().length === 0) {
-    throw new Error('the reviewer returned an empty body');
+    throw modelError('empty-response', 'the reviewer returned an empty body');
   }
+
+  const trimmed = text.trim();
+
+  // A provider safety/refusal notice is never a review. Reject it explicitly.
+  const refusal = detectRefusal(trimmed);
+  if (refusal !== null) {
+    throw modelError('refusal', `the reviewer returned a refusal instead of a review: ${refusal}`);
+  }
+
+  // Accept a fenced code block when (and only when) it is a JSON object.
+  const fenced = extractFencedBlock(trimmed);
+  if (fenced !== null) {
+    let parsed;
+    try {
+      parsed = JSON.parse(fenced);
+    } catch {
+      throw modelError('invalid-json', 'the reviewer returned invalid JSON inside a code fence');
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw modelError('not-object', 'the reviewer returned JSON that is not an object');
+    }
+    return parsed;
+  }
+
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(trimmed);
   } catch (error) {
-    const objectText = extractJsonObject(text);
+    // A gateway may wrap the JSON in prose. Scan for the first balanced object
+    // and accept it only if it parses as an object; anything else is a failure.
+    const objectText = extractJsonObject(trimmed);
     if (objectText === null) {
-      throw new Error(`the reviewer returned invalid JSON: ${error.message}`, { cause: error });
+      throw modelError('invalid-json', `the reviewer returned invalid JSON: ${error.message}`, {
+        cause: error,
+      });
     }
     try {
       parsed = JSON.parse(objectText);
     } catch (nested) {
-      throw new Error(`the reviewer returned invalid JSON: ${nested.message}`, { cause: nested });
+      throw modelError('invalid-json', `the reviewer returned invalid JSON: ${nested.message}`, {
+        cause: nested,
+      });
     }
   }
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('the reviewer returned JSON that is not an object');
+    throw modelError('not-object', 'the reviewer returned JSON that is not an object');
   }
   return parsed;
 }
